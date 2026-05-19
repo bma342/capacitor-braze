@@ -177,6 +177,12 @@ const runMethods: Record<string, () => Promise<unknown>> = {
       properties: parseJsonProperties('eventProperties'),
     }),
 
+  getFeatureFlag: () => Braze.getFeatureFlag({ id: input('featureFlagId') }),
+  getAllFeatureFlags: () => Braze.getAllFeatureFlags(),
+  refreshFeatureFlags: () => Braze.refreshFeatureFlags(),
+  logFeatureFlagImpression: () =>
+    Braze.logFeatureFlagImpression({ id: input('featureFlagId') }),
+
   logPurchase: () => {
     const quantityRaw = input('quantity');
     return Braze.logPurchase({

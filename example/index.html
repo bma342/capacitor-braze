@@ -176,6 +176,22 @@
       </section>
 
       <!-- ============================================================ -->
+      <!-- Feature flags                                                  -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>Feature flags</h2>
+        <div class="row">
+          <label>flag id <input id="featureFlagId" type="text" placeholder="checkout_v2" /></label>
+          <button data-method="getFeatureFlag">getFeatureFlag</button>
+          <button data-method="logFeatureFlagImpression">logFeatureFlagImpression</button>
+        </div>
+        <div class="row">
+          <button data-method="getAllFeatureFlags">getAllFeatureFlags</button>
+          <button data-method="refreshFeatureFlags">refreshFeatureFlags</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
       <!-- Purchases                                                      -->
       <!-- ============================================================ -->
       <section class="card">

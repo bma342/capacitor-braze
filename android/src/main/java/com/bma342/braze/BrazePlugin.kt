@@ -5,7 +5,9 @@ import com.braze.Braze
 import com.braze.configuration.BrazeConfig
 import com.braze.enums.Gender
 import com.braze.enums.Month
+import com.braze.models.FeatureFlag
 import com.braze.models.outgoing.BrazeProperties
+import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -16,7 +18,7 @@ import java.math.BigDecimal
 /**
  * Capacitor bridge for the Braze Android SDK (com.braze:android-sdk-ui 42.2.0).
  *
- * ## Surface in 0.0.7
+ * ## Surface in 0.0.8
  *
  * - **Bridge sanity:** `echo(value)`
  * - **Configuration:** `initialize(apiKey, endpoint, ...)`
@@ -33,6 +35,8 @@ import java.math.BigDecimal
  *   `removeFromSubscriptionGroup(groupId)`
  * - **Events:** `logCustomEvent(name, properties?)`,
  *   `logPurchase(productId, currency, price, quantity?, properties?)`
+ * - **Feature flags:** `getFeatureFlag(id)`, `getAllFeatureFlags`,
+ *   `refreshFeatureFlags`, `logFeatureFlagImpression(id)`
  * - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
  *   `requestImmediateDataFlush`
  *
@@ -460,6 +464,89 @@ class BrazePlugin : Plugin() {
             Braze.getInstance(context).logPurchase(productId, currency, bigPrice, quantity)
         }
         call.resolve()
+    }
+
+    // -------------------------------------------------------------------------
+    // Feature flags
+    //
+    // The Android SDK exposes feature flags via static methods on the
+    // `Braze` singleton:
+    //   - Braze.getInstance(context).getFeatureFlag(id) -> FeatureFlag?
+    //   - Braze.getInstance(context).getAllFeatureFlags() -> List<FeatureFlag>
+    //   - Braze.getInstance(context).refreshFeatureFlags()
+    //   - Braze.getInstance(context).logFeatureFlagImpression(id)
+    //
+    // `FeatureFlag.properties` is a `JSONObject` already in the Braze wire
+    // format `{ key: { type, value } }`, which matches the plugin's portable
+    // `BrazeFeatureFlagPropertyValue` shape — we round-trip through
+    // `JSObject(jsonObject.toString())` rather than walking entries
+    // manually to keep the conversion correct as new wire-format types ship.
+    // -------------------------------------------------------------------------
+
+    @PluginMethod
+    fun getFeatureFlag(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        val id = call.getString("id")
+        if (id.isNullOrEmpty()) {
+            call.reject("Braze.getFeatureFlag: `id` is required (string).")
+            return
+        }
+        val raw = Braze.getInstance(context).getFeatureFlag(id)
+        val result = JSObject()
+        if (raw == null) {
+            result.put("flag", JSObject.NULL)
+        } else {
+            result.put("flag", serializeFeatureFlag(raw))
+        }
+        call.resolve(result)
+    }
+
+    @PluginMethod
+    fun getAllFeatureFlags(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        val flags = JSArray()
+        for (flag in Braze.getInstance(context).getAllFeatureFlags()) {
+            flags.put(serializeFeatureFlag(flag))
+        }
+        val result = JSObject()
+        result.put("flags", flags)
+        call.resolve(result)
+    }
+
+    @PluginMethod
+    fun refreshFeatureFlags(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        Braze.getInstance(context).refreshFeatureFlags()
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun logFeatureFlagImpression(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        val id = call.getString("id")
+        if (id.isNullOrEmpty()) {
+            call.reject("Braze.logFeatureFlagImpression: `id` is required (string).")
+            return
+        }
+        Braze.getInstance(context).logFeatureFlagImpression(id)
+        call.resolve()
+    }
+
+    /**
+     * Serializes a [FeatureFlag] to the plugin's portable wire format.
+     *
+     * `properties` is the underlying `JSONObject` round-tripped through a
+     * string into a `JSObject`. Braze stores properties in the same
+     * `{ key: { type, value } }` shape exposed on the wire, so the
+     * roundtrip preserves correctness without manual case-by-case
+     * conversion.
+     */
+    private fun serializeFeatureFlag(flag: FeatureFlag): JSObject {
+        val out = JSObject()
+        out.put("id", flag.id)
+        out.put("enabled", flag.enabled)
+        out.put("properties", JSObject(flag.properties.toString()))
+        return out
     }
 
     // -------------------------------------------------------------------------

@@ -4,7 +4,7 @@ import Foundation
 
 /// Capacitor bridge for the Braze iOS SDK (BrazeKit 14.1.0).
 ///
-/// ## Surface in 0.0.7
+/// ## Surface in 0.0.8
 ///
 /// - **Bridge sanity:** `echo(value)`
 /// - **Configuration:** `initialize(apiKey, endpoint, ...)`
@@ -21,6 +21,8 @@ import Foundation
 ///   `removeFromSubscriptionGroup(groupId)`
 /// - **Events:** `logCustomEvent(name, properties?)`,
 ///   `logPurchase(productId, currency, price, quantity?, properties?)`
+/// - **Feature flags:** `getFeatureFlag(id)`, `getAllFeatureFlags`,
+///   `refreshFeatureFlags`, `logFeatureFlagImpression(id)`
 /// - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
 ///   `requestImmediateDataFlush`
 ///
@@ -352,6 +354,110 @@ public class BrazePlugin: CAPPlugin {
             properties: properties
         )
         call.resolve()
+    }
+
+    // MARK: - Feature flags
+    //
+    // BrazeKit exposes feature flags via `braze.featureFlags`:
+    //   - featureFlag(id:) -> Braze.FeatureFlag?
+    //   - featureFlags     -> [Braze.FeatureFlag]
+    //   - requestRefresh   -> kicks off a refresh (callback-based; we
+    //     fire-and-forget here and rely on a future subscribeToUpdates
+    //     listener API for completion semantics)
+    //   - logFeatureFlagImpression(id:)
+    //
+    // The plugin's portable `BrazeFeatureFlag` DTO matches the Web SDK
+    // wire format `{ id, enabled, properties: { key: { type, value } } }`.
+    // `serializeFeatureFlag` adapts BrazeKit's `Braze.FeatureFlag.Property`
+    // enum cases into the same shape.
+
+    @objc func getFeatureFlag(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let id = call.getString("id"), !id.isEmpty else {
+            call.reject("Braze.getFeatureFlag: `id` is required (string).")
+            return
+        }
+        let raw = braze.featureFlags.featureFlag(id: id)
+        if let raw = raw {
+            call.resolve(["flag": Self.serializeFeatureFlag(raw)])
+        } else {
+            call.resolve(["flag": NSNull()])
+        }
+    }
+
+    @objc func getAllFeatureFlags(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        let raw = braze.featureFlags.featureFlags
+        let flags = raw.map { Self.serializeFeatureFlag($0) }
+        call.resolve(["flags": flags])
+    }
+
+    @objc func refreshFeatureFlags(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        // requestRefresh accepts an optional completion handler; we ignore
+        // the result here (fire-and-forget). Consumers needing completion
+        // semantics use the (forthcoming) subscribe-to-updates listener.
+        braze.featureFlags.requestRefresh()
+        call.resolve()
+    }
+
+    @objc func logFeatureFlagImpression(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let id = call.getString("id"), !id.isEmpty else {
+            call.reject("Braze.logFeatureFlagImpression: `id` is required (string).")
+            return
+        }
+        braze.featureFlags.logFeatureFlagImpression(id: id)
+        call.resolve()
+    }
+
+    /// Serializes a `Braze.FeatureFlag` to the plugin's portable wire
+    /// format. Properties are read via BrazeKit's typed accessors keyed
+    /// off the underlying `properties` dictionary, then re-emitted as
+    /// `{ type, value }` records matching the Web SDK `PropertiesJson`.
+    ///
+    /// Unknown / future property types are dropped rather than guessed.
+    private static func serializeFeatureFlag(_ flag: Braze.FeatureFlag) -> [String: Any] {
+        var properties: [String: Any] = [:]
+        // BrazeKit exposes the raw property map as `properties: [String: Property]`.
+        // Each Property is an enum (`.string`, `.number`, `.boolean`, `.image`,
+        // `.timestamp`, `.json`). Pattern-match each case to the public type tag.
+        for (key, value) in flag.properties {
+            if let entry = Self.serializeProperty(value) {
+                properties[key] = entry
+            }
+        }
+        return [
+            "id": flag.id,
+            "enabled": flag.enabled,
+            "properties": properties,
+        ]
+    }
+
+    /// Maps a single `Braze.FeatureFlag.Property` enum case to the wire
+    /// format `{ type, value }` record. Returns nil for unrecognized
+    /// cases (future SDK additions); the caller drops those entries.
+    ///
+    /// The plugin keeps the conversion local rather than depending on
+    /// any private encoder so consumers see exactly the shape declared
+    /// in `BrazeFeatureFlagPropertyValue`.
+    private static func serializeProperty(_ property: Braze.FeatureFlag.Property) -> [String: Any]? {
+        switch property {
+        case .string(let v):
+            return ["type": "string", "value": v]
+        case .number(let v):
+            return ["type": "number", "value": v]
+        case .boolean(let v):
+            return ["type": "boolean", "value": v]
+        case .timestamp(let v):
+            return ["type": "datetime", "value": v]
+        case .image(let v):
+            return ["type": "image", "value": v.absoluteString]
+        case .json(let v):
+            return ["type": "jsonobject", "value": v]
+        @unknown default:
+            return nil
+        }
     }
 
     // MARK: - Privacy / lifecycle

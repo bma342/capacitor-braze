@@ -11,6 +11,40 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+## [0.0.8] — 2026-05-19
+
+### Added — Feature flags read API (Phase G)
+
+Four methods that cover the read-side of Braze's feature flag system.
+All three platforms; eight-file lockstep. The `subscribeToFeatureFlagsUpdates`
+listener is deferred — it lands together with the in-app message and
+content cards listeners in a dedicated listener-infrastructure phase.
+
+- `Braze.getFeatureFlag({ id })` → `{ flag: BrazeFeatureFlag | null }`.
+  Reads from the SDK's local cache; returns `null` when no flag with
+  the given id exists for the current user.
+- `Braze.getAllFeatureFlags()` → `{ flags: BrazeFeatureFlag[] }`.
+- `Braze.refreshFeatureFlags()` — fire-and-forget. The returned promise
+  resolves once the refresh has been dispatched, not when new flags
+  arrive. Re-read after a short delay; full completion semantics will
+  ride alongside the forthcoming subscribe-to-updates listener.
+- `Braze.logFeatureFlagImpression({ id })` — limited by Braze to one
+  impression per session per flag id.
+
+### Added — `BrazeFeatureFlag` DTO
+
+Portable wire-format shape: `{ id, enabled, properties }`. The
+`properties` map mirrors the Web SDK `PropertiesJson` exactly so the
+web path is zero-conversion; the Android bridge round-trips the SDK's
+underlying `JSONObject` (already in the same shape); the iOS bridge
+maps each `Braze.FeatureFlag.Property` enum case into the same wire
+record. Property value types: `'string' | 'number' | 'boolean' |
+'image' | 'datetime' | 'jsonobject'` (matches Braze's wire format).
+
+### Improved
+
+- Plugin surface: **29 methods** across all three platforms.
+
 ## [0.0.7] — 2026-05-19
 
 ### Added — `getUserId` + `logPurchase` (Phase F)

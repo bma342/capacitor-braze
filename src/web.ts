@@ -5,12 +5,18 @@ import type {
   BrazeChangeUserOptions,
   BrazeEchoOptions,
   BrazeEchoResult,
+  BrazeFeatureFlag,
+  BrazeFeatureFlagPropertyValue,
   BrazeGender,
+  BrazeGetAllFeatureFlagsResult,
   BrazeGetDeviceIdResult,
+  BrazeGetFeatureFlagOptions,
+  BrazeGetFeatureFlagResult,
   BrazeGetUserIdResult,
   BrazeInitializeOptions,
   BrazeIsDisabledResult,
   BrazeLogCustomEventOptions,
+  BrazeLogFeatureFlagImpressionOptions,
   BrazeLogPurchaseOptions,
   BrazePlugin,
   BrazeSetCountryOptions,
@@ -255,6 +261,50 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   }
 
   // ---------------------------------------------------------------------------
+  // Feature flags
+  //
+  // The Web SDK's `FeatureFlag` exposes `id`, `enabled`, and a raw
+  // `properties: PropertiesJson` whose entries already match our public
+  // `BrazeFeatureFlagPropertyValue` shape (`{ type, value }`). We do a
+  // shallow object-copy when serializing so the public object isn't a
+  // live reference into the SDK's cache.
+  // ---------------------------------------------------------------------------
+
+  async getFeatureFlag(
+    options: BrazeGetFeatureFlagOptions,
+  ): Promise<BrazeGetFeatureFlagResult> {
+    const braze = this.requireInitialized();
+    if (!options.id || typeof options.id !== 'string') {
+      throw new Error('Braze.getFeatureFlag: `id` is required (string).');
+    }
+    const raw = braze.getFeatureFlag(options.id);
+    return { flag: raw ? this.serializeFeatureFlag(raw) : null };
+  }
+
+  async getAllFeatureFlags(): Promise<BrazeGetAllFeatureFlagsResult> {
+    const braze = this.requireInitialized();
+    const raw = braze.getAllFeatureFlags() ?? [];
+    return { flags: raw.map((flag) => this.serializeFeatureFlag(flag)) };
+  }
+
+  async refreshFeatureFlags(): Promise<void> {
+    const braze = this.requireInitialized();
+    braze.refreshFeatureFlags();
+  }
+
+  async logFeatureFlagImpression(
+    options: BrazeLogFeatureFlagImpressionOptions,
+  ): Promise<void> {
+    const braze = this.requireInitialized();
+    if (!options.id || typeof options.id !== 'string') {
+      throw new Error(
+        'Braze.logFeatureFlagImpression: `id` is required (string).',
+      );
+    }
+    braze.logFeatureFlagImpression(options.id);
+  }
+
+  // ---------------------------------------------------------------------------
   // Purchases
   // ---------------------------------------------------------------------------
 
@@ -394,6 +444,38 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
         'Braze.setDateOfBirth: `day` must be an integer between 1 and 31.',
       );
     }
+  }
+
+  /**
+   * Converts the Web SDK's `FeatureFlag` into the plugin's portable DTO.
+   *
+   * The SDK exposes `properties` as `PropertiesJson` whose entries are
+   * `{ type, value }` records in exactly the wire format our public
+   * `BrazeFeatureFlagPropertyValue` type expects, so we shallow-copy
+   * entries through unchanged. Entries with a type the public type does
+   * not enumerate (future SDK additions) are dropped to keep the DTO
+   * faithful to its declared shape.
+   */
+  private serializeFeatureFlag(
+    raw: ReturnType<BrazeWebSdk['getFeatureFlag']> & object,
+  ): BrazeFeatureFlag {
+    const allowedTypes: ReadonlySet<BrazeFeatureFlagPropertyValue['type']> =
+      new Set(['string', 'number', 'boolean', 'image', 'datetime', 'jsonobject']);
+    const properties: Record<string, BrazeFeatureFlagPropertyValue> = {};
+    const rawProps = raw.properties ?? {};
+    for (const [key, entry] of Object.entries(rawProps)) {
+      if (
+        entry &&
+        typeof entry === 'object' &&
+        'type' in entry &&
+        'value' in entry &&
+        typeof entry.type === 'string' &&
+        allowedTypes.has(entry.type as BrazeFeatureFlagPropertyValue['type'])
+      ) {
+        properties[key] = entry as BrazeFeatureFlagPropertyValue;
+      }
+    }
+    return { id: raw.id, enabled: raw.enabled, properties };
   }
 
   /**

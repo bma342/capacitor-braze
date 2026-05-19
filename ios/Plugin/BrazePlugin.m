@@ -51,6 +51,12 @@ CAP_PLUGIN(BrazePlugin, "Braze",
     // Purchases
     CAP_PLUGIN_METHOD(logPurchase, CAPPluginReturnPromise);
 
+    // Feature flags
+    CAP_PLUGIN_METHOD(getFeatureFlag, CAPPluginReturnPromise);
+    CAP_PLUGIN_METHOD(getAllFeatureFlags, CAPPluginReturnPromise);
+    CAP_PLUGIN_METHOD(refreshFeatureFlags, CAPPluginReturnPromise);
+    CAP_PLUGIN_METHOD(logFeatureFlagImpression, CAPPluginReturnPromise);
+
     // Privacy / lifecycle
     CAP_PLUGIN_METHOD(wipeData, CAPPluginReturnPromise);
     CAP_PLUGIN_METHOD(disableSDK, CAPPluginReturnPromise);

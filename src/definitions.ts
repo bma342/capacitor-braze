@@ -236,6 +236,63 @@ export interface BrazeLogCustomEventOptions {
 }
 
 // =============================================================================
+// Feature flags
+// =============================================================================
+
+/**
+ * Wire-format shape of a single Braze feature flag property. Matches the
+ * Web SDK's `PropertiesJson` entry type so the web path is zero-conversion;
+ * native bridges serialize their typed property values into this shape.
+ *
+ * `'image'` is a URL string; `'datetime'` is a Unix timestamp in
+ * milliseconds; `'jsonobject'` is a nested JSON object.
+ */
+export type BrazeFeatureFlagPropertyValue =
+  | { type: 'string'; value: string }
+  | { type: 'number'; value: number }
+  | { type: 'boolean'; value: boolean }
+  | { type: 'image'; value: string }
+  | { type: 'datetime'; value: number }
+  | { type: 'jsonobject'; value: Record<string, unknown> };
+
+export interface BrazeFeatureFlag {
+  /** Feature flag identifier as configured in the Braze dashboard. */
+  id: string;
+  /** Whether the flag is enabled for the current user. */
+  enabled: boolean;
+  /**
+   * Map of property keys to typed property values. Empty for flags with no
+   * configured properties.
+   *
+   * Cross-platform note: on Android and Web the properties are the raw
+   * Braze wire format and arrive zero-conversion. On iOS the bridge
+   * serializes BrazeKit's typed property enum into the same shape; if you
+   * find an iOS-specific gap please file an issue.
+   */
+  properties: Record<string, BrazeFeatureFlagPropertyValue>;
+}
+
+export interface BrazeGetFeatureFlagOptions {
+  /** Feature flag identifier. */
+  id: string;
+}
+
+export interface BrazeGetFeatureFlagResult {
+  /** The flag, or `null` if no flag with this `id` is configured. */
+  flag: BrazeFeatureFlag | null;
+}
+
+export interface BrazeGetAllFeatureFlagsResult {
+  /** All feature flags configured for the current user. */
+  flags: BrazeFeatureFlag[];
+}
+
+export interface BrazeLogFeatureFlagImpressionOptions {
+  /** Feature flag identifier whose impression should be logged. */
+  id: string;
+}
+
+// =============================================================================
 // Purchases
 // =============================================================================
 
@@ -524,6 +581,56 @@ export interface BrazePlugin {
    * });
    */
   logPurchase(options: BrazeLogPurchaseOptions): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // Feature flags
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns a single feature flag by identifier, or `null` if no flag with
+   * that `id` exists for the current user. Reads from the SDK's local
+   * cache; call {@link BrazePlugin.refreshFeatureFlags} to force a fetch.
+   *
+   * @example
+   * const { flag } = await Braze.getFeatureFlag({ id: 'checkout_v2' });
+   * if (flag?.enabled) showNewCheckout();
+   */
+  getFeatureFlag(
+    options: BrazeGetFeatureFlagOptions,
+  ): Promise<BrazeGetFeatureFlagResult>;
+
+  /**
+   * Returns all feature flags currently cached for the user.
+   *
+   * @example
+   * const { flags } = await Braze.getAllFeatureFlags();
+   */
+  getAllFeatureFlags(): Promise<BrazeGetAllFeatureFlagsResult>;
+
+  /**
+   * Requests an immediate refresh of feature flags from the Braze backend.
+   * Fire-and-forget: the returned promise resolves once the refresh has
+   * been dispatched, **not** once new flags arrive. Re-read with
+   * {@link BrazePlugin.getAllFeatureFlags} after a short delay; the
+   * subscribe-to-updates listener API will land in a later version.
+   *
+   * @example
+   * await Braze.refreshFeatureFlags();
+   * await new Promise(r => setTimeout(r, 1000));
+   * const { flags } = await Braze.getAllFeatureFlags();
+   */
+  refreshFeatureFlags(): Promise<void>;
+
+  /**
+   * Logs an impression for a feature flag. Per Braze, limited to one
+   * impression per session per flag id.
+   *
+   * @example
+   * await Braze.logFeatureFlagImpression({ id: 'checkout_v2' });
+   */
+  logFeatureFlagImpression(
+    options: BrazeLogFeatureFlagImpressionOptions,
+  ): Promise<void>;
 
   // ---------------------------------------------------------------------------
   // Privacy / lifecycle
