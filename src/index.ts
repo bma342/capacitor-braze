@@ -8,3 +8,8 @@ const Braze = registerPlugin<BrazePlugin>('Braze', {
 
 export * from './definitions';
 export { Braze };
+
+// Re-export the Capacitor types the plugin's interface uses so consumers
+// don't need a separate `import type { PluginListenerHandle } from '@capacitor/core'`
+// alongside their plugin import.
+export type { PluginListenerHandle } from '@capacitor/core';

@@ -11,6 +11,20 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+### Changed — plugin re-exports `PluginListenerHandle`
+
+`PluginListenerHandle` (from `@capacitor/core`) is now re-exported from
+`capacitor-braze` so consumers writing typed listener handlers can rely
+on a single import line:
+
+```ts
+import { Braze, type PluginListenerHandle } from 'capacitor-braze';
+```
+
+No behavior change — it's literally the same type from `@capacitor/core`.
+The re-export removes a paper cut that surfaced when wiring the demo's
+content-cards listener.
+
 ### Added — `demo/` Capacitor reference app (not published, dev artifact)
 
 A second app alongside `example/`, purpose-built as a fork-as-starter
