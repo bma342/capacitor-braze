@@ -57,6 +57,7 @@
         </div>
         <div class="row">
           <button data-method="changeUser">changeUser</button>
+          <button data-method="getUserId">getUserId</button>
         </div>
         <div class="row">
           <label>alias <input id="alias" type="text" placeholder="cust_1234" /></label>
@@ -171,6 +172,25 @@
             <input id="eventProperties" type="text" placeholder='{"items":3}' />
           </label>
           <button data-method="logCustomEvent">logCustomEvent</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- Purchases                                                      -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>Purchases</h2>
+        <div class="row">
+          <label>productId <input id="productId" type="text" placeholder="sku_42" /></label>
+          <label>currency <input id="purchaseCurrency" type="text" placeholder="USD" /></label>
+          <label>price <input id="price" type="number" step="0.01" placeholder="14.99" /></label>
+          <label>quantity <input id="quantity" type="number" placeholder="1" /></label>
+        </div>
+        <div class="row">
+          <label>properties (JSON, optional)
+            <input id="purchaseProperties" type="text" placeholder='{"coupon":"WELCOME10"}' />
+          </label>
+          <button data-method="logPurchase">logPurchase</button>
         </div>
       </section>
 

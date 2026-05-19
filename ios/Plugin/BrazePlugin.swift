@@ -4,11 +4,12 @@ import Foundation
 
 /// Capacitor bridge for the Braze iOS SDK (BrazeKit 14.1.0).
 ///
-/// ## Surface in 0.0.6
+/// ## Surface in 0.0.7
 ///
 /// - **Bridge sanity:** `echo(value)`
 /// - **Configuration:** `initialize(apiKey, endpoint, ...)`
-/// - **User identity:** `changeUser(userId, sdkAuthSignature?)`, `addAlias(alias, label)`
+/// - **User identity:** `changeUser(userId, sdkAuthSignature?)`, `getUserId`,
+///   `addAlias(alias, label)`
 /// - **Device ID:** `getDeviceId`
 /// - **User attributes (standard):** `setEmail`, `setPhoneNumber`,
 ///   `setFirstName`, `setLastName`, `setLanguage`, `setCountry`
@@ -18,7 +19,8 @@ import Foundation
 ///   dispatches on inferred value type
 /// - **Subscription groups:** `addToSubscriptionGroup(groupId)`,
 ///   `removeFromSubscriptionGroup(groupId)`
-/// - **Custom events:** `logCustomEvent(name, properties?)`
+/// - **Events:** `logCustomEvent(name, properties?)`,
+///   `logPurchase(productId, currency, price, quantity?, properties?)`
 /// - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
 ///   `requestImmediateDataFlush`
 ///
@@ -103,6 +105,14 @@ public class BrazePlugin: CAPPlugin {
         let sdkAuthSignature = call.getString("sdkAuthSignature")
         braze.changeUser(userId: userId, sdkAuthSignature: sdkAuthSignature)
         call.resolve()
+    }
+
+    /// `braze.user.id` is a sync property as of BrazeKit 14.x (the async
+    /// closure variants are deprecated). Returns nil for anonymous users; we
+    /// surface that as JSON `null`.
+    @objc func getUserId(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        call.resolve(["userId": braze.user.id as Any])
     }
 
     // MARK: - User attributes (standard)
@@ -305,6 +315,42 @@ public class BrazePlugin: CAPPlugin {
         }
         let properties = call.getObject("properties") as? [String: Any]
         braze.logCustomEvent(name: name, properties: properties)
+        call.resolve()
+    }
+
+    // MARK: - Purchases
+
+    /// Validates the purchase shape, then forwards to
+    /// `braze.logPurchase(productId:currency:price:quantity:properties:)`.
+    /// Quantity defaults to 1 to match the SDK default; price is a Double
+    /// matching the Swift SDK API.
+    @objc func logPurchase(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let productId = call.getString("productId"), !productId.isEmpty else {
+            call.reject("Braze.logPurchase: `productId` is required (string).")
+            return
+        }
+        guard let currency = call.getString("currency"), !currency.isEmpty else {
+            call.reject("Braze.logPurchase: `currency` is required (ISO 4217 string).")
+            return
+        }
+        guard let price = call.getDouble("price"), price.isFinite, price >= 0 else {
+            call.reject("Braze.logPurchase: `price` must be a non-negative finite number.")
+            return
+        }
+        let quantity = call.getInt("quantity") ?? 1
+        guard quantity >= 1, quantity <= 100 else {
+            call.reject("Braze.logPurchase: `quantity` must be an integer between 1 and 100.")
+            return
+        }
+        let properties = call.getObject("properties") as? [String: Any]
+        braze.logPurchase(
+            productId: productId,
+            currency: currency,
+            price: price,
+            quantity: quantity,
+            properties: properties
+        )
         call.resolve()
     }
 

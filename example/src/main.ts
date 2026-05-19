@@ -93,19 +93,18 @@ function typedAttrValue(): BrazeAttributeValue {
 }
 
 /**
- * Parses the optional event properties JSON input. Returns undefined if empty.
+ * Parses optional properties JSON from the named input. Returns undefined
+ * if empty. Used for both `logCustomEvent` and `logPurchase` property maps,
+ * which share the same primitive-value shape on the TS interface.
  */
-function parseEventProperties(): BrazeEventProperties | undefined {
-  const raw = input('eventProperties');
+function parseJsonProperties(id: string): BrazeEventProperties | undefined {
+  const raw = input(id);
   if (!raw) return undefined;
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    // The plugin's TS interface only accepts primitive values; trust the
-    // consumer's input here and let the plugin's runtime validation flag
-    // anything malformed.
     return parsed as BrazeEventProperties;
   } catch (err) {
-    throw new Error(`eventProperties is not valid JSON: ${(err as Error).message}`);
+    throw new Error(`${id} is not valid JSON: ${(err as Error).message}`);
   }
 }
 
@@ -134,6 +133,7 @@ const runMethods: Record<string, () => Promise<unknown>> = {
       userId: input('userId'),
       sdkAuthSignature: input('sdkAuthSignature') || undefined,
     }),
+  getUserId: () => Braze.getUserId(),
 
   setEmail: () => Braze.setEmail({ email: nullableInput('email') }),
   setPhoneNumber: () =>
@@ -174,8 +174,19 @@ const runMethods: Record<string, () => Promise<unknown>> = {
   logCustomEvent: () =>
     Braze.logCustomEvent({
       name: input('eventName'),
-      properties: parseEventProperties(),
+      properties: parseJsonProperties('eventProperties'),
     }),
+
+  logPurchase: () => {
+    const quantityRaw = input('quantity');
+    return Braze.logPurchase({
+      productId: input('productId'),
+      currency: input('purchaseCurrency'),
+      price: Number(input('price')),
+      quantity: quantityRaw ? parseInt(quantityRaw, 10) : undefined,
+      properties: parseJsonProperties('purchaseProperties'),
+    });
+  },
 
   wipeData: () => Braze.wipeData(),
   disableSDK: () => Braze.disableSDK(),

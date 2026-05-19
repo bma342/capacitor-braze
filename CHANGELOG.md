@@ -11,6 +11,33 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+## [0.0.7] — 2026-05-19
+
+### Added — `getUserId` + `logPurchase` (Phase F)
+
+Closes the last two v0.1-roadmap methods that don't need listener
+plumbing. All three platforms; eight-file lockstep.
+
+- `Braze.getUserId()` → `{ userId: string | null }`. Returns the current
+  external user ID, or `null` for anonymous users. iOS reads
+  `braze.user.id` (sync property since BrazeKit 14.x); Android reads
+  `currentUser.userId` and coerces the SDK's empty-string anonymous
+  sentinel to `null`; Web reads `getUser().getUserId()` and coalesces
+  `undefined` to `null`.
+- `Braze.logPurchase({ productId, currency, price, quantity?, properties? })`.
+  Required currency on the public contract even though the Web SDK
+  treats it as optional — revenue analytics roll up incorrectly when
+  some events lack currency. Android wraps `price` via
+  `BigDecimal.valueOf(double)` so the stored value is the exact
+  decimal a human typed (`14.99`), not a float-precision artifact.
+  Quantity defaults to `1`, validated to integer in 1-100 per Braze.
+
+### Improved
+
+- Example app: shared `parseJsonProperties(id)` helper used for both
+  event and purchase property inputs; replaces the per-input helper.
+- Plugin surface: **25 methods** across all three platforms.
+
 ## [0.0.6] — 2026-05-19
 
 ### Added — Subscription groups, aliases, demographics, device ID (Phase E)

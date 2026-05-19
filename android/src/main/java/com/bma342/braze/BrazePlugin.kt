@@ -11,15 +11,17 @@ import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import java.math.BigDecimal
 
 /**
  * Capacitor bridge for the Braze Android SDK (com.braze:android-sdk-ui 42.2.0).
  *
- * ## Surface in 0.0.6
+ * ## Surface in 0.0.7
  *
  * - **Bridge sanity:** `echo(value)`
  * - **Configuration:** `initialize(apiKey, endpoint, ...)`
- * - **User identity:** `changeUser(userId, sdkAuthSignature?)`, `addAlias(alias, label)`
+ * - **User identity:** `changeUser(userId, sdkAuthSignature?)`, `getUserId`,
+ *   `addAlias(alias, label)`
  * - **Device ID:** `getDeviceId`
  * - **User attributes (standard):** `setEmail`, `setPhoneNumber`,
  *   `setFirstName`, `setLastName`, `setLanguage`, `setCountry`
@@ -29,7 +31,8 @@ import com.getcapacitor.annotation.CapacitorPlugin
  *   dispatches on inferred value type
  * - **Subscription groups:** `addToSubscriptionGroup(groupId)`,
  *   `removeFromSubscriptionGroup(groupId)`
- * - **Custom events:** `logCustomEvent(name, properties?)`
+ * - **Events:** `logCustomEvent(name, properties?)`,
+ *   `logPurchase(productId, currency, price, quantity?, properties?)`
  * - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
  *   `requestImmediateDataFlush`
  *
@@ -139,6 +142,26 @@ class BrazePlugin : Plugin() {
             Braze.getInstance(context).changeUser(userId)
         }
         call.resolve()
+    }
+
+    /**
+     * Returns the current external user ID, or null when the user is still
+     * anonymous. The Braze Android SDK reports anonymous users as an empty
+     * string (`""`) on `currentUser.userId`; we translate that to JSON
+     * `null` so the public contract is a clean nullable string across all
+     * three platforms.
+     */
+    @PluginMethod
+    fun getUserId(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        val raw = user.userId
+        val result = JSObject()
+        if (raw.isNullOrEmpty()) {
+            result.put("userId", JSObject.NULL)
+        } else {
+            result.put("userId", raw)
+        }
+        call.resolve(result)
     }
 
     // -------------------------------------------------------------------------
@@ -388,6 +411,53 @@ class BrazePlugin : Plugin() {
             Braze.getInstance(context).logCustomEvent(name, brazeProperties)
         } else {
             Braze.getInstance(context).logCustomEvent(name)
+        }
+        call.resolve()
+    }
+
+    // -------------------------------------------------------------------------
+    // Purchases
+    // -------------------------------------------------------------------------
+
+    /**
+     * Validates the purchase shape, then forwards to
+     * `Braze.logPurchase(productId, currencyCode, price, quantity, properties)`.
+     *
+     * `price` is wrapped in `BigDecimal.valueOf(double)` — the
+     * `valueOf(double)` factory routes through `Double.toString` so the
+     * resulting BigDecimal exactly represents the human-readable value
+     * (e.g. `BigDecimal.valueOf(14.99)` yields "14.99", not
+     * "14.99000000000000056843...").
+     */
+    @PluginMethod
+    fun logPurchase(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        val productId = call.getString("productId")
+        if (productId.isNullOrEmpty()) {
+            call.reject("Braze.logPurchase: `productId` is required (string).")
+            return
+        }
+        val currency = call.getString("currency")
+        if (currency.isNullOrEmpty()) {
+            call.reject("Braze.logPurchase: `currency` is required (ISO 4217 string).")
+            return
+        }
+        val price = call.getDouble("price")
+        if (price == null || !price.isFinite() || price < 0.0) {
+            call.reject("Braze.logPurchase: `price` must be a non-negative finite number.")
+            return
+        }
+        val quantity = call.getInt("quantity") ?: 1
+        if (quantity < 1 || quantity > 100) {
+            call.reject("Braze.logPurchase: `quantity` must be an integer between 1 and 100.")
+            return
+        }
+        val brazeProperties = jsObjectToBrazeProperties(call.getObject("properties"))
+        val bigPrice = BigDecimal.valueOf(price)
+        if (brazeProperties != null) {
+            Braze.getInstance(context).logPurchase(productId, currency, bigPrice, quantity, brazeProperties)
+        } else {
+            Braze.getInstance(context).logPurchase(productId, currency, bigPrice, quantity)
         }
         call.resolve()
     }

@@ -79,6 +79,14 @@ export interface BrazeChangeUserOptions {
   sdkAuthSignature?: string;
 }
 
+export interface BrazeGetUserIdResult {
+  /**
+   * The current external user ID, or `null` if the user is still anonymous
+   * (i.e. {@link BrazePlugin.changeUser} has not been called).
+   */
+  userId: string | null;
+}
+
 // =============================================================================
 // User attributes (standard)
 //
@@ -228,6 +236,36 @@ export interface BrazeLogCustomEventOptions {
 }
 
 // =============================================================================
+// Purchases
+// =============================================================================
+
+export interface BrazeLogPurchaseOptions {
+  /**
+   * Product identifier. Max ~255 chars, alphanumeric + punctuation. Cannot
+   * begin with `$`. Enforced by the Braze backend.
+   */
+  productId: string;
+  /**
+   * ISO 4217 currency code, e.g. `"USD"`. Required by the plugin even where
+   * the underlying Web SDK treats it as optional — having currency on every
+   * purchase keeps revenue analytics consistent across platforms.
+   */
+  currency: string;
+  /**
+   * Per-unit price as a non-negative number in the currency's major units
+   * (dollars, not cents). The Android bridge wraps to `BigDecimal`
+   * internally.
+   */
+  price: number;
+  /**
+   * Number of units purchased. Defaults to `1`. Per Braze: integer in 1-100.
+   */
+  quantity?: number;
+  /** Optional purchase properties (same shape as event properties). */
+  properties?: BrazeEventProperties;
+}
+
+// =============================================================================
 // Privacy / lifecycle
 // =============================================================================
 
@@ -290,6 +328,15 @@ export interface BrazePlugin {
    * });
    */
   changeUser(options: BrazeChangeUserOptions): Promise<void>;
+
+  /**
+   * Returns the current external user ID, or `null` if the user is anonymous.
+   *
+   * @example
+   * const { userId } = await Braze.getUserId();
+   * if (!userId) await Braze.changeUser({ userId: 'user_123' });
+   */
+  getUserId(): Promise<BrazeGetUserIdResult>;
 
   // ---------------------------------------------------------------------------
   // User attributes (standard)
@@ -457,6 +504,26 @@ export interface BrazePlugin {
    * });
    */
   logCustomEvent(options: BrazeLogCustomEventOptions): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // Purchases
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Logs a purchase. Required for Braze's revenue analytics. `currency` is
+   * required on this contract even though the Web SDK accepts it optionally,
+   * because revenue rolls up incorrectly when some events lack currency.
+   *
+   * @example
+   * await Braze.logPurchase({
+   *   productId: 'sku_42',
+   *   currency: 'USD',
+   *   price: 14.99,
+   *   quantity: 1,
+   *   properties: { coupon: 'WELCOME10' },
+   * });
+   */
+  logPurchase(options: BrazeLogPurchaseOptions): Promise<void>;
 
   // ---------------------------------------------------------------------------
   // Privacy / lifecycle

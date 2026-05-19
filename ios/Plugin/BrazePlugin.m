@@ -17,6 +17,7 @@ CAP_PLUGIN(BrazePlugin, "Braze",
 
     // User identity
     CAP_PLUGIN_METHOD(changeUser, CAPPluginReturnPromise);
+    CAP_PLUGIN_METHOD(getUserId, CAPPluginReturnPromise);
 
     // User attributes (standard)
     CAP_PLUGIN_METHOD(setEmail, CAPPluginReturnPromise);
@@ -46,6 +47,9 @@ CAP_PLUGIN(BrazePlugin, "Braze",
 
     // Custom events
     CAP_PLUGIN_METHOD(logCustomEvent, CAPPluginReturnPromise);
+
+    // Purchases
+    CAP_PLUGIN_METHOD(logPurchase, CAPPluginReturnPromise);
 
     // Privacy / lifecycle
     CAP_PLUGIN_METHOD(wipeData, CAPPluginReturnPromise);

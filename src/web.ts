@@ -7,9 +7,11 @@ import type {
   BrazeEchoResult,
   BrazeGender,
   BrazeGetDeviceIdResult,
+  BrazeGetUserIdResult,
   BrazeInitializeOptions,
   BrazeIsDisabledResult,
   BrazeLogCustomEventOptions,
+  BrazeLogPurchaseOptions,
   BrazePlugin,
   BrazeSetCountryOptions,
   BrazeSetCustomUserAttributeOptions,
@@ -96,6 +98,14 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       throw new Error('Braze.changeUser: `userId` is required (string).');
     }
     braze.changeUser(options.userId, options.sdkAuthSignature);
+  }
+
+  async getUserId(): Promise<BrazeGetUserIdResult> {
+    const user = this.requireUser();
+    // Web SDK returns `string | null | undefined`; coalesce undefined to
+    // null so the public contract stays a clean nullable string.
+    const userId = user.getUserId() ?? null;
+    return { userId };
   }
 
   // ---------------------------------------------------------------------------
@@ -245,6 +255,24 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   }
 
   // ---------------------------------------------------------------------------
+  // Purchases
+  // ---------------------------------------------------------------------------
+
+  async logPurchase(options: BrazeLogPurchaseOptions): Promise<void> {
+    const braze = this.requireInitialized();
+    this.validatePurchase(options);
+    // Web SDK arg order: (productId, price, currencyCode?, quantity?, props?).
+    // Currency is required on our contract; pass through unconditionally.
+    braze.logPurchase(
+      options.productId,
+      options.price,
+      options.currency,
+      options.quantity,
+      options.properties,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // Privacy / lifecycle
   //
   // All four are init-independent — consumers might call wipeData on logout
@@ -365,6 +393,35 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       throw new Error(
         'Braze.setDateOfBirth: `day` must be an integer between 1 and 31.',
       );
+    }
+  }
+
+  /**
+   * Validates the purchase options. Native bridges duplicate these checks
+   * so error messages stay consistent across platforms.
+   */
+  private validatePurchase(options: BrazeLogPurchaseOptions): void {
+    if (!options.productId || typeof options.productId !== 'string') {
+      throw new Error('Braze.logPurchase: `productId` is required (string).');
+    }
+    if (!options.currency || typeof options.currency !== 'string') {
+      throw new Error('Braze.logPurchase: `currency` is required (ISO 4217 string).');
+    }
+    if (
+      typeof options.price !== 'number' ||
+      !Number.isFinite(options.price) ||
+      options.price < 0
+    ) {
+      throw new Error('Braze.logPurchase: `price` must be a non-negative finite number.');
+    }
+    if (options.quantity !== undefined) {
+      if (
+        !Number.isInteger(options.quantity) ||
+        options.quantity < 1 ||
+        options.quantity > 100
+      ) {
+        throw new Error('Braze.logPurchase: `quantity` must be an integer between 1 and 100.');
+      }
     }
   }
 
