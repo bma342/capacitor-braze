@@ -11,6 +11,25 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+### Changed — podspec renamed to `CapacitorBraze.podspec`
+
+Capacitor's plugin convention is that the Pod name matches the PascalCase
+of the npm package name: `@capacitor/preferences` → `CapacitorPreferences`,
+`capacitor-braze` → `CapacitorBraze`. Renaming our podspec to match means
+`cap sync` in consumer apps resolves the plugin automatically without any
+Podfile customization.
+
+`BrazePlugin.podspec` → `CapacitorBraze.podspec`. `s.name = 'BrazePlugin'`
+→ `s.name = 'CapacitorBraze'`. The npm package itself stays
+`capacitor-braze`. No Swift class name change — the bridge class is still
+`@objc(BrazePlugin)` on the Obj-C runtime side, and the JS plugin name
+`Braze` is unchanged.
+
+Pre-1.0 breaking change: any external Podfile that hardcoded
+`pod 'BrazePlugin'` will need to update to `pod 'CapacitorBraze'`.
+No npm consumers are affected because the plugin hasn't been published
+to npm yet.
+
 ### Changed — plugin re-exports `PluginListenerHandle`
 
 `PluginListenerHandle` (from `@capacitor/core`) is now re-exported from
@@ -24,6 +43,32 @@ import { Braze, type PluginListenerHandle } from 'capacitor-braze';
 No behavior change — it's literally the same type from `@capacitor/core`.
 The re-export removes a paper cut that surfaced when wiring the demo's
 content-cards listener.
+
+### Added — iOS + Android Capacitor platforms in `demo/`
+
+`demo/` now ships with both native projects added via `npx cap add ios`
+and `npx cap add android`. A consumer cloning this repo can open the
+Xcode workspace or Android Studio project directly — no separate
+bootstrap step beyond `npm install && npx cap sync`.
+
+iOS Podfile pins:
+
+  platform :ios, '15.0'
+  use_frameworks! :linkage => :static
+
+`platform 15.0` because BrazeKit 14.x requires iOS 15+. Capacitor's
+default `13.0` is below BrazeKit's floor and would fail `pod install`.
+
+`use_frameworks! :linkage => :static` because BrazeKit ships as a
+static XCFramework. Capacitor's default `use_frameworks!` (dynamic) is
+incompatible — CocoaPods refuses to mix static dependencies into a
+dynamic-linkage target and aborts with a not-quite-warning. Per Braze
+iOS install docs, static linkage across the whole app target is the
+recommended setup when BrazeKit is in the dependency graph.
+
+Both platforms' `.gitignore` files keep Pods, build artifacts, and
+local Xcode user data out of the repo. Total committed footprint for
+both platforms is ~700K + 70 files.
 
 ### Added — `demo/` Capacitor reference app (not published, dev artifact)
 

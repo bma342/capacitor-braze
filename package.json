@@ -13,7 +13,7 @@
     "android/consumer-rules.pro",
     "dist/",
     "ios/Plugin/",
-    "BrazePlugin.podspec"
+    "CapacitorBraze.podspec"
   ],
   "author": "Bryce Aspinwall <bryce.aspinwall@gmail.com>",
   "license": "MIT",
