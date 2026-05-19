@@ -65,7 +65,10 @@ jobs:
 
       - name: Verify README docgen markers are populated
         run: |
-          if ! grep -q '\[\`echo' README.md; then
+          # docgen always emits a "Update the source file JSDoc" comment
+          # inside the <docgen-api> block. If it isn't there, the markers
+          # exist but the content was never generated.
+          if ! grep -q 'Update the source file JSDoc' README.md; then
             echo "::error::README API section appears empty. Run 'npm run docgen' locally and commit."
             exit 1
           fi
