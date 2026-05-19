@@ -11,6 +11,37 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+## [0.0.4] — 2026-05-19
+
+### Added — Privacy & lifecycle methods
+
+The minimum production-safety surface per SECURITY.md §10. All five are
+init-independent except `requestImmediateDataFlush` (which needs a configured
+Braze instance to flush from).
+
+- `Braze.wipeData()` — destructive local data removal; for GDPR Article 17
+  flows. Drops the plugin's init state so subsequent post-init calls fail
+  cleanly until `initialize` is called again.
+- `Braze.disableSDK()` — halts all data collection.
+- `Braze.enableSDK()` — re-enables after `disableSDK`.
+- `Braze.isDisabled()` — returns `{ disabled: boolean }`.
+- `Braze.requestImmediateDataFlush()` — bypasses Braze's network batching.
+  Useful for Layer 4 smoke testing and edge cases where the app may be killed
+  before the next batch.
+
+### Improved
+
+- Exhaustive JSDoc on every method in `definitions.ts` with `@example` blocks,
+  cross-references to SECURITY.md sections, and clear notes on which methods
+  are init-independent.
+- iOS: `MARK:` section comments grouping bridge methods by category.
+- Android: KDoc on helpers explaining narrow-to-primitive contract for
+  `jsObjectToBrazeProperties`.
+- `BrazePlugin.m`: ordered CAP_PLUGIN_METHOD registrations by category to
+  match the Swift file structure (review-friendly).
+- Web: `loadSdk()` helper centralizes the dynamic `@braze/web-sdk` import with
+  a friendly error message if the peer dep isn't installed.
+
 ## [0.0.3] — 2026-05-19
 
 ### Added
