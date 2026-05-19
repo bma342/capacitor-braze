@@ -1,0 +1,38 @@
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+.npm/
+
+# TypeScript build output
+dist/
+*.tsbuildinfo
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# iOS
+ios/Pods/
+ios/Podfile.lock
+ios/build/
+ios/*.xcworkspace/
+ios/*.xcodeproj/xcuserdata/
+ios/*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Android
+android/.gradle/
+android/build/
+android/.idea/
+android/local.properties
+android/gradle/
+android/gradlew
+android/gradlew.bat
+
+# Env
+.env
+.env.local
+.env.*.local

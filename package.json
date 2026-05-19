@@ -1,0 +1,73 @@
+{
+  "name": "capacitor-braze",
+  "version": "0.0.1",
+  "description": "Capacitor 6+ plugin wrapping the official Braze SDKs for Android, iOS, and Web.",
+  "main": "dist/plugin.cjs.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "unpkg": "dist/plugin.js",
+  "files": [
+    "android/src/main/",
+    "android/build.gradle",
+    "android/proguard-rules.pro",
+    "android/consumer-rules.pro",
+    "dist/",
+    "ios/Plugin/",
+    "BrazePlugin.podspec"
+  ],
+  "author": "Bryce Aspinwall <bryce.aspinwall@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bma342/capacitor-braze.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bma342/capacitor-braze/issues"
+  },
+  "homepage": "https://github.com/bma342/capacitor-braze#readme",
+  "keywords": [
+    "capacitor",
+    "plugin",
+    "braze",
+    "appboy",
+    "customer-engagement",
+    "push-notifications",
+    "in-app-messages",
+    "analytics",
+    "ios",
+    "android",
+    "web"
+  ],
+  "scripts": {
+    "build": "npm run clean && tsc && rollup -c rollup.config.mjs",
+    "clean": "rimraf ./dist",
+    "watch": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/ios": "^6.0.0",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "rimraf": "^5.0.5",
+    "rollup": "^4.13.0",
+    "typescript": "~5.4.2"
+  },
+  "peerDependencies": {
+    "@capacitor/core": "^6.0.0",
+    "@braze/web-sdk": "^6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@braze/web-sdk": {
+      "optional": false
+    }
+  },
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    },
+    "android": {
+      "src": "android"
+    }
+  }
+}
