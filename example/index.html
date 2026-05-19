@@ -222,6 +222,24 @@
       </section>
 
       <!-- ============================================================ -->
+      <!-- Push                                                           -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>Push</h2>
+        <div class="row">
+          <label
+            >Push token (hex APNs / FCM string)
+            <input id="pushToken" type="text" placeholder="abc123…" />
+          </label>
+          <button data-method="registerPushToken">registerPushToken</button>
+        </div>
+        <p class="hint">
+          Native-only. Typically wired from <code>@capacitor/push-notifications</code>' <code>registration</code> event.
+          Calling on web throws.
+        </p>
+      </section>
+
+      <!-- ============================================================ -->
       <!-- Purchases                                                      -->
       <!-- ============================================================ -->
       <section class="card">

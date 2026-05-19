@@ -435,6 +435,22 @@ export interface BrazeContentCardsUpdatedEvent {
 }
 
 // =============================================================================
+// Push token registration
+// =============================================================================
+
+export interface BrazeRegisterPushTokenOptions {
+  /**
+   * The platform-specific push token. On iOS this is the hex-encoded
+   * APNs device token (the same string that `@capacitor/push-notifications`
+   * emits in its `registration` event). On Android this is the FCM
+   * registration token. Web does not have a comparable concept (Web Push
+   * uses VAPID via the Push API + Service Worker, with no token to
+   * register manually); calling on web throws.
+   */
+  token: string;
+}
+
+// =============================================================================
 // Purchases
 // =============================================================================
 
@@ -816,6 +832,41 @@ export interface BrazePlugin {
    * await Braze.logContentCardImpression({ cardId: card.id });
    */
   logContentCardImpression(options: BrazeLogContentCardImpressionOptions): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // Push token registration
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Hands a push registration token to the Braze SDK so the user can
+   * receive Braze-orchestrated push notifications. **Native-only** —
+   * the canonical wiring is:
+   *
+   *   1. Consumer installs `@capacitor/push-notifications` alongside this
+   *      plugin.
+   *   2. Consumer calls `PushNotifications.requestPermissions()` and
+   *      then `PushNotifications.register()`.
+   *   3. In the `registration` listener, consumer forwards the token
+   *      here via `Braze.registerPushToken({ token: event.value })`.
+   *
+   * Platform behavior:
+   *   - **iOS:** hex-decodes the APNs token and hands it to
+   *     `braze.notifications.register(deviceToken:)`.
+   *   - **Android:** assigns to `Braze.getInstance(context).registeredPushToken`
+   *     (the SDK's setter for manual FCM token handoff).
+   *   - **Web:** throws — Web Push uses VAPID + Service Worker
+   *     subscriptions, with no token to register manually. See plugin
+   *     MDC C03 for the divergence policy.
+   *
+   * @example
+   * import { PushNotifications } from '@capacitor/push-notifications';
+   * import { Braze } from 'capacitor-braze';
+   *
+   * PushNotifications.addListener('registration', async ({ value }) => {
+   *   await Braze.registerPushToken({ token: value });
+   * });
+   */
+  registerPushToken(options: BrazeRegisterPushTokenOptions): Promise<void>;
 
   // ---------------------------------------------------------------------------
   // Listeners

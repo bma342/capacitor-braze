@@ -4,7 +4,7 @@ import Foundation
 
 /// Capacitor bridge for the Braze iOS SDK (BrazeKit 14.1.0).
 ///
-/// ## Surface in 0.0.10
+/// ## Surface in 0.0.11
 ///
 /// - **Bridge sanity:** `echo(value)`
 /// - **Configuration:** `initialize(apiKey, endpoint, ...)`
@@ -25,6 +25,7 @@ import Foundation
 ///   `refreshFeatureFlags`, `logFeatureFlagImpression(id)`
 /// - **Content cards:** `getContentCards`, `requestContentCardsRefresh`,
 ///   `logContentCardClick(cardId)`, `logContentCardImpression(cardId)`
+/// - **Push:** `registerPushToken(token)`
 /// - **Listeners:** `addListener('featureFlagsUpdated', ...)`,
 ///   `addListener('contentCardsUpdated', ...)`
 /// - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
@@ -612,6 +613,56 @@ public class BrazePlugin: CAPPlugin {
         @unknown default:
             return nil
         }
+    }
+
+    // MARK: - Push token registration
+    //
+    // Consumer flow:
+    //   1. @capacitor/push-notifications calls UNUserNotificationCenter
+    //      and fires its `registration` event with the APNs device
+    //      token as a hex string.
+    //   2. Consumer forwards the hex string to us.
+    //   3. We hex-decode to Data and hand to BrazeKit's
+    //      notifications.register(deviceToken:) entry point.
+    //
+    // Hex decoding is done here rather than asking the consumer to
+    // pre-decode because @capacitor/push-notifications emits the hex
+    // form; pre-decoding would force the consumer to write a helper
+    // every time.
+
+    @objc func registerPushToken(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let token = call.getString("token"), !token.isEmpty else {
+            call.reject("Braze.registerPushToken: `token` is required (string).")
+            return
+        }
+        guard let tokenData = Self.dataFromHex(token) else {
+            call.reject("Braze.registerPushToken: `token` is not a valid hex string.")
+            return
+        }
+        braze.notifications.register(deviceToken: tokenData)
+        call.resolve()
+    }
+
+    /// Hex-string → Data. Returns nil for malformed input (odd length,
+    /// non-hex characters). Whitespace and the iOS Data debug-print
+    /// wrapper characters (`<`, `>`) are tolerated so the consumer can
+    /// pass either the raw hex or the result of `String(describing: data)`.
+    private static func dataFromHex(_ hex: String) -> Data? {
+        let cleaned = hex
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "<", with: "")
+            .replacingOccurrences(of: ">", with: "")
+        guard cleaned.count % 2 == 0 else { return nil }
+        var data = Data(capacity: cleaned.count / 2)
+        var index = cleaned.startIndex
+        while index < cleaned.endIndex {
+            let nextIndex = cleaned.index(index, offsetBy: 2)
+            guard let byte = UInt8(cleaned[index..<nextIndex], radix: 16) else { return nil }
+            data.append(byte)
+            index = nextIndex
+        }
+        return data
     }
 
     // MARK: - Privacy / lifecycle

@@ -205,6 +205,8 @@ const runMethods: Record<string, () => Promise<unknown>> = {
     activeListeners.length = 0;
   },
 
+  registerPushToken: () => Braze.registerPushToken({ token: input('pushToken') }),
+
   logPurchase: () => {
     const quantityRaw = input('quantity');
     return Braze.logPurchase({

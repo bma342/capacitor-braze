@@ -36,6 +36,7 @@ Hiding cross-SDK divergence from consumers is the single most valuable thing a C
 | **Anonymous user ID** | `null` | `getUser().getUserId() ?? null` | `braze.user.id` (Swift `String?` → JSON `null`) | empty string `""` → `JSObject.NULL` |
 | **Subscription group ID** | string | passthrough | passthrough | passthrough |
 | **Feature flag missing** | `null` | passthrough | passthrough (BrazeKit returns `nil`) | passthrough (`getFeatureFlag` returns `FeatureFlag?`) |
+| **Push registration token** | required string | **throws** (Web Push has no token) | hex string → `Data` via `dataFromHex` helper | FCM string passthrough to `registeredPushToken` setter |
 
 ---
 
@@ -113,6 +114,38 @@ The plugin's contract is `string | null`. Each bridge coalesces:
 This is the canonical case for "SDK sentinel translation": the bridge handles three separate sentinels so consumers see one.
 
 ---
+
+### When a method legitimately doesn't exist on one platform — `registerPushToken`
+
+Phase M shipped the plugin's first method that diverges by *absence* on one of the three platforms. iOS BrazeKit takes an APNs token (`Data`), Android takes an FCM token string, and Web Push uses VAPID + Service Worker subscriptions — there is no token shape on web that a consumer could hand us.
+
+The plugin's policy for this case (per [SDK_SURFACE.md §3](../../SDK_SURFACE.md)):
+
+1. **The TS contract still declares the method** — `registerPushToken(options): Promise<void>` is on the plugin interface for all platforms. Consumers don't conditionally type-check.
+2. **The unsupported platform throws** with a clear runtime error pointing at the docs and at the recommended branching pattern (`Capacitor.getPlatform()`).
+3. **The JSDoc on the method explicitly enumerates per-platform behavior** so the consumer sees the divergence at the documentation surface, not just at runtime.
+4. **The native bridges handle their own translation** (iOS: hex string → `Data`; Android: string passthrough; Web: throw).
+
+Worked example, web bridge ([`src/web.ts`](../../src/web.ts)):
+
+```ts
+async registerPushToken(_options: BrazeRegisterPushTokenOptions): Promise<void> {
+  throw new Error(
+    'Braze.registerPushToken is not supported on web. ' +
+      'Web Push uses VAPID + Service Worker subscriptions, not push tokens. ' +
+      'Branch on Capacitor.getPlatform() and call this only on iOS / Android. ' +
+      'See docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md.',
+  );
+}
+```
+
+The error message does three jobs:
+
+- Tells the consumer *what* failed (`Braze.registerPushToken … not supported on web`).
+- Tells them *why* in one sentence (Web Push uses a different mechanism).
+- Tells them *what to do instead* (branch on `Capacitor.getPlatform()`).
+
+This is the template every future divergent method follows. Banners (v0.2; web-only), geofences (v0.5; native-only), and Push Stories (v1.0; iOS-only) will all use the same shape.
 
 ## Rules for extending
 

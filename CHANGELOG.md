@@ -11,6 +11,44 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+## [0.0.11] — 2026-05-19
+
+### Added — `registerPushToken` (Phase M)
+
+`Braze.registerPushToken({ token })` on iOS + Android. The plugin's
+first method that diverges by absence on one platform — web throws.
+
+Recommended consumer wiring:
+
+```ts
+import { PushNotifications } from '@capacitor/push-notifications';
+import { Braze } from 'capacitor-braze';
+
+PushNotifications.addListener('registration', async ({ value }) => {
+  await Braze.registerPushToken({ token: value });
+});
+```
+
+Per-platform behavior:
+
+- **iOS:** hex-decodes the APNs token string with a local `dataFromHex`
+  helper (tolerates whitespace and the `<...>` debug-print wrapper) and
+  hands the `Data` to BrazeKit's `notifications.register(deviceToken:)`.
+- **Android:** assigns the FCM token string to
+  `Braze.getInstance(context).registeredPushToken`. No decoding step
+  — FCM tokens are already strings.
+- **Web:** throws `Error` with the C03-prescribed shape: what failed,
+  why (Web Push uses VAPID + Service Worker subscriptions), what to do
+  instead (`Capacitor.getPlatform()` branch).
+
+[C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md) gains a new
+section "When a method legitimately doesn't exist on one platform"
+codifying the pattern. Future divergent methods (banners, geofences,
+Push Stories) follow the same shape.
+
+Surface: **34 callable methods** + `addListener` / `removeAllListeners`
+for two events.
+
 ### Changed — podspec renamed to `CapacitorBraze.podspec`
 
 Capacitor's plugin convention is that the Pod name matches the PascalCase

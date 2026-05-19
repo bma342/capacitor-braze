@@ -4,7 +4,7 @@ PODS:
     - BrazeKit (= 14.1.0)
   - Capacitor (6.2.1):
     - CapacitorCordova
-  - CapacitorBraze (0.0.10):
+  - CapacitorBraze (0.0.11):
     - BrazeKit (= 14.1.0)
     - BrazeUI (= 14.1.0)
     - Capacitor
@@ -32,7 +32,7 @@ SPEC CHECKSUMS:
   BrazeKit: ef0a5193484c1a49f06c2520cedce7b2c3e1d9e4
   BrazeUI: 23e948beb8289f9a38155930241d3667189c13b4
   Capacitor: c95400d761e376be9da6be5a05f226c0e865cebf
-  CapacitorBraze: 0586a178fa00775b6b6ac1a81cb7424a285569db
+  CapacitorBraze: 0d8ed9132859eb72246df6032af27afec5114811
   CapacitorCordova: 8d93e14982f440181be7304aa9559ca631d77fff
 
 PODFILE CHECKSUM: 99a02fab24a2965681ba61076156133bed484cf2

@@ -28,7 +28,7 @@ import java.math.BigDecimal
 /**
  * Capacitor bridge for the Braze Android SDK (com.braze:android-sdk-ui 42.2.0).
  *
- * ## Surface in 0.0.10
+ * ## Surface in 0.0.11
  *
  * - **Bridge sanity:** `echo(value)`
  * - **Configuration:** `initialize(apiKey, endpoint, ...)`
@@ -49,6 +49,7 @@ import java.math.BigDecimal
  *   `refreshFeatureFlags`, `logFeatureFlagImpression(id)`
  * - **Content cards:** `getContentCards`, `requestContentCardsRefresh`,
  *   `logContentCardClick(cardId)`, `logContentCardImpression(cardId)`
+ * - **Push:** `registerPushToken(token)`
  * - **Listeners:** `addListener('featureFlagsUpdated', ...)`,
  *   `addListener('contentCardsUpdated', ...)`
  * - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
@@ -649,6 +650,33 @@ class BrazePlugin : Plugin() {
         if (!requireInitialized(call)) return
         val card = requireContentCardById(call, "logContentCardImpression") ?: return
         card.logImpression()
+        call.resolve()
+    }
+
+    // -------------------------------------------------------------------------
+    // Push token registration
+    //
+    // Consumer flow:
+    //   1. @capacitor/push-notifications fires its `registration` event
+    //      with the FCM token string.
+    //   2. Consumer forwards that string here.
+    //   3. We assign it to Braze.getInstance(context).registeredPushToken,
+    //      which the SDK consumes for outbound FCM messaging.
+    //
+    // The SDK's setter accepts the token string verbatim; no decoding
+    // step is needed (FCM tokens are already strings, unlike iOS APNs
+    // tokens which arrive as Data).
+    // -------------------------------------------------------------------------
+
+    @PluginMethod
+    fun registerPushToken(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        val token = call.getString("token")
+        if (token.isNullOrEmpty()) {
+            call.reject("Braze.registerPushToken: `token` is required (string).")
+            return
+        }
+        Braze.getInstance(context).registeredPushToken = token
         call.resolve()
     }
 

@@ -25,6 +25,7 @@ import type {
   BrazeLogFeatureFlagImpressionOptions,
   BrazeLogPurchaseOptions,
   BrazePlugin,
+  BrazeRegisterPushTokenOptions,
   BrazeSetCountryOptions,
   BrazeSetCustomUserAttributeOptions,
   BrazeSetDateOfBirthOptions,
@@ -407,6 +408,27 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   async requestImmediateDataFlush(): Promise<void> {
     const braze = this.requireInitialized();
     braze.requestImmediateDataFlush();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Push token registration
+  //
+  // Web Push uses VAPID + Service Worker subscriptions; there's no token
+  // shape comparable to APNs / FCM that a consumer could hand us. The
+  // Braze Web SDK exposes its own push flow via `requestPushPermission`
+  // and `subscribeToContentCardsUpdates`-style hooks, which is the wrong
+  // shape for this method. We throw rather than silently no-op so a
+  // consumer who's accidentally calling this on the web branch finds out
+  // immediately. See plugin MDC C03 for the platform-divergence policy.
+  // ---------------------------------------------------------------------------
+
+  async registerPushToken(_options: BrazeRegisterPushTokenOptions): Promise<void> {
+    throw new Error(
+      'Braze.registerPushToken is not supported on web. ' +
+        'Web Push uses VAPID + Service Worker subscriptions, not push tokens. ' +
+        'Branch on Capacitor.getPlatform() and call this only on iOS / Android. ' +
+        'See docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md.',
+    );
   }
 
   // ---------------------------------------------------------------------------
