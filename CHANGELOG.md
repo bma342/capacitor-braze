@@ -11,19 +11,53 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+## [0.0.6] — 2026-05-19
+
+### Added — Subscription groups, aliases, demographics, device ID (Phase E)
+
+Pull-forward of seven v0.2-roadmap methods that consumers reach for almost
+immediately after the basic identify/event surface lands. All seven on all
+three platforms.
+
+- `Braze.addToSubscriptionGroup({ groupId })` — adds the current user to a
+  Braze email/SMS subscription group.
+- `Braze.removeFromSubscriptionGroup({ groupId })` — counterpart.
+- `Braze.addAlias({ alias, label })` — non-primary identifier; `(alias,
+  label)` pairs are unique across users.
+- `Braze.getDeviceId()` → `{ deviceId: string }` — Braze SDK device id,
+  for backend-side targeted messaging or debugging.
+- `Braze.setDateOfBirth({ year, month, day })` — `month` is 1-12 (matches
+  Web SDK contract; the Android bridge maps to `com.braze.enums.Month`).
+- `Braze.setGender({ gender })` — string union `'male' | 'female' | 'other' |
+  'unknown' | 'not_applicable' | 'prefer_not_to_say'`. Bridges map to the
+  matching native enum case so consumers never see the SDK's
+  single-letter / enum-case shorthand.
+- `Braze.setHomeCity({ homeCity })` — string or `null` to clear.
+
 ### Added — `example/` Capacitor app (not published, dev tool only)
 
-A minimal Capacitor app under `example/` that exercises every plugin method
-end-to-end. Useful for smoke-testing changes and validating against a real
-Braze account.
+Minimal Capacitor app under `example/` that exercises every plugin method
+end-to-end. Originally committed under Unreleased; ships in 0.0.6 alongside
+the Phase E methods.
 
-- Vite + vanilla TypeScript (no framework coupling)
-- Single page with UI for all 16 methods grouped by category
-- Live log panel shows each call's result or error
-- Runs in browser today; iOS/Android added via `npx cap add`
-- README documents the full Braze trial smoke-test flow
+- Vite + vanilla TypeScript (no framework coupling).
+- Single page with UI for every method, grouped by category.
+- Live log panel shows each call's result or error.
+- Runs in browser today via `@braze/web-sdk`; iOS/Android added via
+  `npx cap add` per the example README.
 
-Plugin code itself is unchanged in this Unreleased section — no version bump.
+### Improved
+
+- TS types: new `BrazeGender` union and per-method option types
+  (`BrazeSubscriptionGroupOptions`, `BrazeAddAliasOptions`,
+  `BrazeSetDateOfBirthOptions`, etc.) exported so consumers can write
+  helper functions with full type safety.
+- iOS bridge: dates are constructed against a UTC Gregorian calendar so a
+  stored DOB doesn't drift by a day based on device timezone, matching the
+  Android and Web semantics.
+- Web bridge: `WEB_GENDER_MAP` centralizes the public string → SDK
+  single-letter constant mapping in one place.
+- Plugin now exposes **23 methods** across all three platforms.
 
 ## [0.0.5] — 2026-05-19
 

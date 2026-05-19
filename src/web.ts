@@ -1,21 +1,42 @@
 import { WebPlugin } from '@capacitor/core';
 
 import type {
+  BrazeAddAliasOptions,
   BrazeChangeUserOptions,
   BrazeEchoOptions,
   BrazeEchoResult,
+  BrazeGender,
+  BrazeGetDeviceIdResult,
   BrazeInitializeOptions,
   BrazeIsDisabledResult,
   BrazeLogCustomEventOptions,
   BrazePlugin,
   BrazeSetCountryOptions,
   BrazeSetCustomUserAttributeOptions,
+  BrazeSetDateOfBirthOptions,
   BrazeSetEmailOptions,
   BrazeSetFirstNameOptions,
+  BrazeSetGenderOptions,
+  BrazeSetHomeCityOptions,
   BrazeSetLanguageOptions,
   BrazeSetLastNameOptions,
   BrazeSetPhoneNumberOptions,
+  BrazeSubscriptionGroupOptions,
 } from './definitions';
+
+/**
+ * Maps the plugin's stable string gender values to the Web SDK's
+ * `User.Genders` single-letter constants. Keeping the mapping here (not in
+ * the bridge) means consumers never see the SDK's `'m'`/`'f'` shorthand.
+ */
+const WEB_GENDER_MAP: Readonly<Record<BrazeGender, string>> = {
+  male: 'm',
+  female: 'f',
+  other: 'o',
+  unknown: 'u',
+  not_applicable: 'n',
+  prefer_not_to_say: 'p',
+};
 
 type BrazeWebSdk = typeof import('@braze/web-sdk');
 
@@ -131,6 +152,87 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   }
 
   // ---------------------------------------------------------------------------
+  // Subscription groups
+  // ---------------------------------------------------------------------------
+
+  async addToSubscriptionGroup(
+    options: BrazeSubscriptionGroupOptions,
+  ): Promise<void> {
+    const user = this.requireUser();
+    this.requireGroupId(options.groupId, 'addToSubscriptionGroup');
+    user.addToSubscriptionGroup(options.groupId);
+  }
+
+  async removeFromSubscriptionGroup(
+    options: BrazeSubscriptionGroupOptions,
+  ): Promise<void> {
+    const user = this.requireUser();
+    this.requireGroupId(options.groupId, 'removeFromSubscriptionGroup');
+    user.removeFromSubscriptionGroup(options.groupId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Aliases
+  // ---------------------------------------------------------------------------
+
+  async addAlias(options: BrazeAddAliasOptions): Promise<void> {
+    const user = this.requireUser();
+    if (!options.alias || typeof options.alias !== 'string') {
+      throw new Error('Braze.addAlias: `alias` is required (string).');
+    }
+    if (!options.label || typeof options.label !== 'string') {
+      throw new Error('Braze.addAlias: `label` is required (string).');
+    }
+    user.addAlias(options.alias, options.label);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Device ID
+  // ---------------------------------------------------------------------------
+
+  async getDeviceId(): Promise<BrazeGetDeviceIdResult> {
+    const braze = await this.loadSdk();
+    const deviceId = braze.getDeviceId();
+    if (!deviceId) {
+      throw new Error(
+        'Braze.getDeviceId: SDK has not generated a device ID yet. ' +
+          'Call `initialize` first or wait until the SDK has finished bootstrapping.',
+      );
+    }
+    return { deviceId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Demographics
+  // ---------------------------------------------------------------------------
+
+  async setDateOfBirth(options: BrazeSetDateOfBirthOptions): Promise<void> {
+    const user = this.requireUser();
+    this.validateDateOfBirth(options);
+    user.setDateOfBirth(options.year, options.month, options.day);
+  }
+
+  async setGender(options: BrazeSetGenderOptions): Promise<void> {
+    const user = this.requireUser();
+    const code = WEB_GENDER_MAP[options.gender];
+    if (!code) {
+      throw new Error(
+        `Braze.setGender: unknown gender "${options.gender}". ` +
+          `Allowed: ${Object.keys(WEB_GENDER_MAP).join(', ')}.`,
+      );
+    }
+    // Cast through `unknown` because the Web SDK types the gender param as
+    // its private `Genders` union; the WEB_GENDER_MAP values match exactly
+    // (`'m' | 'f' | ...`) but TS can't see through the typeof-static lookup.
+    user.setGender(code as unknown as Parameters<typeof user.setGender>[0]);
+  }
+
+  async setHomeCity(options: BrazeSetHomeCityOptions): Promise<void> {
+    const user = this.requireUser();
+    user.setHomeCity(options.homeCity);
+  }
+
+  // ---------------------------------------------------------------------------
   // Custom events
   // ---------------------------------------------------------------------------
 
@@ -230,6 +332,40 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       }
     }
     return this.braze;
+  }
+
+  /**
+   * Validates the subscription group ID. Shared between
+   * `addToSubscriptionGroup` and `removeFromSubscriptionGroup` so the error
+   * message is consistent.
+   */
+  private requireGroupId(groupId: string, method: string): void {
+    if (!groupId || typeof groupId !== 'string') {
+      throw new Error(`Braze.${method}: \`groupId\` is required (string).`);
+    }
+  }
+
+  /**
+   * Validates the date-of-birth components. Native bridges duplicate these
+   * checks; centralizing here gives the web path identical error semantics.
+   */
+  private validateDateOfBirth(options: BrazeSetDateOfBirthOptions): void {
+    const { year, month, day } = options;
+    if (!Number.isInteger(year) || year < 1900 || year > 2100) {
+      throw new Error(
+        'Braze.setDateOfBirth: `year` must be an integer between 1900 and 2100.',
+      );
+    }
+    if (!Number.isInteger(month) || month < 1 || month > 12) {
+      throw new Error(
+        'Braze.setDateOfBirth: `month` must be an integer between 1 and 12.',
+      );
+    }
+    if (!Number.isInteger(day) || day < 1 || day > 31) {
+      throw new Error(
+        'Braze.setDateOfBirth: `day` must be an integer between 1 and 31.',
+      );
+    }
   }
 
   /**

@@ -26,8 +26,23 @@ CAP_PLUGIN(BrazePlugin, "Braze",
     CAP_PLUGIN_METHOD(setLanguage, CAPPluginReturnPromise);
     CAP_PLUGIN_METHOD(setCountry, CAPPluginReturnPromise);
 
+    // User attributes (demographics)
+    CAP_PLUGIN_METHOD(setDateOfBirth, CAPPluginReturnPromise);
+    CAP_PLUGIN_METHOD(setGender, CAPPluginReturnPromise);
+    CAP_PLUGIN_METHOD(setHomeCity, CAPPluginReturnPromise);
+
     // User attributes (custom)
     CAP_PLUGIN_METHOD(setCustomUserAttribute, CAPPluginReturnPromise);
+
+    // Subscription groups
+    CAP_PLUGIN_METHOD(addToSubscriptionGroup, CAPPluginReturnPromise);
+    CAP_PLUGIN_METHOD(removeFromSubscriptionGroup, CAPPluginReturnPromise);
+
+    // Aliases
+    CAP_PLUGIN_METHOD(addAlias, CAPPluginReturnPromise);
+
+    // Device ID
+    CAP_PLUGIN_METHOD(getDeviceId, CAPPluginReturnPromise);
 
     // Custom events
     CAP_PLUGIN_METHOD(logCustomEvent, CAPPluginReturnPromise);

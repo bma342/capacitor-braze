@@ -3,6 +3,8 @@ package com.bma342.braze
 import android.util.Log
 import com.braze.Braze
 import com.braze.configuration.BrazeConfig
+import com.braze.enums.Gender
+import com.braze.enums.Month
 import com.braze.models.outgoing.BrazeProperties
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -13,15 +15,20 @@ import com.getcapacitor.annotation.CapacitorPlugin
 /**
  * Capacitor bridge for the Braze Android SDK (com.braze:android-sdk-ui 42.2.0).
  *
- * ## Surface in 0.0.5
+ * ## Surface in 0.0.6
  *
  * - **Bridge sanity:** `echo(value)`
  * - **Configuration:** `initialize(apiKey, endpoint, ...)`
- * - **User identity:** `changeUser(userId, sdkAuthSignature?)`
+ * - **User identity:** `changeUser(userId, sdkAuthSignature?)`, `addAlias(alias, label)`
+ * - **Device ID:** `getDeviceId`
  * - **User attributes (standard):** `setEmail`, `setPhoneNumber`,
  *   `setFirstName`, `setLastName`, `setLanguage`, `setCountry`
+ * - **User attributes (demographics):** `setDateOfBirth(year, month, day)`,
+ *   `setGender(gender)`, `setHomeCity(homeCity?)`
  * - **User attributes (custom):** `setCustomUserAttribute(key, value)` —
  *   dispatches on inferred value type
+ * - **Subscription groups:** `addToSubscriptionGroup(groupId)`,
+ *   `removeFromSubscriptionGroup(groupId)`
  * - **Custom events:** `logCustomEvent(name, properties?)`
  * - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
  *   `requestImmediateDataFlush`
@@ -218,6 +225,149 @@ class BrazePlugin : Plugin() {
                 return
             }
         }
+        call.resolve()
+    }
+
+    // -------------------------------------------------------------------------
+    // Subscription groups
+    // -------------------------------------------------------------------------
+
+    @PluginMethod
+    fun addToSubscriptionGroup(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        val groupId = call.getString("groupId")
+        if (groupId.isNullOrEmpty()) {
+            call.reject("Braze.addToSubscriptionGroup: `groupId` is required (string).")
+            return
+        }
+        user.addToSubscriptionGroup(groupId)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun removeFromSubscriptionGroup(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        val groupId = call.getString("groupId")
+        if (groupId.isNullOrEmpty()) {
+            call.reject("Braze.removeFromSubscriptionGroup: `groupId` is required (string).")
+            return
+        }
+        user.removeFromSubscriptionGroup(groupId)
+        call.resolve()
+    }
+
+    // -------------------------------------------------------------------------
+    // Aliases
+    // -------------------------------------------------------------------------
+
+    @PluginMethod
+    fun addAlias(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        val alias = call.getString("alias")
+        if (alias.isNullOrEmpty()) {
+            call.reject("Braze.addAlias: `alias` is required (string).")
+            return
+        }
+        val label = call.getString("label")
+        if (label.isNullOrEmpty()) {
+            call.reject("Braze.addAlias: `label` is required (string).")
+            return
+        }
+        user.addAlias(alias, label)
+        call.resolve()
+    }
+
+    // -------------------------------------------------------------------------
+    // Device ID
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns the Braze SDK device identifier. The Android SDK exposes this
+     * as a property on the singleton (not on `currentUser`), and it is
+     * generated on first SDK use.
+     */
+    @PluginMethod
+    fun getDeviceId(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        val deviceId = Braze.getInstance(context).deviceId
+        if (deviceId.isNullOrEmpty()) {
+            call.reject("Braze.getDeviceId: SDK has not generated a device ID yet.")
+            return
+        }
+        val result = JSObject()
+        result.put("deviceId", deviceId)
+        call.resolve(result)
+    }
+
+    // -------------------------------------------------------------------------
+    // Demographics
+    // -------------------------------------------------------------------------
+
+    /**
+     * Sets the user's date of birth. Public TS contract uses `month` as 1-12
+     * to match the Web SDK; we map to the `com.braze.enums.Month` ordinal
+     * here so consumers never see the Java `Calendar.MONTH` 0-indexed quirk.
+     */
+    @PluginMethod
+    fun setDateOfBirth(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        val year = call.getInt("year")
+        val month = call.getInt("month")
+        val day = call.getInt("day")
+        if (year == null || month == null || day == null) {
+            call.reject("Braze.setDateOfBirth: `year`, `month`, and `day` are required (integers).")
+            return
+        }
+        if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
+            call.reject(
+                "Braze.setDateOfBirth: out of range. " +
+                    "Expected year 1900-2100, month 1-12, day 1-31.",
+            )
+            return
+        }
+        // Month enum is ordered JANUARY..DECEMBER; values()[month-1] maps
+        // the 1-indexed TS month to the matching enum case.
+        val monthEnum = Month.values()[month - 1]
+        user.setDateOfBirth(year, monthEnum, day)
+        call.resolve()
+    }
+
+    /**
+     * Maps the plugin's stable string gender values to `com.braze.enums.Gender`
+     * enum cases. Keeping the mapping at the bridge layer means consumers
+     * never see the SDK's enum names directly.
+     */
+    @PluginMethod
+    fun setGender(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        val raw = call.getString("gender")
+        if (raw.isNullOrEmpty()) {
+            call.reject("Braze.setGender: `gender` is required (string).")
+            return
+        }
+        val gender = when (raw) {
+            "male" -> Gender.MALE
+            "female" -> Gender.FEMALE
+            "other" -> Gender.OTHER
+            "unknown" -> Gender.UNKNOWN
+            "not_applicable" -> Gender.NOT_APPLICABLE
+            "prefer_not_to_say" -> Gender.PREFER_NOT_TO_SAY
+            else -> {
+                call.reject(
+                    "Braze.setGender: unknown gender \"$raw\". " +
+                        "Allowed: male, female, other, unknown, not_applicable, prefer_not_to_say.",
+                )
+                return
+            }
+        }
+        user.setGender(gender)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setHomeCity(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        user.setHomeCity(call.getString("homeCity"))
         call.resolve()
     }
 

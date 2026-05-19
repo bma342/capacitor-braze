@@ -58,6 +58,14 @@
         <div class="row">
           <button data-method="changeUser">changeUser</button>
         </div>
+        <div class="row">
+          <label>alias <input id="alias" type="text" placeholder="cust_1234" /></label>
+          <label>label <input id="aliasLabel" type="text" placeholder="internal_id" /></label>
+          <button data-method="addAlias">addAlias</button>
+        </div>
+        <div class="row">
+          <button data-method="getDeviceId">getDeviceId</button>
+        </div>
       </section>
 
       <!-- ============================================================ -->
@@ -88,6 +96,48 @@
         <div class="row">
           <label>country <input id="country" type="text" placeholder="US" /></label>
           <button data-method="setCountry">setCountry</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- User attributes (demographics)                                 -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>User attributes (demographics)</h2>
+        <div class="row">
+          <label>year <input id="dobYear" type="number" placeholder="1992" /></label>
+          <label>month (1-12) <input id="dobMonth" type="number" placeholder="7" /></label>
+          <label>day <input id="dobDay" type="number" placeholder="15" /></label>
+          <button data-method="setDateOfBirth">setDateOfBirth</button>
+        </div>
+        <div class="row">
+          <label>gender
+            <select id="gender">
+              <option value="male">male</option>
+              <option value="female">female</option>
+              <option value="other">other</option>
+              <option value="unknown">unknown</option>
+              <option value="not_applicable">not_applicable</option>
+              <option value="prefer_not_to_say">prefer_not_to_say</option>
+            </select>
+          </label>
+          <button data-method="setGender">setGender</button>
+        </div>
+        <div class="row">
+          <label>homeCity <input id="homeCity" type="text" placeholder="San Francisco" /></label>
+          <button data-method="setHomeCity">setHomeCity</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- Subscription groups                                            -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>Subscription groups</h2>
+        <div class="row">
+          <label>groupId <input id="groupId" type="text" placeholder="group-uuid" /></label>
+          <button data-method="addToSubscriptionGroup">addToSubscriptionGroup</button>
+          <button data-method="removeFromSubscriptionGroup">removeFromSubscriptionGroup</button>
         </div>
       </section>
 

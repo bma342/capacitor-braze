@@ -4,15 +4,20 @@ import Foundation
 
 /// Capacitor bridge for the Braze iOS SDK (BrazeKit 14.1.0).
 ///
-/// ## Surface in 0.0.5
+/// ## Surface in 0.0.6
 ///
 /// - **Bridge sanity:** `echo(value)`
 /// - **Configuration:** `initialize(apiKey, endpoint, ...)`
-/// - **User identity:** `changeUser(userId, sdkAuthSignature?)`
+/// - **User identity:** `changeUser(userId, sdkAuthSignature?)`, `addAlias(alias, label)`
+/// - **Device ID:** `getDeviceId`
 /// - **User attributes (standard):** `setEmail`, `setPhoneNumber`,
 ///   `setFirstName`, `setLastName`, `setLanguage`, `setCountry`
+/// - **User attributes (demographics):** `setDateOfBirth(year, month, day)`,
+///   `setGender(gender)`, `setHomeCity(homeCity?)`
 /// - **User attributes (custom):** `setCustomUserAttribute(key, value)` —
 ///   dispatches on inferred value type
+/// - **Subscription groups:** `addToSubscriptionGroup(groupId)`,
+///   `removeFromSubscriptionGroup(groupId)`
 /// - **Custom events:** `logCustomEvent(name, properties?)`
 /// - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
 ///   `requestImmediateDataFlush`
@@ -173,6 +178,120 @@ public class BrazePlugin: CAPPlugin {
             call.reject("Braze.setCustomUserAttribute: `value` must be string, number, or boolean.")
             return
         }
+        call.resolve()
+    }
+
+    // MARK: - Subscription groups
+
+    @objc func addToSubscriptionGroup(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let groupId = call.getString("groupId"), !groupId.isEmpty else {
+            call.reject("Braze.addToSubscriptionGroup: `groupId` is required (string).")
+            return
+        }
+        braze.user.addToSubscriptionGroup(id: groupId)
+        call.resolve()
+    }
+
+    @objc func removeFromSubscriptionGroup(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let groupId = call.getString("groupId"), !groupId.isEmpty else {
+            call.reject("Braze.removeFromSubscriptionGroup: `groupId` is required (string).")
+            return
+        }
+        braze.user.removeFromSubscriptionGroup(id: groupId)
+        call.resolve()
+    }
+
+    // MARK: - Aliases
+
+    @objc func addAlias(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let alias = call.getString("alias"), !alias.isEmpty else {
+            call.reject("Braze.addAlias: `alias` is required (string).")
+            return
+        }
+        guard let label = call.getString("label"), !label.isEmpty else {
+            call.reject("Braze.addAlias: `label` is required (string).")
+            return
+        }
+        braze.user.add(alias: alias, label: label)
+        call.resolve()
+    }
+
+    // MARK: - Device ID
+
+    /// `braze.deviceId` is an instance property on the configured SDK and is
+    /// non-nil post-init. The Web SDK's `getDeviceId()` can return undefined
+    /// before bootstrap; on iOS BrazeKit it does not, so we forward directly.
+    @objc func getDeviceId(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        call.resolve(["deviceId": braze.deviceId])
+    }
+
+    // MARK: - Demographics
+
+    /// Constructs a `Date` from `(year, month, day)` using a Gregorian
+    /// calendar pinned to UTC. Pinning to UTC keeps the stored DOB stable
+    /// regardless of device timezone, matching how the Android `Month` enum
+    /// and the Web SDK's three-int signature behave.
+    @objc func setDateOfBirth(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let year = call.getInt("year"),
+              let month = call.getInt("month"),
+              let day = call.getInt("day") else {
+            call.reject("Braze.setDateOfBirth: `year`, `month`, and `day` are required (integers).")
+            return
+        }
+        guard year >= 1900, year <= 2100, month >= 1, month <= 12, day >= 1, day <= 31 else {
+            call.reject("Braze.setDateOfBirth: out of range. Expected year 1900-2100, month 1-12, day 1-31.")
+            return
+        }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        components.day = day
+        guard let date = calendar.date(from: components) else {
+            call.reject("Braze.setDateOfBirth: invalid date components.")
+            return
+        }
+        braze.user.set(dateOfBirth: date)
+        call.resolve()
+    }
+
+    /// Maps the plugin's stable string gender values to `Braze.User.Gender`
+    /// cases. Keeping the mapping at the bridge layer means consumers never
+    /// see the SDK's enum names directly.
+    @objc func setGender(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let raw = call.getString("gender"), !raw.isEmpty else {
+            call.reject("Braze.setGender: `gender` is required (string).")
+            return
+        }
+        let gender: Braze.User.Gender
+        switch raw {
+        case "male": gender = .male
+        case "female": gender = .female
+        case "other": gender = .other
+        case "unknown": gender = .unknown
+        case "not_applicable": gender = .notApplicable
+        case "prefer_not_to_say": gender = .preferNotToSay
+        default:
+            call.reject("Braze.setGender: unknown gender \"\(raw)\". " +
+                        "Allowed: male, female, other, unknown, not_applicable, prefer_not_to_say.")
+            return
+        }
+        braze.user.set(gender: gender)
+        call.resolve()
+    }
+
+    @objc func setHomeCity(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        let homeCity = call.getString("homeCity")
+        braze.user.set(homeCity: homeCity)
         call.resolve()
     }
 

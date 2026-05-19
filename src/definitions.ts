@@ -140,6 +140,73 @@ export interface BrazeSetCustomUserAttributeOptions {
 }
 
 // =============================================================================
+// Subscription groups
+// =============================================================================
+
+export interface BrazeSubscriptionGroupOptions {
+  /**
+   * The Braze-issued UUID of the subscription group. Find it in the Braze
+   * dashboard under Subscription Group → API ID.
+   */
+  groupId: string;
+}
+
+// =============================================================================
+// Aliases
+// =============================================================================
+
+export interface BrazeAddAliasOptions {
+  /** Alias value. (alias, label) pairs are unique across users. */
+  alias: string;
+  /** Label / namespace for this alias, e.g. `"internal_id"`. */
+  label: string;
+}
+
+// =============================================================================
+// Device ID
+// =============================================================================
+
+export interface BrazeGetDeviceIdResult {
+  /** The Braze SDK-assigned device identifier for the current install. */
+  deviceId: string;
+}
+
+// =============================================================================
+// Demographics
+// =============================================================================
+
+export interface BrazeSetDateOfBirthOptions {
+  /** Four-digit year. */
+  year: number;
+  /** Month as 1-12 (January = 1). */
+  month: number;
+  /** Day of month, 1-31. */
+  day: number;
+}
+
+/**
+ * Gender values mirrored from the Braze SDK enums (Web `User.Genders`,
+ * Android `com.braze.enums.Gender`, iOS `Braze.User.Gender`).
+ */
+export type BrazeGender =
+  | 'male'
+  | 'female'
+  | 'other'
+  | 'unknown'
+  | 'not_applicable'
+  | 'prefer_not_to_say';
+
+export interface BrazeSetGenderOptions {
+  /** Gender value; see {@link BrazeGender}. */
+  gender: BrazeGender;
+}
+
+export interface BrazeSetHomeCityOptions {
+  /** Home city. Pass `null` to clear. */
+  homeCity: string | null;
+}
+
+// =============================================================================
 // Custom events
 // =============================================================================
 
@@ -290,6 +357,91 @@ export interface BrazePlugin {
    * await Braze.setCustomUserAttribute({ key: 'has_subscription', value: true });
    */
   setCustomUserAttribute(options: BrazeSetCustomUserAttributeOptions): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // Subscription groups
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Adds the current user to an email or SMS subscription group.
+   *
+   * @example
+   * await Braze.addToSubscriptionGroup({ groupId: 'group-uuid-from-dashboard' });
+   */
+  addToSubscriptionGroup(options: BrazeSubscriptionGroupOptions): Promise<void>;
+
+  /**
+   * Removes the current user from a subscription group.
+   *
+   * @example
+   * await Braze.removeFromSubscriptionGroup({ groupId: 'group-uuid' });
+   */
+  removeFromSubscriptionGroup(
+    options: BrazeSubscriptionGroupOptions,
+  ): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // Aliases
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Adds an alias for the current user. (alias, label) pairs are unique across
+   * users — if another user already owns the pair, the alias is rejected by
+   * the Braze backend.
+   *
+   * @example
+   * await Braze.addAlias({ alias: 'cust_1234', label: 'internal_id' });
+   */
+  addAlias(options: BrazeAddAliasOptions): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // Device ID
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns the Braze SDK device identifier for the current install. Useful
+   * for debugging and for sending the device ID to your backend for targeted
+   * server-side messaging.
+   *
+   * Init-independent: safe to call before {@link BrazePlugin.initialize}; the
+   * device ID is generated on first SDK use and persists across sessions.
+   *
+   * @example
+   * const { deviceId } = await Braze.getDeviceId();
+   */
+  getDeviceId(): Promise<BrazeGetDeviceIdResult>;
+
+  // ---------------------------------------------------------------------------
+  // Demographics
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Sets the current user's date of birth. `month` is 1-indexed (January = 1)
+   * to match the Web SDK contract and to avoid the Java `Calendar.MONTH`
+   * 0-indexed surprise. The Android bridge maps `month` to the Braze
+   * `Month` enum internally.
+   *
+   * @example
+   * await Braze.setDateOfBirth({ year: 1992, month: 7, day: 15 });
+   */
+  setDateOfBirth(options: BrazeSetDateOfBirthOptions): Promise<void>;
+
+  /**
+   * Sets the current user's gender. Accepts the string values listed in
+   * {@link BrazeGender}; bridges map them to the matching native enum value.
+   *
+   * @example
+   * await Braze.setGender({ gender: 'female' });
+   */
+  setGender(options: BrazeSetGenderOptions): Promise<void>;
+
+  /**
+   * Sets the current user's home city. Pass `null` to clear.
+   *
+   * @example
+   * await Braze.setHomeCity({ homeCity: 'San Francisco' });
+   */
+  setHomeCity(options: BrazeSetHomeCityOptions): Promise<void>;
 
   // ---------------------------------------------------------------------------
   // Custom events

@@ -18,6 +18,7 @@ import { Braze } from 'capacitor-braze';
 import type {
   BrazeAttributeValue,
   BrazeEventProperties,
+  BrazeGender,
 } from 'capacitor-braze';
 
 // ---------------------------------------------------------------------------
@@ -148,6 +149,27 @@ const runMethods: Record<string, () => Promise<unknown>> = {
       key: input('attrKey'),
       value: typedAttrValue(),
     }),
+
+  setDateOfBirth: () =>
+    Braze.setDateOfBirth({
+      year: parseInt(input('dobYear'), 10),
+      month: parseInt(input('dobMonth'), 10),
+      day: parseInt(input('dobDay'), 10),
+    }),
+  setGender: () =>
+    Braze.setGender({ gender: selected('gender') as BrazeGender }),
+  setHomeCity: () =>
+    Braze.setHomeCity({ homeCity: nullableInput('homeCity') }),
+
+  addToSubscriptionGroup: () =>
+    Braze.addToSubscriptionGroup({ groupId: input('groupId') }),
+  removeFromSubscriptionGroup: () =>
+    Braze.removeFromSubscriptionGroup({ groupId: input('groupId') }),
+
+  addAlias: () =>
+    Braze.addAlias({ alias: input('alias'), label: input('aliasLabel') }),
+
+  getDeviceId: () => Braze.getDeviceId(),
 
   logCustomEvent: () =>
     Braze.logCustomEvent({
