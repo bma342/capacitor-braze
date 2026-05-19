@@ -1,0 +1,19 @@
+node_modules/
+dist/
+
+# Capacitor-generated native platform projects (large + machine-specific).
+# Re-create locally with `npx cap add ios` / `npx cap add android`.
+ios/
+android/
+
+# Vite cache
+.vite/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Editor
+.DS_Store
+*.swp

@@ -11,6 +11,20 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+### Added — `example/` Capacitor app (not published, dev tool only)
+
+A minimal Capacitor app under `example/` that exercises every plugin method
+end-to-end. Useful for smoke-testing changes and validating against a real
+Braze account.
+
+- Vite + vanilla TypeScript (no framework coupling)
+- Single page with UI for all 16 methods grouped by category
+- Live log panel shows each call's result or error
+- Runs in browser today; iOS/Android added via `npx cap add`
+- README documents the full Braze trial smoke-test flow
+
+Plugin code itself is unchanged in this Unreleased section — no version bump.
+
 ## [0.0.5] — 2026-05-19
 
 ### Added — User attributes (standard + custom)

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>capacitor-braze example</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>capacitor-braze example</h1>
+      <p>
+        Exercises every plugin method end-to-end. Use against your Braze
+        14-day trial account. See README.md for setup steps.
+      </p>
+    </header>
+
+    <main>
+      <!-- ============================================================ -->
+      <!-- Configuration                                                  -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>Configuration</h2>
+        <div class="row">
+          <label>API key
+            <input id="apiKey" type="text" placeholder="YOUR-SDK-API-KEY" />
+          </label>
+        </div>
+        <div class="row">
+          <label>Endpoint
+            <input id="endpoint" type="text" placeholder="sdk.iad-03.braze.com" />
+          </label>
+        </div>
+        <div class="row checks">
+          <label><input id="enableLogging" type="checkbox" /> enableLogging</label>
+          <label><input id="enableSdkAuthentication" type="checkbox" /> enableSdkAuthentication</label>
+          <label><input id="allowInsecureEndpoint" type="checkbox" /> allowInsecureEndpoint</label>
+        </div>
+        <div class="row">
+          <button data-method="initialize">initialize</button>
+          <button data-method="echo">echo</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- User identity                                                  -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>User identity</h2>
+        <div class="row">
+          <label>userId
+            <input id="userId" type="text" placeholder="user_123" />
+          </label>
+          <label>sdkAuthSignature (optional)
+            <input id="sdkAuthSignature" type="text" placeholder="<jwt>" />
+          </label>
+        </div>
+        <div class="row">
+          <button data-method="changeUser">changeUser</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- User attributes (standard)                                     -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>User attributes (standard)</h2>
+        <div class="row">
+          <label>email <input id="email" type="text" /></label>
+          <button data-method="setEmail">setEmail</button>
+        </div>
+        <div class="row">
+          <label>phoneNumber <input id="phoneNumber" type="text" /></label>
+          <button data-method="setPhoneNumber">setPhoneNumber</button>
+        </div>
+        <div class="row">
+          <label>firstName <input id="firstName" type="text" /></label>
+          <button data-method="setFirstName">setFirstName</button>
+        </div>
+        <div class="row">
+          <label>lastName <input id="lastName" type="text" /></label>
+          <button data-method="setLastName">setLastName</button>
+        </div>
+        <div class="row">
+          <label>language <input id="language" type="text" placeholder="en" /></label>
+          <button data-method="setLanguage">setLanguage</button>
+        </div>
+        <div class="row">
+          <label>country <input id="country" type="text" placeholder="US" /></label>
+          <button data-method="setCountry">setCountry</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- User attributes (custom)                                       -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>User attributes (custom)</h2>
+        <div class="row">
+          <label>key <input id="attrKey" type="text" placeholder="loyalty_tier" /></label>
+          <label>value <input id="attrValue" type="text" placeholder="gold" /></label>
+          <label>type
+            <select id="attrType">
+              <option value="string">string</option>
+              <option value="number">number</option>
+              <option value="boolean">boolean</option>
+            </select>
+          </label>
+          <button data-method="setCustomUserAttribute">setCustomUserAttribute</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- Custom events                                                  -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>Custom events</h2>
+        <div class="row">
+          <label>name <input id="eventName" type="text" placeholder="cart_viewed" /></label>
+          <label>properties (JSON, optional)
+            <input id="eventProperties" type="text" placeholder='{"items":3}' />
+          </label>
+          <button data-method="logCustomEvent">logCustomEvent</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- Privacy / lifecycle                                            -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>Privacy / lifecycle</h2>
+        <div class="row">
+          <button data-method="wipeData">wipeData</button>
+          <button data-method="disableSDK">disableSDK</button>
+          <button data-method="enableSDK">enableSDK</button>
+          <button data-method="isDisabled">isDisabled</button>
+          <button data-method="requestImmediateDataFlush">requestImmediateDataFlush</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- Log                                                            -->
+      <!-- ============================================================ -->
+      <section class="card log-card">
+        <h2>
+          Log
+          <button id="clearLog" class="link-button">clear</button>
+        </h2>
+        <pre id="log" class="log"></pre>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
