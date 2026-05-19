@@ -1,0 +1,60 @@
+name: Feature request
+description: Request a new method, behavior, or capability.
+title: '[Feature]: '
+labels: ['enhancement', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before requesting, please confirm:
+        - The feature exists in the underlying Braze SDK (Android / iOS / Web).
+          If it doesn't, file with [Braze SDK repos](https://github.com/braze-inc) first.
+        - You've checked [SDK_SURFACE.md](https://github.com/bma342/capacitor-braze/blob/main/SDK_SURFACE.md)
+          for the coverage roadmap — your feature may already be planned.
+
+  - type: textarea
+    id: feature
+    attributes:
+      label: What feature?
+      description: One-line summary plus what plugin method(s) would expose it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is it needed?
+      description: What problem does this solve? What's the use case?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platforms
+    attributes:
+      label: Which platforms need it?
+      multiple: true
+      options:
+        - iOS
+        - Android
+        - Web
+    validations:
+      required: true
+
+  - type: textarea
+    id: braze-sdk-references
+    attributes:
+      label: Braze SDK references
+      description: |
+        Link to the matching Braze SDK method on each platform you selected.
+        E.g., for setEmail:
+        - iOS: https://braze-inc.github.io/braze-swift-sdk/documentation/brazekit/braze/user/set(email:)/
+        - Android: <KDoc link>
+        - Web: <docs link>
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds exist today? Why aren't they sufficient?

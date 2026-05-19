@@ -1,0 +1,17 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Braze Android SDK issue
+    url: https://github.com/braze-inc/braze-android-sdk/issues
+    about: For bugs in Braze's native Android SDK (not the Capacitor bridge), file there. This plugin wraps the official SDK; bugs in SDK behavior route upstream.
+  - name: Braze Swift SDK issue
+    url: https://github.com/braze-inc/braze-swift-sdk/issues
+    about: For bugs in Braze's native iOS SDK (not the Capacitor bridge), file there.
+  - name: Braze Web SDK issue
+    url: https://github.com/braze-inc/braze-web-sdk/issues
+    about: For bugs in Braze's Web SDK (not the Capacitor bridge), file there.
+  - name: Capacitor issue
+    url: https://github.com/ionic-team/capacitor/issues
+    about: For bugs in Capacitor itself (bridge framework, plugin loader), file there.
+  - name: Braze support
+    url: https://www.braze.com/docs/help/support_help
+    about: For dashboard, account, billing, or campaign questions, contact Braze support directly.

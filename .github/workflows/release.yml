@@ -1,0 +1,67 @@
+name: Release
+
+# Triggered when a `vX.Y.Z` tag is pushed. Builds, publishes to npm with
+# provenance attestation, and creates a GitHub Release.
+#
+# Required repo secret:
+#   NPM_TOKEN — npm automation token with publish permission for `capacitor-braze`
+#
+# Manual release flow:
+#   1. Bump version in package.json
+#   2. Update CHANGELOG.md with the new section
+#   3. Commit + push: `git push origin main`
+#   4. Tag: `git tag v0.X.Y && git push origin v0.X.Y`
+#   5. This workflow runs and publishes.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write     # for creating GitHub Releases
+  id-token: write     # for npm provenance attestation
+
+jobs:
+  publish:
+    name: Publish to npm + create GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify package.json version matches tag
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match tag ($TAG_VERSION)"
+            exit 1
+          fi
+          echo "Version match: $PKG_VERSION"
+
+      - name: Publish to npm with provenance
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            See [CHANGELOG.md](./CHANGELOG.md) for details.
+
+            **npm:** https://www.npmjs.com/package/capacitor-braze/v/${{ github.ref_name }}

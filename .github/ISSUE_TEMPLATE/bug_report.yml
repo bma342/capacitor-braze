@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a bug in the Capacitor bridge layer (not the Braze SDK itself).
+title: '[Bug]: '
+labels: ['bug', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Before submitting, please confirm:
+        - The bug is in **this plugin's bridge code**, not the underlying Braze SDK.
+          If the same call fails with `@braze/web-sdk` directly, file at
+          [braze-inc/braze-web-sdk](https://github.com/braze-inc/braze-web-sdk/issues)
+          instead (or the relevant native SDK repo).
+        - You've checked existing issues for duplicates.
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: capacitor-braze version
+      placeholder: e.g. 0.0.5
+    validations:
+      required: true
+
+  - type: input
+    id: capacitor-version
+    attributes:
+      label: Capacitor version
+      placeholder: e.g. 6.1.2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - iOS
+        - Android
+        - Web
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect? What did you see instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: |
+        Minimal code that reproduces the issue. Include:
+        - The exact plugin method call(s)
+        - Init options used (REDACT your API key)
+        - Any relevant Braze SDK config
+      render: typescript
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / stack trace
+      description: REDACT any PII (emails, user IDs, phone numbers) before pasting.
+      render: shell

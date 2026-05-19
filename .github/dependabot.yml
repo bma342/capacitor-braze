@@ -1,0 +1,43 @@
+# Dependabot keeps deps fresh + flags vulnerabilities.
+#
+# Strategy:
+# - Plugin npm deps + example npm deps: weekly grouped updates so we get one
+#   PR per week per ecosystem instead of a flood.
+# - GitHub Actions: weekly, pinned by SHA where possible (supply-chain hygiene).
+# - The plugin's *Braze SDK* version pins are NOT auto-bumped — those follow
+#   the policy in SDK_SURFACE.md §4 (manual per Braze SDK release notes).
+
+version: 2
+updates:
+  # Plugin dev dependencies
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5
+    groups:
+      dev-deps:
+        applies-to: version-updates
+        patterns:
+          - '*'
+
+  # Example app deps (Vite, TS, Capacitor)
+  - package-ecosystem: 'npm'
+    directory: '/example'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5
+    groups:
+      example-deps:
+        applies-to: version-updates
+        patterns:
+          - '*'
+
+  # GitHub Actions versions
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
