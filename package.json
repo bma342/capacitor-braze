@@ -39,7 +39,15 @@
     "web"
   ],
   "scripts": {
-    "build": "npm run clean && tsc && rollup -c rollup.config.mjs",
+    "verify": "npm run verify:web",
+    "verify:web": "npm run build",
+    "lint": "npm run eslint && npm run prettier -- --check && npm run swiftlint -- lint",
+    "fmt": "npm run eslint -- --fix && npm run prettier -- --write && npm run swiftlint -- --fix --format",
+    "eslint": "ESLINT_USE_FLAT_CONFIG=false eslint . --ext ts",
+    "prettier": "prettier \"**/*.{css,html,ts,js}\"",
+    "swiftlint": "node-swiftlint",
+    "docgen": "docgen --api BrazePlugin --output-readme README.md --output-json dist/docs.json",
+    "build": "npm run clean && tsc && rollup -c rollup.config.mjs && npm run docgen",
     "clean": "rimraf ./dist",
     "watch": "tsc --watch",
     "prepublishOnly": "npm run build"
@@ -47,15 +55,22 @@
   "devDependencies": {
     "@capacitor/android": "^6.0.0",
     "@capacitor/core": "^6.0.0",
+    "@capacitor/docgen": "^0.3.0",
     "@capacitor/ios": "^6.0.0",
+    "@ionic/eslint-config": "^0.4.0",
+    "@ionic/prettier-config": "^4.0.0",
+    "@ionic/swiftlint-config": "^2.0.0",
     "@rollup/plugin-node-resolve": "^15.2.3",
+    "eslint": "^8.57.1",
+    "prettier": "^3.8.3",
     "rimraf": "^5.0.5",
     "rollup": "^4.13.0",
+    "swiftlint": "^2.0.0",
     "typescript": "~5.4.2"
   },
   "peerDependencies": {
-    "@capacitor/core": "^6.0.0",
-    "@braze/web-sdk": "^6.0.0"
+    "@braze/web-sdk": "^6.0.0",
+    "@capacitor/core": "^6.0.0"
   },
   "peerDependenciesMeta": {
     "@braze/web-sdk": {

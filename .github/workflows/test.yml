@@ -12,8 +12,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: Lint (ESLint + Prettier)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # SwiftLint is bundled in the `lint` script but skipped on ubuntu
+      # runners (no brew). We run it on macOS in a future verify:ios job
+      # alongside the iOS build.
+      - name: ESLint
+        run: npm run eslint
+
+      - name: Prettier --check
+        run: npm run prettier -- --check
+
   build-plugin:
-    name: Build plugin (TS + Rollup)
+    name: Build plugin (TS + Rollup + docgen)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +60,16 @@ jobs:
           test -f dist/esm/index.d.ts
           test -f dist/plugin.cjs.js
           test -f dist/plugin.js
+          test -f dist/docs.json
           echo "All expected dist artifacts present."
+
+      - name: Verify README docgen markers are populated
+        run: |
+          if ! grep -q '\[\`echo' README.md; then
+            echo "::error::README API section appears empty. Run 'npm run docgen' locally and commit."
+            exit 1
+          fi
+          echo "README docgen section is populated."
 
   build-example:
     name: Build example app

@@ -1,0 +1,8 @@
+included:
+  - ios/Plugin
+
+excluded:
+  - ios/Plugin/build
+
+# Inherit Ionic / Capacitor team defaults
+parent_config: node_modules/@ionic/swiftlint-config/.swiftlint.yml

@@ -11,6 +11,26 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+### Improved — Capacitor official toolchain alignment
+
+Adopts the dev-tooling stack that Capacitor's own first-party plugins use
+(ESLint + Prettier + SwiftLint + `@capacitor/docgen`) with the matching
+`@ionic/*` config presets. No source-code logic change; the same plugin
+surface ships, now under the conventions a Capacitor plugin author
+expects to find.
+
+- Dev deps added: `eslint`, `prettier`, `swiftlint`, `@capacitor/docgen`,
+  `@ionic/eslint-config`, `@ionic/prettier-config`, `@ionic/swiftlint-config`.
+- Scripts added: `lint`, `fmt`, `eslint`, `prettier`, `swiftlint`,
+  `docgen`, `verify`, `verify:web`.
+- `npm run build` now also runs `docgen`, regenerating the API reference
+  section of `README.md` from `definitions.ts` JSDoc on every build.
+- CI gains a `lint` job (ESLint + Prettier --check). The `build-plugin`
+  job additionally asserts the README's docgen markers are populated.
+- One-time source edits to match the rule set: type import order fix in
+  `src/web.ts`, Prettier reformat of `src/definitions.ts`, `src/web.ts`,
+  `example/index.html`, `example/src/main.ts`, `example/src/style.css`.
+
 ## [0.0.9] — 2026-05-19
 
 ### Added — Listener infrastructure + feature flag update events (Phase H)

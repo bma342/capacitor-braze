@@ -76,7 +76,7 @@ label {
   min-width: 12rem;
 }
 
-input[type="text"],
+input[type='text'],
 select {
   padding: 0.5rem;
   border: 1px solid #ccc;
@@ -85,7 +85,7 @@ select {
   font-family: inherit;
 }
 
-input[type="checkbox"] {
+input[type='checkbox'] {
   margin-right: 0.25rem;
 }
 

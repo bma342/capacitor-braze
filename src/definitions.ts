@@ -198,13 +198,7 @@ export interface BrazeSetDateOfBirthOptions {
  * Gender values mirrored from the Braze SDK enums (Web `User.Genders`,
  * Android `com.braze.enums.Gender`, iOS `Braze.User.Gender`).
  */
-export type BrazeGender =
-  | 'male'
-  | 'female'
-  | 'other'
-  | 'unknown'
-  | 'not_applicable'
-  | 'prefer_not_to_say';
+export type BrazeGender = 'male' | 'female' | 'other' | 'unknown' | 'not_applicable' | 'prefer_not_to_say';
 
 export interface BrazeSetGenderOptions {
   /** Gender value; see {@link BrazeGender}. */
@@ -491,9 +485,7 @@ export interface BrazePlugin {
    * @example
    * await Braze.removeFromSubscriptionGroup({ groupId: 'group-uuid' });
    */
-  removeFromSubscriptionGroup(
-    options: BrazeSubscriptionGroupOptions,
-  ): Promise<void>;
+  removeFromSubscriptionGroup(options: BrazeSubscriptionGroupOptions): Promise<void>;
 
   // ---------------------------------------------------------------------------
   // Aliases
@@ -606,9 +598,7 @@ export interface BrazePlugin {
    * const { flag } = await Braze.getFeatureFlag({ id: 'checkout_v2' });
    * if (flag?.enabled) showNewCheckout();
    */
-  getFeatureFlag(
-    options: BrazeGetFeatureFlagOptions,
-  ): Promise<BrazeGetFeatureFlagResult>;
+  getFeatureFlag(options: BrazeGetFeatureFlagOptions): Promise<BrazeGetFeatureFlagResult>;
 
   /**
    * Returns all feature flags currently cached for the user.
@@ -639,9 +629,7 @@ export interface BrazePlugin {
    * @example
    * await Braze.logFeatureFlagImpression({ id: 'checkout_v2' });
    */
-  logFeatureFlagImpression(
-    options: BrazeLogFeatureFlagImpressionOptions,
-  ): Promise<void>;
+  logFeatureFlagImpression(options: BrazeLogFeatureFlagImpressionOptions): Promise<void>;
 
   // ---------------------------------------------------------------------------
   // Listeners

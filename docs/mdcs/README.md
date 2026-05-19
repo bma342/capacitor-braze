@@ -12,6 +12,7 @@ Per-subsystem design contracts that codify the load-bearing patterns this plugin
 | [C06](./C06-SECURITY-DEFAULTS.md) | Security defaults & PII discipline — default-deny toggles, HTTPS-required endpoint, never log values | Touching configuration toggles, the network layer, or any field that carries user data |
 | [C07](./C07-INIT-INDEPENDENT-METHODS.md) | When a plugin method may legitimately skip the init guard | Adding a method that needs to work during consent revocation, GDPR erasure, or other pre-init lifecycle paths |
 | [C08](./C08-NATIVE-SDK-PINNING.md) | Native SDK pin policy (exact on iOS/Android, caret on Web peer dep) and the bump protocol | Updating the version of BrazeKit, `com.braze:android-sdk-ui`, or `@braze/web-sdk` |
+| [C09](./C09-TOOLING-QUALITY-GATES.md) | ESLint + Prettier + SwiftLint + `@capacitor/docgen` — Capacitor's official toolchain, locked-in | Touching `package.json` scripts, lint configs, or the README API section |
 
 ## How to use this set
 

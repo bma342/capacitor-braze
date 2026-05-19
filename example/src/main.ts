@@ -17,11 +17,7 @@
 import type { PluginListenerHandle } from '@capacitor/core';
 
 import { Braze } from 'capacitor-braze';
-import type {
-  BrazeAttributeValue,
-  BrazeEventProperties,
-  BrazeGender,
-} from 'capacitor-braze';
+import type { BrazeAttributeValue, BrazeEventProperties, BrazeGender } from 'capacitor-braze';
 
 /**
  * Listener handles retained so `removeAllListeners` can clear them on the
@@ -146,10 +142,8 @@ const runMethods: Record<string, () => Promise<unknown>> = {
   getUserId: () => Braze.getUserId(),
 
   setEmail: () => Braze.setEmail({ email: nullableInput('email') }),
-  setPhoneNumber: () =>
-    Braze.setPhoneNumber({ phoneNumber: nullableInput('phoneNumber') }),
-  setFirstName: () =>
-    Braze.setFirstName({ firstName: nullableInput('firstName') }),
+  setPhoneNumber: () => Braze.setPhoneNumber({ phoneNumber: nullableInput('phoneNumber') }),
+  setFirstName: () => Braze.setFirstName({ firstName: nullableInput('firstName') }),
   setLastName: () => Braze.setLastName({ lastName: nullableInput('lastName') }),
   setLanguage: () => Braze.setLanguage({ language: nullableInput('language') }),
   setCountry: () => Braze.setCountry({ country: nullableInput('country') }),
@@ -166,18 +160,13 @@ const runMethods: Record<string, () => Promise<unknown>> = {
       month: parseInt(input('dobMonth'), 10),
       day: parseInt(input('dobDay'), 10),
     }),
-  setGender: () =>
-    Braze.setGender({ gender: selected('gender') as BrazeGender }),
-  setHomeCity: () =>
-    Braze.setHomeCity({ homeCity: nullableInput('homeCity') }),
+  setGender: () => Braze.setGender({ gender: selected('gender') as BrazeGender }),
+  setHomeCity: () => Braze.setHomeCity({ homeCity: nullableInput('homeCity') }),
 
-  addToSubscriptionGroup: () =>
-    Braze.addToSubscriptionGroup({ groupId: input('groupId') }),
-  removeFromSubscriptionGroup: () =>
-    Braze.removeFromSubscriptionGroup({ groupId: input('groupId') }),
+  addToSubscriptionGroup: () => Braze.addToSubscriptionGroup({ groupId: input('groupId') }),
+  removeFromSubscriptionGroup: () => Braze.removeFromSubscriptionGroup({ groupId: input('groupId') }),
 
-  addAlias: () =>
-    Braze.addAlias({ alias: input('alias'), label: input('aliasLabel') }),
+  addAlias: () => Braze.addAlias({ alias: input('alias'), label: input('aliasLabel') }),
 
   getDeviceId: () => Braze.getDeviceId(),
 
@@ -190,8 +179,7 @@ const runMethods: Record<string, () => Promise<unknown>> = {
   getFeatureFlag: () => Braze.getFeatureFlag({ id: input('featureFlagId') }),
   getAllFeatureFlags: () => Braze.getAllFeatureFlags(),
   refreshFeatureFlags: () => Braze.refreshFeatureFlags(),
-  logFeatureFlagImpression: () =>
-    Braze.logFeatureFlagImpression({ id: input('featureFlagId') }),
+  logFeatureFlagImpression: () => Braze.logFeatureFlagImpression({ id: input('featureFlagId') }),
 
   subscribeFeatureFlagsUpdated: async () => {
     const handle = await Braze.addListener('featureFlagsUpdated', ({ flags }) => {
@@ -237,10 +225,7 @@ document.querySelectorAll<HTMLButtonElement>('button[data-method]').forEach((btn
     log(`→ ${method}...`);
     try {
       const result = await runMethods[method]();
-      log(
-        `✓ ${method} → ${result === undefined ? 'ok' : JSON.stringify(result)}`,
-        'ok',
-      );
+      log(`✓ ${method} → ${result === undefined ? 'ok' : JSON.stringify(result)}`, 'ok');
     } catch (err) {
       log(`✗ ${method} → ${(err as Error).message}`, 'err');
     }

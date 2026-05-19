@@ -1,3 +1,4 @@
+import type * as BrazeWebSdkModule from '@braze/web-sdk';
 import { WebPlugin } from '@capacitor/core';
 
 import type {
@@ -46,7 +47,7 @@ const WEB_GENDER_MAP: Readonly<Record<BrazeGender, string>> = {
   prefer_not_to_say: 'p',
 };
 
-type BrazeWebSdk = typeof import('@braze/web-sdk');
+type BrazeWebSdk = typeof BrazeWebSdkModule;
 
 /**
  * Web implementation of the Braze plugin. Wraps `@braze/web-sdk`.
@@ -174,14 +175,10 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   // User attributes (custom)
   // ---------------------------------------------------------------------------
 
-  async setCustomUserAttribute(
-    options: BrazeSetCustomUserAttributeOptions,
-  ): Promise<void> {
+  async setCustomUserAttribute(options: BrazeSetCustomUserAttributeOptions): Promise<void> {
     const user = this.requireUser();
     if (!options.key || typeof options.key !== 'string') {
-      throw new Error(
-        'Braze.setCustomUserAttribute: `key` is required (string).',
-      );
+      throw new Error('Braze.setCustomUserAttribute: `key` is required (string).');
     }
     user.setCustomUserAttribute(options.key, options.value);
   }
@@ -190,17 +187,13 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   // Subscription groups
   // ---------------------------------------------------------------------------
 
-  async addToSubscriptionGroup(
-    options: BrazeSubscriptionGroupOptions,
-  ): Promise<void> {
+  async addToSubscriptionGroup(options: BrazeSubscriptionGroupOptions): Promise<void> {
     const user = this.requireUser();
     this.requireGroupId(options.groupId, 'addToSubscriptionGroup');
     user.addToSubscriptionGroup(options.groupId);
   }
 
-  async removeFromSubscriptionGroup(
-    options: BrazeSubscriptionGroupOptions,
-  ): Promise<void> {
+  async removeFromSubscriptionGroup(options: BrazeSubscriptionGroupOptions): Promise<void> {
     const user = this.requireUser();
     this.requireGroupId(options.groupId, 'removeFromSubscriptionGroup');
     user.removeFromSubscriptionGroup(options.groupId);
@@ -252,8 +245,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     const code = WEB_GENDER_MAP[options.gender];
     if (!code) {
       throw new Error(
-        `Braze.setGender: unknown gender "${options.gender}". ` +
-          `Allowed: ${Object.keys(WEB_GENDER_MAP).join(', ')}.`,
+        `Braze.setGender: unknown gender "${options.gender}". ` + `Allowed: ${Object.keys(WEB_GENDER_MAP).join(', ')}.`,
       );
     }
     // Cast through `unknown` because the Web SDK types the gender param as
@@ -289,9 +281,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   // live reference into the SDK's cache.
   // ---------------------------------------------------------------------------
 
-  async getFeatureFlag(
-    options: BrazeGetFeatureFlagOptions,
-  ): Promise<BrazeGetFeatureFlagResult> {
+  async getFeatureFlag(options: BrazeGetFeatureFlagOptions): Promise<BrazeGetFeatureFlagResult> {
     const braze = this.requireInitialized();
     if (!options.id || typeof options.id !== 'string') {
       throw new Error('Braze.getFeatureFlag: `id` is required (string).');
@@ -311,14 +301,10 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     braze.refreshFeatureFlags();
   }
 
-  async logFeatureFlagImpression(
-    options: BrazeLogFeatureFlagImpressionOptions,
-  ): Promise<void> {
+  async logFeatureFlagImpression(options: BrazeLogFeatureFlagImpressionOptions): Promise<void> {
     const braze = this.requireInitialized();
     if (!options.id || typeof options.id !== 'string') {
-      throw new Error(
-        'Braze.logFeatureFlagImpression: `id` is required (string).',
-      );
+      throw new Error('Braze.logFeatureFlagImpression: `id` is required (string).');
     }
     braze.logFeatureFlagImpression(options.id);
   }
@@ -332,13 +318,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     this.validatePurchase(options);
     // Web SDK arg order: (productId, price, currencyCode?, quantity?, props?).
     // Currency is required on our contract; pass through unconditionally.
-    braze.logPurchase(
-      options.productId,
-      options.price,
-      options.currency,
-      options.quantity,
-      options.properties,
-    );
+    braze.logPurchase(options.productId, options.price, options.currency, options.quantity, options.properties);
   }
 
   // ---------------------------------------------------------------------------
@@ -387,9 +367,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    */
   private requireInitialized(): BrazeWebSdk {
     if (!this.braze || !this.initialized) {
-      throw new Error(
-        'Braze.initialize() must be called before any other Braze method.',
-      );
+      throw new Error('Braze.initialize() must be called before any other Braze method.');
     }
     return this.braze;
   }
@@ -449,19 +427,13 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   private validateDateOfBirth(options: BrazeSetDateOfBirthOptions): void {
     const { year, month, day } = options;
     if (!Number.isInteger(year) || year < 1900 || year > 2100) {
-      throw new Error(
-        'Braze.setDateOfBirth: `year` must be an integer between 1900 and 2100.',
-      );
+      throw new Error('Braze.setDateOfBirth: `year` must be an integer between 1900 and 2100.');
     }
     if (!Number.isInteger(month) || month < 1 || month > 12) {
-      throw new Error(
-        'Braze.setDateOfBirth: `month` must be an integer between 1 and 12.',
-      );
+      throw new Error('Braze.setDateOfBirth: `month` must be an integer between 1 and 12.');
     }
     if (!Number.isInteger(day) || day < 1 || day > 31) {
-      throw new Error(
-        'Braze.setDateOfBirth: `day` must be an integer between 1 and 31.',
-      );
+      throw new Error('Braze.setDateOfBirth: `day` must be an integer between 1 and 31.');
     }
   }
 
@@ -475,11 +447,15 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    * not enumerate (future SDK additions) are dropped to keep the DTO
    * faithful to its declared shape.
    */
-  private serializeFeatureFlag(
-    raw: ReturnType<BrazeWebSdk['getFeatureFlag']> & object,
-  ): BrazeFeatureFlag {
-    const allowedTypes: ReadonlySet<BrazeFeatureFlagPropertyValue['type']> =
-      new Set(['string', 'number', 'boolean', 'image', 'datetime', 'jsonobject']);
+  private serializeFeatureFlag(raw: ReturnType<BrazeWebSdk['getFeatureFlag']> & object): BrazeFeatureFlag {
+    const allowedTypes: ReadonlySet<BrazeFeatureFlagPropertyValue['type']> = new Set([
+      'string',
+      'number',
+      'boolean',
+      'image',
+      'datetime',
+      'jsonobject',
+    ]);
     const properties: Record<string, BrazeFeatureFlagPropertyValue> = {};
     const rawProps = raw.properties ?? {};
     for (const [key, entry] of Object.entries(rawProps)) {
@@ -508,19 +484,11 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     if (!options.currency || typeof options.currency !== 'string') {
       throw new Error('Braze.logPurchase: `currency` is required (ISO 4217 string).');
     }
-    if (
-      typeof options.price !== 'number' ||
-      !Number.isFinite(options.price) ||
-      options.price < 0
-    ) {
+    if (typeof options.price !== 'number' || !Number.isFinite(options.price) || options.price < 0) {
       throw new Error('Braze.logPurchase: `price` must be a non-negative finite number.');
     }
     if (options.quantity !== undefined) {
-      if (
-        !Number.isInteger(options.quantity) ||
-        options.quantity < 1 ||
-        options.quantity > 100
-      ) {
+      if (!Number.isInteger(options.quantity) || options.quantity < 1 || options.quantity > 100) {
         throw new Error('Braze.logPurchase: `quantity` must be an integer between 1 and 100.');
       }
     }

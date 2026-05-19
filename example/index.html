@@ -10,8 +10,8 @@
     <header>
       <h1>capacitor-braze example</h1>
       <p>
-        Exercises every plugin method end-to-end. Use against your Braze
-        14-day trial account. See README.md for setup steps.
+        Exercises every plugin method end-to-end. Use against your Braze 14-day trial account. See README.md for setup
+        steps.
       </p>
     </header>
 
@@ -22,12 +22,14 @@
       <section class="card">
         <h2>Configuration</h2>
         <div class="row">
-          <label>API key
+          <label
+            >API key
             <input id="apiKey" type="text" placeholder="YOUR-SDK-API-KEY" />
           </label>
         </div>
         <div class="row">
-          <label>Endpoint
+          <label
+            >Endpoint
             <input id="endpoint" type="text" placeholder="sdk.iad-03.braze.com" />
           </label>
         </div>
@@ -48,10 +50,12 @@
       <section class="card">
         <h2>User identity</h2>
         <div class="row">
-          <label>userId
+          <label
+            >userId
             <input id="userId" type="text" placeholder="user_123" />
           </label>
-          <label>sdkAuthSignature (optional)
+          <label
+            >sdkAuthSignature (optional)
             <input id="sdkAuthSignature" type="text" placeholder="<jwt>" />
           </label>
         </div>
@@ -112,7 +116,8 @@
           <button data-method="setDateOfBirth">setDateOfBirth</button>
         </div>
         <div class="row">
-          <label>gender
+          <label
+            >gender
             <select id="gender">
               <option value="male">male</option>
               <option value="female">female</option>
@@ -150,7 +155,8 @@
         <div class="row">
           <label>key <input id="attrKey" type="text" placeholder="loyalty_tier" /></label>
           <label>value <input id="attrValue" type="text" placeholder="gold" /></label>
-          <label>type
+          <label
+            >type
             <select id="attrType">
               <option value="string">string</option>
               <option value="number">number</option>
@@ -168,7 +174,8 @@
         <h2>Custom events</h2>
         <div class="row">
           <label>name <input id="eventName" type="text" placeholder="cart_viewed" /></label>
-          <label>properties (JSON, optional)
+          <label
+            >properties (JSON, optional)
             <input id="eventProperties" type="text" placeholder='{"items":3}' />
           </label>
           <button data-method="logCustomEvent">logCustomEvent</button>
@@ -207,7 +214,8 @@
           <label>quantity <input id="quantity" type="number" placeholder="1" /></label>
         </div>
         <div class="row">
-          <label>properties (JSON, optional)
+          <label
+            >properties (JSON, optional)
             <input id="purchaseProperties" type="text" placeholder='{"coupon":"WELCOME10"}' />
           </label>
           <button data-method="logPurchase">logPurchase</button>
