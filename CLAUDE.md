@@ -75,6 +75,15 @@ Always check actual `package.json` + git log for current state; this table can d
 
 ---
 
+## Apps in this repo
+
+Two apps live alongside the plugin source — same monorepo, different audiences:
+
+- **`example/`** — developer testbed. Every plugin method is a button on an HTML page; clicking it invokes the method and logs the result. Maintainers use this to verify changes; consumers do not.
+- **`demo/`** — fork-as-starter Capacitor + Braze reference. React 19 + TanStack Router + Tailwind 4 + Zustand. Two verticals (restaurant ordering, e-commerce), mock backend, realistic flows. Consumers fork this to start their own integration; maintainers use it for portfolio screenshots / demo videos.
+
+Each app builds against the plugin via `file:..` so a `npm run build` at the repo root automatically propagates into both apps' next install. CI builds all three artifacts on every push.
+
 ## Repo structure (planned)
 
 ```

@@ -104,6 +104,36 @@ jobs:
         working-directory: example
         run: npm run build
 
+  build-demo:
+    name: Build demo app
+    runs-on: ubuntu-latest
+    needs: build-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            demo/package-lock.json
+
+      - name: Install plugin deps
+        run: npm ci
+
+      - name: Build plugin (so demo file:.. resolves)
+        run: npm run build
+
+      - name: Install demo deps
+        working-directory: demo
+        run: npm install
+
+      - name: Build demo app
+        working-directory: demo
+        run: npm run build
+
   audit:
     name: Security audit (plugin only)
     runs-on: ubuntu-latest

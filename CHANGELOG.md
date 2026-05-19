@@ -11,6 +11,31 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+### Added — `demo/` Capacitor reference app (not published, dev artifact)
+
+A second app alongside `example/`, purpose-built as a fork-as-starter
+reference. Different audience from `example/`:
+
+- `example/` is the developer testbed (every plugin method = a button +
+  log line). For maintainers verifying changes.
+- `demo/` is a production-feeling Capacitor app with realistic flows
+  across two verticals (restaurant ordering + e-commerce). For
+  consumers evaluating the plugin or starting a real integration.
+
+L.1 ships the scaffold: Vite 6 + React 19 + Tailwind 4 (CSS-first
+config) + TanStack Router + Zustand 5 + Capacitor 6. Mock auth via
+Zustand persist. Bottom nav, top bar with cart badge, login page,
+home page wired to `Braze.changeUser` + `Braze.logCustomEvent`. The
+other tabs (`/restaurants`, `/shop`, `/cart`, `/checkout`,
+`/promotions`, `/profile`, `/settings`) are routed but contain
+placeholders — phased rollout per `demo/README.md`.
+
+Not Aromo-derived. The demo is a standalone reference; no Aromo
+backend, branding, or code is involved.
+
+CI gains a `build-demo` job that builds the demo against the freshly
+built plugin (mirrors `build-example`).
+
 ## [0.0.10] — 2026-05-19
 
 ### Added — Content cards read API + `contentCardsUpdated` listener (Phase K)

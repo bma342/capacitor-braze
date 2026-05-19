@@ -1,0 +1,19 @@
+# build output
+dist/
+node_modules/
+
+# Capacitor native sync artifacts (the platforms themselves ARE committed;
+# only the per-build copy of the web assets is ignored)
+ios/App/App/public/
+android/app/src/main/assets/public/
+
+# editor
+.vscode/
+.idea/
+
+# logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store

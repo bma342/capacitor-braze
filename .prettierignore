@@ -3,5 +3,10 @@ node_modules/
 example/dist/
 example/node_modules/
 example/package-lock.json
+demo/dist/
+demo/node_modules/
+demo/package-lock.json
+demo/ios/
+demo/android/
 package-lock.json
 *.md

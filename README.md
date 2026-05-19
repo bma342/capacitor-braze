@@ -1088,6 +1088,13 @@ discriminator to narrow.
 
 </docgen-api>
 
+## Apps in this repo
+
+| Dir | Purpose | Stack |
+|---|---|---|
+| [`example/`](./example/) | Developer testbed — every plugin method has a button | Vite + vanilla TS |
+| [`demo/`](./demo/) | Fork-as-starter Capacitor + Braze reference app (restaurant ordering + e-commerce, mock backend) | Vite 6 + React 19 + Tailwind 4 + TanStack Router + Capacitor 6 |
+
 ## Documentation
 
 | Doc | Purpose |
