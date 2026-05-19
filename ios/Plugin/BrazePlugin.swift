@@ -4,7 +4,7 @@ import Foundation
 
 /// Capacitor bridge for the Braze iOS SDK (BrazeKit 14.1.0).
 ///
-/// ## Surface in 0.0.9
+/// ## Surface in 0.0.10
 ///
 /// - **Bridge sanity:** `echo(value)`
 /// - **Configuration:** `initialize(apiKey, endpoint, ...)`
@@ -23,7 +23,10 @@ import Foundation
 ///   `logPurchase(productId, currency, price, quantity?, properties?)`
 /// - **Feature flags:** `getFeatureFlag(id)`, `getAllFeatureFlags`,
 ///   `refreshFeatureFlags`, `logFeatureFlagImpression(id)`
-/// - **Listeners:** `addListener('featureFlagsUpdated', ...)`
+/// - **Content cards:** `getContentCards`, `requestContentCardsRefresh`,
+///   `logContentCardClick(cardId)`, `logContentCardImpression(cardId)`
+/// - **Listeners:** `addListener('featureFlagsUpdated', ...)`,
+///   `addListener('contentCardsUpdated', ...)`
 /// - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
 ///   `requestImmediateDataFlush`
 ///
@@ -60,6 +63,11 @@ public class BrazePlugin: CAPPlugin {
     /// (BrazeKit cancels when the handle is released) and released during
     /// `wipeData` so the post-wipe re-init starts from a clean slate.
     private var featureFlagsSubscription: Braze.Cancellable?
+
+    /// Mirror of `featureFlagsSubscription` for the content-cards update
+    /// stream. Same lifetime: created in `initialize`, released in
+    /// `wipeData`.
+    private var contentCardsSubscription: Braze.Cancellable?
 
     // MARK: - Bridge sanity check
 
@@ -107,6 +115,11 @@ public class BrazePlugin: CAPPlugin {
             guard let self = self else { return }
             let payload: [[String: Any]] = flags.map { Self.serializeFeatureFlag($0) }
             self.notifyListeners("featureFlagsUpdated", data: ["flags": payload])
+        }
+
+        contentCardsSubscription = braze.contentCards.subscribeToUpdates { [weak self] cards in
+            guard let self = self else { return }
+            self.notifyListeners("contentCardsUpdated", data: Self.serializeContentCards(cards))
         }
 
         call.resolve()
@@ -476,6 +489,131 @@ public class BrazePlugin: CAPPlugin {
         }
     }
 
+    // MARK: - Content cards
+    //
+    // BrazeKit exposes content cards via `braze.contentCards`:
+    //   - cards         -> [Braze.ContentCard]  (cached list)
+    //   - requestRefresh -> async refresh, fire-and-forget here
+    //   - logClick(cardId:) / logImpressions(idsAndImpressionsSent:)
+    //   - subscribeToUpdates -> [Braze.ContentCard] callback
+    //
+    // Card type is an enum (`.classic`, `.captionedImage`, `.imageOnly`,
+    // `.control`) on `Braze.ContentCard`; the bridge maps each case to
+    // the plugin's `BrazeContentCardType` string tag. Date fields are
+    // converted to Unix epoch milliseconds via `timeIntervalSince1970`
+    // matching the public `BrazeContentCardBase.updated` shape.
+
+    @objc func getContentCards(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        call.resolve(Self.serializeContentCards(braze.contentCards.cards))
+    }
+
+    @objc func requestContentCardsRefresh(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        braze.contentCards.requestRefresh()
+        call.resolve()
+    }
+
+    @objc func logContentCardClick(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let cardId = call.getString("cardId"), !cardId.isEmpty else {
+            call.reject("Braze.logContentCardClick: `cardId` is required (string).")
+            return
+        }
+        braze.contentCards.logClick(cardId: cardId)
+        call.resolve()
+    }
+
+    @objc func logContentCardImpression(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let cardId = call.getString("cardId"), !cardId.isEmpty else {
+            call.reject("Braze.logContentCardImpression: `cardId` is required (string).")
+            return
+        }
+        braze.contentCards.logImpression(cardId: cardId)
+        call.resolve()
+    }
+
+    /// Builds the `BrazeGetContentCardsResult` wire shape from a Braze
+    /// SDK card array. `lastUpdated` is the most recent `updated`
+    /// timestamp across the cards; this is BrazeKit's convention for
+    /// surfacing freshness of the cached collection.
+    private static func serializeContentCards(_ cards: [Braze.ContentCard]) -> [String: Any] {
+        let serialized: [[String: Any]] = cards.compactMap { Self.serializeContentCard($0) }
+        let lastUpdated: Any
+        if let mostRecent = cards.compactMap({ $0.updated }).max() {
+            lastUpdated = Int(mostRecent.timeIntervalSince1970 * 1000)
+        } else {
+            lastUpdated = NSNull()
+        }
+        return [
+            "cards": serialized,
+            "lastUpdated": lastUpdated,
+        ]
+    }
+
+    /// Maps a single `Braze.ContentCard` to the plugin's tagged-union
+    /// DTO. Returns nil for cards whose type doesn't fit the four known
+    /// variants; the caller filters via compactMap.
+    private static func serializeContentCard(_ card: Braze.ContentCard) -> [String: Any]? {
+        let base: [String: Any] = [
+            "id": card.id,
+            "viewed": card.viewed,
+            "pinned": card.pinned,
+            "extras": card.extras,
+            "updated": card.updated.map { Int($0.timeIntervalSince1970 * 1000) } as Any,
+            "expiresAt": card.expiresAt.map { Int($0.timeIntervalSince1970 * 1000) } as Any,
+        ]
+
+        switch card {
+        case let .classic(c):
+            return base.merging([
+                "type": "classic",
+                "title": c.title,
+                "description": c.description,
+                "imageUrl": c.image?.absoluteString as Any,
+                "url": c.url?.absoluteString as Any,
+                "linkText": c.linkText as Any,
+                "clicked": c.clicked,
+                "dismissed": c.dismissed,
+                "dismissible": c.dismissible,
+                "language": c.language as Any,
+                "altImageText": c.altImageText as Any,
+            ]) { _, new in new }
+        case let .captionedImage(c):
+            return base.merging([
+                "type": "captionedImage",
+                "title": c.title,
+                "description": c.description,
+                "imageUrl": c.image.absoluteString,
+                "url": c.url?.absoluteString as Any,
+                "linkText": c.linkText as Any,
+                "aspectRatio": c.imageAspectRatio as Any,
+                "clicked": c.clicked,
+                "dismissed": c.dismissed,
+                "dismissible": c.dismissible,
+                "language": c.language as Any,
+                "altImageText": c.altImageText as Any,
+            ]) { _, new in new }
+        case let .imageOnly(c):
+            return base.merging([
+                "type": "imageOnly",
+                "imageUrl": c.image.absoluteString,
+                "url": c.url?.absoluteString as Any,
+                "aspectRatio": c.imageAspectRatio as Any,
+                "clicked": c.clicked,
+                "dismissed": c.dismissed,
+                "dismissible": c.dismissible,
+                "language": c.language as Any,
+                "altImageText": c.altImageText as Any,
+            ]) { _, new in new }
+        case .control:
+            return base.merging(["type": "control"]) { _, new in new }
+        @unknown default:
+            return nil
+        }
+    }
+
     // MARK: - Privacy / lifecycle
     //
     // All four are init-independent. They invoke class-level static methods on
@@ -486,9 +624,10 @@ public class BrazePlugin: CAPPlugin {
         Braze.wipeData()
         // Per Braze docs, `wipeData` invalidates the current SDK instance.
         // Drop our reference so subsequent `requireInitialized` calls fail
-        // until `initialize` is called again. Cancel the feature-flag
-        // subscription at the same time so re-init creates a fresh one.
+        // until `initialize` is called again. Cancel all subscriptions at
+        // the same time so re-init creates fresh ones.
         featureFlagsSubscription = nil
+        contentCardsSubscription = nil
         BrazePlugin.braze = nil
         call.resolve()
     }

@@ -188,6 +188,18 @@ const runMethods: Record<string, () => Promise<unknown>> = {
     activeListeners.push(handle);
     return { listenerHandles: activeListeners.length };
   },
+  subscribeContentCardsUpdated: async () => {
+    const handle = await Braze.addListener('contentCardsUpdated', ({ cards }) => {
+      log(`event contentCardsUpdated: ${cards.length} card(s)`, 'ok');
+    });
+    activeListeners.push(handle);
+    return { listenerHandles: activeListeners.length };
+  },
+
+  getContentCards: () => Braze.getContentCards(),
+  requestContentCardsRefresh: () => Braze.requestContentCardsRefresh(),
+  logContentCardClick: () => Braze.logContentCardClick({ cardId: input('contentCardId') }),
+  logContentCardImpression: () => Braze.logContentCardImpression({ cardId: input('contentCardId') }),
   removeAllListeners: async () => {
     await Braze.removeAllListeners();
     activeListeners.length = 0;

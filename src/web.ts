@@ -4,18 +4,23 @@ import { WebPlugin } from '@capacitor/core';
 import type {
   BrazeAddAliasOptions,
   BrazeChangeUserOptions,
+  BrazeContentCard,
+  BrazeContentCardType,
   BrazeEchoOptions,
   BrazeEchoResult,
   BrazeFeatureFlag,
   BrazeFeatureFlagPropertyValue,
   BrazeGender,
   BrazeGetAllFeatureFlagsResult,
+  BrazeGetContentCardsResult,
   BrazeGetDeviceIdResult,
   BrazeGetFeatureFlagOptions,
   BrazeGetFeatureFlagResult,
   BrazeGetUserIdResult,
   BrazeInitializeOptions,
   BrazeIsDisabledResult,
+  BrazeLogContentCardClickOptions,
+  BrazeLogContentCardImpressionOptions,
   BrazeLogCustomEventOptions,
   BrazeLogFeatureFlagImpressionOptions,
   BrazeLogPurchaseOptions,
@@ -78,6 +83,14 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    */
   private featureFlagsSubscribed = false;
 
+  /**
+   * Mirror of {@link featureFlagsSubscribed} for content cards. Same
+   * rationale: the Web SDK's `subscribeToContentCardsUpdates` doesn't
+   * return an unsubscribe handle, so we guard against duplicate
+   * subscriptions across re-init with a boolean.
+   */
+  private contentCardsSubscribed = false;
+
   // ---------------------------------------------------------------------------
   // Bridge sanity check
   // ---------------------------------------------------------------------------
@@ -111,6 +124,12 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
         this.notifyListeners('featureFlagsUpdated', { flags: serialized });
       });
       this.featureFlagsSubscribed = true;
+    }
+    if (!this.contentCardsSubscribed) {
+      braze.subscribeToContentCardsUpdates((cards) => {
+        this.notifyListeners('contentCardsUpdated', this.serializeContentCards(cards));
+      });
+      this.contentCardsSubscribed = true;
     }
   }
 
@@ -310,6 +329,39 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   }
 
   // ---------------------------------------------------------------------------
+  // Content cards
+  //
+  // The Web SDK's `logContentCardClick` / `logContentCardImpressions` take
+  // full `Card` instances rather than IDs. To keep the plugin contract
+  // simple ({ cardId: string }), we look up the card in the SDK's cached
+  // list, then forward the resolved Card. Lookup-miss is a clear reject;
+  // the cache is the only source of truth for which cards exist.
+  // ---------------------------------------------------------------------------
+
+  async getContentCards(): Promise<BrazeGetContentCardsResult> {
+    const braze = this.requireInitialized();
+    const cached = braze.getCachedContentCards();
+    return this.serializeContentCards(cached);
+  }
+
+  async requestContentCardsRefresh(): Promise<void> {
+    const braze = this.requireInitialized();
+    braze.requestContentCardsRefresh();
+  }
+
+  async logContentCardClick(options: BrazeLogContentCardClickOptions): Promise<void> {
+    const braze = this.requireInitialized();
+    const card = this.requireContentCardById(braze, options.cardId, 'logContentCardClick');
+    braze.logContentCardClick(card);
+  }
+
+  async logContentCardImpression(options: BrazeLogContentCardImpressionOptions): Promise<void> {
+    const braze = this.requireInitialized();
+    const card = this.requireContentCardById(braze, options.cardId, 'logContentCardImpression');
+    braze.logContentCardImpressions([card]);
+  }
+
+  // ---------------------------------------------------------------------------
   // Purchases
   // ---------------------------------------------------------------------------
 
@@ -471,6 +523,166 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       }
     }
     return { id: raw.id, enabled: raw.enabled, properties };
+  }
+
+  /**
+   * Serializes the SDK's `ContentCards` collection into the plugin's
+   * portable shape. `undefined` (SDK not yet bootstrapped) becomes an
+   * empty cards array with `lastUpdated: null`, matching how the native
+   * bridges behave when the cache hasn't been populated.
+   */
+  private serializeContentCards(raw: ReturnType<BrazeWebSdk['getCachedContentCards']>): BrazeGetContentCardsResult {
+    if (!raw) {
+      return { cards: [], lastUpdated: null };
+    }
+    const cards = raw.cards
+      .map((card) => this.serializeContentCard(card))
+      .filter((card): card is BrazeContentCard => card !== null);
+    return {
+      cards,
+      lastUpdated: raw.lastUpdated ? raw.lastUpdated.getTime() : null,
+    };
+  }
+
+  /**
+   * Maps a single Web SDK `Card` instance to the plugin's portable DTO.
+   * Returns `null` for cards we can't classify (future SDK card types);
+   * the caller filters them out so the DTO stays a strict union.
+   *
+   * Card-type detection uses runtime field presence rather than
+   * `instanceof` because the Web SDK exports `Card` subclasses as
+   * distinct classes whose private state isn't reliable to introspect.
+   * The fields chosen are non-overlapping enough to discriminate the
+   * four variants.
+   */
+  private serializeContentCard(card: BrazeWebSdkModule.Card): BrazeContentCard | null {
+    const base = {
+      id: card.id ?? '',
+      viewed: card.viewed,
+      pinned: card.pinned,
+      extras: card.extras,
+      updated: card.updated ? card.updated.getTime() : null,
+      expiresAt: card.expiresAt ? card.expiresAt.getTime() : null,
+    };
+
+    if (card.isControl) {
+      return { ...base, type: 'control' };
+    }
+
+    const type: BrazeContentCardType | null = this.detectContentCardType(card);
+    if (!type || type === 'control') {
+      return null;
+    }
+    // Cards that aren't ControlCard share these fields; we type-cast
+    // through `Card` because the public Card type doesn't enumerate the
+    // subclass fields, but the runtime objects always carry them.
+    const c = card as BrazeWebSdkModule.Card & {
+      title?: string;
+      description?: string;
+      imageUrl?: string;
+      url?: string;
+      linkText?: string;
+      aspectRatio?: number | null;
+      clicked?: boolean;
+      dismissed?: boolean;
+      dismissible?: boolean;
+      language?: string;
+      altImageText?: string;
+    };
+    const sharedNonControl = {
+      clicked: c.clicked ?? false,
+      dismissed: c.dismissed ?? false,
+      dismissible: c.dismissible ?? false,
+      language: c.language,
+      altImageText: c.altImageText,
+    };
+
+    switch (type) {
+      case 'imageOnly':
+        return {
+          ...base,
+          type: 'imageOnly',
+          imageUrl: c.imageUrl ?? '',
+          url: c.url,
+          aspectRatio: c.aspectRatio ?? null,
+          ...sharedNonControl,
+        };
+      case 'captionedImage':
+        return {
+          ...base,
+          type: 'captionedImage',
+          title: c.title ?? '',
+          description: c.description ?? '',
+          imageUrl: c.imageUrl ?? '',
+          url: c.url,
+          linkText: c.linkText,
+          aspectRatio: c.aspectRatio ?? null,
+          ...sharedNonControl,
+        };
+      case 'classic':
+        return {
+          ...base,
+          type: 'classic',
+          title: c.title ?? '',
+          description: c.description ?? '',
+          imageUrl: c.imageUrl,
+          url: c.url,
+          linkText: c.linkText,
+          ...sharedNonControl,
+        };
+    }
+  }
+
+  /**
+   * Best-effort runtime type discrimination for content cards. The Web
+   * SDK doesn't expose a card-type field, so we detect by which subclass
+   * fields are present:
+   *
+   *   - has `title` AND `imageUrl` AND `description` → `captionedImage`
+   *   - has `imageUrl` but no `title` → `imageOnly`
+   *   - has `title` and `description` but image is optional → `classic`
+   *
+   * Order matters: check the most-specific shape first.
+   */
+  private detectContentCardType(card: BrazeWebSdkModule.Card): BrazeContentCardType | null {
+    const c = card as BrazeWebSdkModule.Card & {
+      title?: string;
+      description?: string;
+      imageUrl?: string;
+    };
+    if (c.title && c.description && c.imageUrl) {
+      return 'captionedImage';
+    }
+    if (!c.title && c.imageUrl) {
+      return 'imageOnly';
+    }
+    if (c.title && c.description) {
+      return 'classic';
+    }
+    return null;
+  }
+
+  /**
+   * Looks up a content card by id in the SDK's cache. The Web SDK's
+   * `logContentCardClick` / `logContentCardImpressions` require the full
+   * Card instance, not just an id, so this lookup is the bridge between
+   * the plugin's `{ cardId: string }` contract and the SDK's call shape.
+   * A miss is a clear reject — the SDK can't log against a card it
+   * doesn't have in its cache anyway.
+   */
+  private requireContentCardById(braze: BrazeWebSdk, cardId: string, method: string): BrazeWebSdkModule.Card {
+    if (!cardId || typeof cardId !== 'string') {
+      throw new Error(`Braze.${method}: \`cardId\` is required (string).`);
+    }
+    const cached = braze.getCachedContentCards();
+    const card = cached?.cards.find((c) => c.id === cardId);
+    if (!card) {
+      throw new Error(
+        `Braze.${method}: no cached content card with id "${cardId}". ` +
+          `Call getContentCards() to verify the id, or wait for the next refresh.`,
+      );
+    }
+    return card;
   }
 
   /**

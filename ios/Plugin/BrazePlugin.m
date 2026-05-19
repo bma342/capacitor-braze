@@ -57,6 +57,12 @@ CAP_PLUGIN(BrazePlugin, "Braze",
     CAP_PLUGIN_METHOD(refreshFeatureFlags, CAPPluginReturnPromise);
     CAP_PLUGIN_METHOD(logFeatureFlagImpression, CAPPluginReturnPromise);
 
+    // Content cards
+    CAP_PLUGIN_METHOD(getContentCards, CAPPluginReturnPromise);
+    CAP_PLUGIN_METHOD(requestContentCardsRefresh, CAPPluginReturnPromise);
+    CAP_PLUGIN_METHOD(logContentCardClick, CAPPluginReturnPromise);
+    CAP_PLUGIN_METHOD(logContentCardImpression, CAPPluginReturnPromise);
+
     // Privacy / lifecycle
     CAP_PLUGIN_METHOD(wipeData, CAPPluginReturnPromise);
     CAP_PLUGIN_METHOD(disableSDK, CAPPluginReturnPromise);

@@ -11,6 +11,70 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+## [0.0.10] — 2026-05-19
+
+### Added — Content cards read API + `contentCardsUpdated` listener (Phase K)
+
+The first phase to apply the MDC set end-to-end. Four read-side
+methods plus a listener event. The DTO is a discriminated union
+matching the Web SDK's `Card` class hierarchy per [C02](./docs/mdcs/C02-DTO-SHAPES.md);
+the listener wiring follows the eager-on-init pattern per [C05](./docs/mdcs/C05-LISTENERS.md).
+
+- `Braze.getContentCards()` → `{ cards: BrazeContentCard[]; lastUpdated: number | null }`.
+  Reads from the SDK's local cache. `lastUpdated` is Unix epoch ms
+  (`null` if never fetched).
+- `Braze.requestContentCardsRefresh()` — fire-and-forget; resolves
+  once the refresh has been dispatched. Use the listener for the
+  fresh card payload, or re-read after a short delay.
+- `Braze.logContentCardClick({ cardId })` — call when the user
+  taps a card. Only needed when bypassing Braze's built-in display.
+- `Braze.logContentCardImpression({ cardId })` — call when a card
+  scrolls into view.
+- `Braze.addListener('contentCardsUpdated', cb)` — fires on every
+  card refresh. Payload matches `getContentCards` shape; no initial
+  state replay (consumer reads via `getContentCards` once after
+  `addListener` to seed UI).
+
+### `BrazeContentCard` DTO
+
+Tagged union over four card variants:
+
+- `'classic'` — title + description + optional image + optional URL
+- `'captionedImage'` — title + description + required image
+- `'imageOnly'` — required image, no title
+- `'control'` — multivariate-test control arm; impression-logged
+  but not rendered
+
+`type` is the discriminator; narrow with
+`if (card.type === 'classic') { ... }`. The shape mirrors the
+Web SDK's `Card` class hierarchy verbatim; iOS maps from
+`Braze.ContentCard` enum cases (`.classic`, `.captionedImage`,
+`.imageOnly`, `.control`); Android maps from the SDK subclass
+hierarchy (`ShortNewsCard`, `CaptionedImageCard`, `BannerImageCard`,
+`TextAnnouncementCard`, `ControlCard`).
+
+### Cross-platform translation notes
+
+- **Android `TextAnnouncementCard`** folds into the `'classic'` type
+  (title + description, no image). The Android SDK distinguishes
+  short-news from text-announcement based on whether an image is
+  configured; the plugin contract treats both as classic since the
+  visible shape is identical.
+- **Date fields** are Unix epoch milliseconds across all three
+  platforms. Web converts via `Date.getTime()`; iOS via
+  `timeIntervalSince1970 * 1000`; Android via the SDK's
+  seconds-from-epoch fields multiplied by 1000.
+- **Web `logContentCardClick` takes a `Card` instance** (not an id).
+  The web bridge looks up the cached card by id before forwarding;
+  cache-miss is a reject pointing the consumer at `getContentCards`.
+
+### Improved
+
+- C02 (DTO shapes) and C05 (listeners) MDCs gain content-card worked
+  examples.
+- Plugin surface: **33 callable methods** + `addListener` /
+  `removeAllListeners` for two events.
+
 ### Improved — Capacitor official toolchain alignment
 
 Adopts the dev-tooling stack that Capacitor's own first-party plugins use

@@ -79,7 +79,12 @@ await Braze.logCustomEvent({ name: 'app_opened' });
 * [`getAllFeatureFlags()`](#getallfeatureflags)
 * [`refreshFeatureFlags()`](#refreshfeatureflags)
 * [`logFeatureFlagImpression(...)`](#logfeatureflagimpression)
+* [`getContentCards()`](#getcontentcards)
+* [`requestContentCardsRefresh()`](#requestcontentcardsrefresh)
+* [`logContentCardClick(...)`](#logcontentcardclick)
+* [`logContentCardImpression(...)`](#logcontentcardimpression)
 * [`addListener('featureFlagsUpdated', ...)`](#addlistenerfeatureflagsupdated-)
+* [`addListener('contentCardsUpdated', ...)`](#addlistenercontentcardsupdated-)
 * [`removeAllListeners()`](#removealllisteners)
 * [`wipeData()`](#wipedata)
 * [`disableSDK()`](#disablesdk)
@@ -476,6 +481,70 @@ impression per session per flag id.
 --------------------
 
 
+### getContentCards()
+
+```typescript
+getContentCards() => Promise<BrazeGetContentCardsResult>
+```
+
+Returns all content cards currently cached for the user. Reads from
+the SDK's local cache; call {@link BrazePlugin.requestContentCardsRefresh}
+to force a fetch.
+
+**Returns:** <code>Promise&lt;<a href="#brazegetcontentcardsresult">BrazeGetContentCardsResult</a>&gt;</code>
+
+--------------------
+
+
+### requestContentCardsRefresh()
+
+```typescript
+requestContentCardsRefresh() => Promise<void>
+```
+
+Requests an immediate refresh of content cards from the Braze backend.
+Fire-and-forget: the returned promise resolves once the refresh has
+been dispatched, **not** once new cards arrive. Use the
+`'contentCardsUpdated'` listener to react to fresh cards, or re-read
+via {@link BrazePlugin.getContentCards} after a short delay.
+
+--------------------
+
+
+### logContentCardClick(...)
+
+```typescript
+logContentCardClick(options: BrazeLogContentCardClickOptions) => Promise<void>
+```
+
+Logs a click event for a content card. Call when the user taps a card
+in your UI. Per Braze: only call when bypassing Braze's built-in
+display module; the SDK's built-in renderer logs clicks automatically.
+
+| Param         | Type                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------- |
+| **`options`** | <code><a href="#brazelogcontentcardclickoptions">BrazeLogContentCardClickOptions</a></code> |
+
+--------------------
+
+
+### logContentCardImpression(...)
+
+```typescript
+logContentCardImpression(options: BrazeLogContentCardImpressionOptions) => Promise<void>
+```
+
+Logs an impression for a content card. Call when a card scrolls into
+view in your UI. Per Braze: only call when bypassing Braze's built-in
+display module.
+
+| Param         | Type                                                                                                  |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| **`options`** | <code><a href="#brazelogcontentcardimpressionoptions">BrazeLogContentCardImpressionOptions</a></code> |
+
+--------------------
+
+
 ### addListener('featureFlagsUpdated', ...)
 
 ```typescript
@@ -493,6 +562,29 @@ listener attaches; if you need the current snapshot, call
 | ------------------ | ----------------------------------------------------------------------------------------------------------- |
 | **`eventName`**    | <code>'featureFlagsUpdated'</code>                                                                          |
 | **`listenerFunc`** | <code>(event: <a href="#brazefeatureflagsupdatedevent">BrazeFeatureFlagsUpdatedEvent</a>) =&gt; void</code> |
+
+**Returns:** <code>Promise&lt;<a href="#pluginlistenerhandle">PluginListenerHandle</a>&gt;</code>
+
+--------------------
+
+
+### addListener('contentCardsUpdated', ...)
+
+```typescript
+addListener(eventName: 'contentCardsUpdated', listenerFunc: (event: BrazeContentCardsUpdatedEvent) => void) => Promise<PluginListenerHandle>
+```
+
+Subscribes to content card updates. Fires whenever the Braze SDK
+refreshes its content card cache — either on session open, after
+{@link BrazePlugin.requestContentCardsRefresh}, or after a
+server-driven sync. Initial state is not replayed when the listener
+attaches; call {@link BrazePlugin.getContentCards} once after
+`addListener` if you need the current snapshot.
+
+| Param              | Type                                                                                                        |
+| ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| **`eventName`**    | <code>'contentCardsUpdated'</code>                                                                          |
+| **`listenerFunc`** | <code>(event: <a href="#brazecontentcardsupdatedevent">BrazeContentCardsUpdatedEvent</a>) =&gt; void</code> |
 
 **Returns:** <code>Promise&lt;<a href="#pluginlistenerhandle">PluginListenerHandle</a>&gt;</code>
 
@@ -801,6 +893,96 @@ Braze; subsequent events and attributes are attributed to this user.
 | **`id`** | <code>string</code> | Feature flag identifier whose impression should be logged. |
 
 
+#### BrazeGetContentCardsResult
+
+| Prop              | Type                            | Description                                                        |
+| ----------------- | ------------------------------- | ------------------------------------------------------------------ |
+| **`cards`**       | <code>BrazeContentCard[]</code> | All cards currently cached for the user. Empty if not yet fetched. |
+| **`lastUpdated`** | <code>number \| null</code>     | Last-refresh time as Unix epoch ms; `null` if never fetched.       |
+
+
+#### BrazeClassicContentCard
+
+Classic content card: title + description + optional image and click URL.
+The most common card type.
+
+| Prop               | Type                   | Description                                                    |
+| ------------------ | ---------------------- | -------------------------------------------------------------- |
+| **`type`**         | <code>'classic'</code> | Discriminator; narrow to a concrete card type with this field. |
+| **`title`**        | <code>string</code>    |                                                                |
+| **`description`**  | <code>string</code>    |                                                                |
+| **`imageUrl`**     | <code>string</code>    |                                                                |
+| **`url`**          | <code>string</code>    |                                                                |
+| **`linkText`**     | <code>string</code>    |                                                                |
+| **`clicked`**      | <code>boolean</code>   |                                                                |
+| **`dismissed`**    | <code>boolean</code>   |                                                                |
+| **`dismissible`**  | <code>boolean</code>   |                                                                |
+| **`language`**     | <code>string</code>    |                                                                |
+| **`altImageText`** | <code>string</code>    |                                                                |
+
+
+#### BrazeCaptionedImageContentCard
+
+Card with a large image, title, and description text.
+
+| Prop               | Type                          | Description                                                    |
+| ------------------ | ----------------------------- | -------------------------------------------------------------- |
+| **`type`**         | <code>'captionedImage'</code> | Discriminator; narrow to a concrete card type with this field. |
+| **`title`**        | <code>string</code>           |                                                                |
+| **`description`**  | <code>string</code>           |                                                                |
+| **`imageUrl`**     | <code>string</code>           |                                                                |
+| **`url`**          | <code>string</code>           |                                                                |
+| **`linkText`**     | <code>string</code>           |                                                                |
+| **`aspectRatio`**  | <code>number \| null</code>   | Aspect ratio hint for image loading. `null` when not provided. |
+| **`clicked`**      | <code>boolean</code>          |                                                                |
+| **`dismissed`**    | <code>boolean</code>          |                                                                |
+| **`dismissible`**  | <code>boolean</code>          |                                                                |
+| **`language`**     | <code>string</code>           |                                                                |
+| **`altImageText`** | <code>string</code>           |                                                                |
+
+
+#### BrazeImageOnlyContentCard
+
+Image-only card; no title or description.
+
+| Prop               | Type                        | Description                                                    |
+| ------------------ | --------------------------- | -------------------------------------------------------------- |
+| **`type`**         | <code>'imageOnly'</code>    | Discriminator; narrow to a concrete card type with this field. |
+| **`imageUrl`**     | <code>string</code>         |                                                                |
+| **`url`**          | <code>string</code>         |                                                                |
+| **`aspectRatio`**  | <code>number \| null</code> |                                                                |
+| **`clicked`**      | <code>boolean</code>        |                                                                |
+| **`dismissed`**    | <code>boolean</code>        |                                                                |
+| **`dismissible`**  | <code>boolean</code>        |                                                                |
+| **`language`**     | <code>string</code>         |                                                                |
+| **`altImageText`** | <code>string</code>         |                                                                |
+
+
+#### BrazeControlContentCard
+
+Control card: represents a user enrolled in the control arm of a
+content card multivariate test. Should be impression-logged but not
+rendered as visible content.
+
+| Prop       | Type                   | Description                                                    |
+| ---------- | ---------------------- | -------------------------------------------------------------- |
+| **`type`** | <code>'control'</code> | Discriminator; narrow to a concrete card type with this field. |
+
+
+#### BrazeLogContentCardClickOptions
+
+| Prop         | Type                | Description                              |
+| ------------ | ------------------- | ---------------------------------------- |
+| **`cardId`** | <code>string</code> | Identifier of the card the user clicked. |
+
+
+#### BrazeLogContentCardImpressionOptions
+
+| Prop         | Type                | Description                                        |
+| ------------ | ------------------- | -------------------------------------------------- |
+| **`cardId`** | <code>string</code> | Identifier of the card that was shown to the user. |
+
+
 #### PluginListenerHandle
 
 | Prop         | Type                                      |
@@ -817,6 +999,18 @@ treat this as a replacement, not a delta.
 | Prop        | Type                            |
 | ----------- | ------------------------------- |
 | **`flags`** | <code>BrazeFeatureFlag[]</code> |
+
+
+#### BrazeContentCardsUpdatedEvent
+
+Payload delivered to `'contentCardsUpdated'` listeners. Same shape as
+{@link <a href="#brazegetcontentcardsresult">BrazeGetContentCardsResult</a>}; the full current card set is
+included on every update, not a delta.
+
+| Prop              | Type                            |
+| ----------------- | ------------------------------- |
+| **`cards`**       | <code>BrazeContentCard[]</code> |
+| **`lastUpdated`** | <code>number \| null</code>     |
 
 
 #### BrazeIsDisabledResult
@@ -883,6 +1077,14 @@ native bridges serialize their typed property values into this shape.
 milliseconds; `'jsonobject'` is a nested JSON object.
 
 <code>{ type: 'string'; value: string } | { type: 'number'; value: number } | { type: 'boolean'; value: boolean } | { type: 'image'; value: string } | { type: 'datetime'; value: number } | { type: 'jsonobject'; value: <a href="#record">Record</a>&lt;string, unknown&gt; }</code>
+
+
+#### BrazeContentCard
+
+Tagged union over the four content card variants. Use the `type`
+discriminator to narrow.
+
+<code><a href="#brazeclassiccontentcard">BrazeClassicContentCard</a> | <a href="#brazecaptionedimagecontentcard">BrazeCaptionedImageContentCard</a> | <a href="#brazeimageonlycontentcard">BrazeImageOnlyContentCard</a> | <a href="#brazecontrolcontentcard">BrazeControlContentCard</a></code>
 
 </docgen-api>
 

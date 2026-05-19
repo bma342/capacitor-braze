@@ -163,6 +163,41 @@ The Android SDK identifies subscriptions by listener identity — the same `IEve
 
 ---
 
+## Second worked example — `contentCardsUpdated`
+
+Phase K added a second listener event using the same pattern. The deltas
+worth noting:
+
+- **Each event has its own retained handle.** iOS has
+  `featureFlagsSubscription` AND `contentCardsSubscription`, both
+  `Braze.Cancellable?`. Android has `featureFlagsSubscriber` AND
+  `contentCardsSubscriber`, both `IEventSubscriber<...>?`. Web has
+  two boolean guards (`featureFlagsSubscribed`, `contentCardsSubscribed`).
+- **All subscriptions wired in the same `initialize` block.** Both
+  feature flags and content cards subscribe before `initialize`
+  returns; consumers don't have to call a separate "enable listeners"
+  method.
+- **All teardown happens in one place** (`wipeData` on iOS, `wipeData`
+  + `teardownXxxSubscription` helpers on Android). The pattern scales
+  cleanly to N events — adding a third (e.g. `sdkAuthenticationError`)
+  is one more retained field plus one more teardown call.
+- **The `addListener` overload set is a union** in `src/definitions.ts`:
+
+  ```ts
+  addListener(eventName: 'featureFlagsUpdated', cb: (e: BrazeFeatureFlagsUpdatedEvent) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'contentCardsUpdated', cb: (e: BrazeContentCardsUpdatedEvent) => void): Promise<PluginListenerHandle>;
+  ```
+
+  TypeScript narrows the callback parameter based on the string literal
+  `eventName`. Future events extend the overload set; the consumer
+  reads strongly-typed payloads regardless of how many events ship.
+
+See [`src/web.ts`](../../src/web.ts) for the Web wiring,
+[`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift)
+for iOS (`contentCardsSubscription`), and
+[`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)
+for Android (`contentCardsSubscriber` and `teardownContentCardsSubscription`).
+
 ## Rules for adding a new event
 
 When you add a new `addListener('newEventName', ...)` surface:

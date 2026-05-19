@@ -203,6 +203,25 @@
       </section>
 
       <!-- ============================================================ -->
+      <!-- Content cards                                                  -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>Content cards</h2>
+        <div class="row">
+          <button data-method="getContentCards">getContentCards</button>
+          <button data-method="requestContentCardsRefresh">requestContentCardsRefresh</button>
+        </div>
+        <div class="row">
+          <label>cardId <input id="contentCardId" type="text" placeholder="card-uuid" /></label>
+          <button data-method="logContentCardClick">logContentCardClick</button>
+          <button data-method="logContentCardImpression">logContentCardImpression</button>
+        </div>
+        <div class="row">
+          <button data-method="subscribeContentCardsUpdated">addListener('contentCardsUpdated')</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
       <!-- Purchases                                                      -->
       <!-- ============================================================ -->
       <section class="card">

@@ -60,6 +60,39 @@ export type PropertiesJson = Partial<
 
 **Android bridge** ([`android/.../BrazePlugin.kt:572`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)): `featureFlag.properties` is a `JSONObject` that Braze stores in the same wire format Braze ships, so the bridge uses `JSObject(jsonObject.toString())` to round-trip. This is the only platform where we use a string round-trip; on the other two platforms direct construction is type-safe.
 
+## Worked example — `BrazeContentCard` (discriminated union)
+
+Content cards have four SDK variants on Web (`ClassicCard`,
+`CaptionedImage`, `ImageOnly`, `ControlCard`), three subclasses on iOS,
+five subclasses on Android. The plugin DTO is a tagged union over four
+public variants discriminated by a `type` field:
+
+```ts
+export type BrazeContentCard =
+  | BrazeClassicContentCard       // type: 'classic'
+  | BrazeCaptionedImageContentCard // type: 'captionedImage'
+  | BrazeImageOnlyContentCard      // type: 'imageOnly'
+  | BrazeControlContentCard;       // type: 'control'
+```
+
+Two design points worth flagging:
+
+- **Public variants don't have to be 1:1 with SDK subclasses.** Android
+  ships both `ShortNewsCard` and `TextAnnouncementCard`; the visible
+  shape (title + description, optional image) is identical, so both
+  fold into the plugin's `'classic'` variant. The Android bridge picks
+  the variant; the consumer doesn't see the SDK-specific subclass
+  distinction.
+- **Discriminator field is named `type`.** Match the precedent from
+  `BrazeFeatureFlagPropertyValue` so consumers narrow via the same
+  pattern across DTOs. Don't introduce `kind`, `variant`, `cardType`,
+  or other synonyms.
+
+See [`src/web.ts`](../../src/web.ts) `serializeContentCard` and
+`detectContentCardType` for the runtime detection logic on Web (the SDK
+exports subclasses but doesn't expose a type tag; we infer from field
+presence). The native bridges have direct enum or subclass dispatch.
+
 ## Rules for extending
 
 When you add a new Braze model DTO (e.g. `BrazeContentCard`, `BrazeInAppMessage`):

@@ -3,11 +3,19 @@ package com.bma342.braze
 import android.util.Log
 import com.braze.Braze
 import com.braze.configuration.BrazeConfig
+import com.braze.enums.CardCategory
 import com.braze.enums.Gender
 import com.braze.enums.Month
+import com.braze.events.ContentCardsUpdatedEvent
 import com.braze.events.FeatureFlagsUpdatedEvent
 import com.braze.events.IEventSubscriber
 import com.braze.models.FeatureFlag
+import com.braze.models.cards.BannerImageCard
+import com.braze.models.cards.CaptionedImageCard
+import com.braze.models.cards.Card
+import com.braze.models.cards.ControlCard
+import com.braze.models.cards.ShortNewsCard
+import com.braze.models.cards.TextAnnouncementCard
 import com.braze.models.outgoing.BrazeProperties
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
@@ -20,7 +28,7 @@ import java.math.BigDecimal
 /**
  * Capacitor bridge for the Braze Android SDK (com.braze:android-sdk-ui 42.2.0).
  *
- * ## Surface in 0.0.9
+ * ## Surface in 0.0.10
  *
  * - **Bridge sanity:** `echo(value)`
  * - **Configuration:** `initialize(apiKey, endpoint, ...)`
@@ -39,7 +47,10 @@ import java.math.BigDecimal
  *   `logPurchase(productId, currency, price, quantity?, properties?)`
  * - **Feature flags:** `getFeatureFlag(id)`, `getAllFeatureFlags`,
  *   `refreshFeatureFlags`, `logFeatureFlagImpression(id)`
- * - **Listeners:** `addListener('featureFlagsUpdated', ...)`
+ * - **Content cards:** `getContentCards`, `requestContentCardsRefresh`,
+ *   `logContentCardClick(cardId)`, `logContentCardImpression(cardId)`
+ * - **Listeners:** `addListener('featureFlagsUpdated', ...)`,
+ *   `addListener('contentCardsUpdated', ...)`
  * - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
  *   `requestImmediateDataFlush`
  *
@@ -78,6 +89,12 @@ class BrazePlugin : Plugin() {
      * `removeSingleSubscription`.
      */
     private var featureFlagsSubscriber: IEventSubscriber<FeatureFlagsUpdatedEvent>? = null
+
+    /**
+     * Mirror of [featureFlagsSubscriber] for the content-cards update
+     * stream. Created in `initialize`, removed by identity in `wipeData`.
+     */
+    private var contentCardsSubscriber: IEventSubscriber<ContentCardsUpdatedEvent>? = null
 
     // -------------------------------------------------------------------------
     // Bridge sanity check
@@ -151,6 +168,13 @@ class BrazePlugin : Plugin() {
         }
         Braze.getInstance(context).subscribeToFeatureFlagsUpdates(subscriber)
         featureFlagsSubscriber = subscriber
+
+        teardownContentCardsSubscription()
+        val ccSubscriber = IEventSubscriber<ContentCardsUpdatedEvent> { event ->
+            notifyListeners("contentCardsUpdated", serializeContentCardsEvent(event))
+        }
+        Braze.getInstance(context).subscribeToContentCardsUpdates(ccSubscriber)
+        contentCardsSubscriber = ccSubscriber
 
         call.resolve()
     }
@@ -578,6 +602,57 @@ class BrazePlugin : Plugin() {
     }
 
     // -------------------------------------------------------------------------
+    // Content cards
+    //
+    // The Android SDK exposes content cards via the singleton:
+    //   - Braze.getInstance(context).getCachedContentCards()
+    //       returns ContentCardsUpdatedEvent? with `allCards: List<Card>`
+    //       and `lastUpdatedInSecondsFromEpoch: Long`.
+    //   - Braze.getInstance(context).requestContentCardsRefresh(...)
+    //       triggers a refresh. fromCache=false forces server fetch.
+    //   - card.logClick() / card.logImpression()
+    //       called on the Card instance directly.
+    //
+    // To match the plugin's `{ cardId: string }` contract, we look up the
+    // Card by id in the cached collection before invoking logClick /
+    // logImpression — the Android SDK doesn't have a static "log by id"
+    // form.
+    // -------------------------------------------------------------------------
+
+    @PluginMethod
+    fun getContentCards(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        val event = Braze.getInstance(context).cachedContentCards
+        call.resolve(serializeContentCardsEvent(event))
+    }
+
+    @PluginMethod
+    fun requestContentCardsRefresh(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        // `fromCache = false` forces a server fetch; the cached path is
+        // covered by `getContentCards`. Consumers wanting a quick local
+        // re-read use `getContentCards`, not this.
+        Braze.getInstance(context).requestContentCardsRefresh(false)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun logContentCardClick(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        val card = requireContentCardById(call, "logContentCardClick") ?: return
+        card.logClick()
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun logContentCardImpression(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        val card = requireContentCardById(call, "logContentCardImpression") ?: return
+        card.logImpression()
+        call.resolve()
+    }
+
+    // -------------------------------------------------------------------------
     // Privacy / lifecycle
     //
     // All four invoke class-level static methods on `Braze` and operate on
@@ -590,9 +665,10 @@ class BrazePlugin : Plugin() {
         Braze.wipeData(context)
         // wipeData invalidates the configured singleton; require explicit
         // re-initialization before any subsequent post-init method is called.
-        // Drop the feature-flag subscription too so re-init creates a fresh
-        // one rather than leaving a zombie subscriber against the wiped SDK.
+        // Drop all subscriptions too so re-init creates fresh ones rather
+        // than leaving zombie subscribers against the wiped SDK.
         teardownFeatureFlagsSubscription()
+        teardownContentCardsSubscription()
         initialized = false
         call.resolve()
     }
@@ -675,6 +751,165 @@ class BrazePlugin : Plugin() {
             )
         }
         featureFlagsSubscriber = null
+    }
+
+    /**
+     * Mirror of [teardownFeatureFlagsSubscription] for content cards.
+     */
+    private fun teardownContentCardsSubscription() {
+        contentCardsSubscriber?.let { subscriber ->
+            Braze.getInstance(context).removeSingleSubscription(
+                subscriber,
+                ContentCardsUpdatedEvent::class.java,
+            )
+        }
+        contentCardsSubscriber = null
+    }
+
+    /**
+     * Looks up a content card by id in the SDK's cached collection.
+     * Rejects the call with a clear error if `cardId` is missing or no
+     * matching card is found.
+     *
+     * The Android SDK's logClick / logImpression are instance methods on
+     * `Card`, so this lookup is the bridge between the public
+     * `{ cardId }` contract and the SDK's call shape.
+     */
+    private fun requireContentCardById(call: PluginCall, method: String): Card? {
+        val cardId = call.getString("cardId")
+        if (cardId.isNullOrEmpty()) {
+            call.reject("Braze.$method: `cardId` is required (string).")
+            return null
+        }
+        val cached = Braze.getInstance(context).cachedContentCards
+        val card = cached?.allCards?.firstOrNull { it.id == cardId }
+        if (card == null) {
+            call.reject(
+                "Braze.$method: no cached content card with id \"$cardId\". " +
+                    "Call getContentCards() to verify the id, or wait for the next refresh.",
+            )
+            return null
+        }
+        return card
+    }
+
+    /**
+     * Serializes the SDK's `ContentCardsUpdatedEvent` to the plugin's
+     * wire-format `BrazeGetContentCardsResult`. The `lastUpdated`
+     * timestamp comes from `event.lastUpdatedInSecondsFromEpoch` and is
+     * converted to Unix epoch milliseconds to match the canonical TS
+     * contract.
+     *
+     * A null `event` (no cache yet) yields `{ cards: [], lastUpdated: null }`,
+     * matching the Web bridge's handling of `undefined` cached cards.
+     */
+    private fun serializeContentCardsEvent(event: ContentCardsUpdatedEvent?): JSObject {
+        val result = JSObject()
+        val cardsArray = JSArray()
+        if (event == null) {
+            result.put("cards", cardsArray)
+            result.put("lastUpdated", JSObject.NULL)
+            return result
+        }
+        for (card in event.allCards) {
+            serializeContentCard(card)?.let { cardsArray.put(it) }
+        }
+        result.put("cards", cardsArray)
+        result.put("lastUpdated", event.lastUpdatedInSecondsFromEpoch * 1000L)
+        return result
+    }
+
+    /**
+     * Maps a single `Card` to the plugin's tagged-union DTO. The
+     * Android SDK uses dedicated subclasses (`ShortNewsCard`,
+     * `CaptionedImageCard`, `BannerImageCard`, `TextAnnouncementCard`,
+     * `ControlCard`); we map them to the plugin's three visible types
+     * plus `control`:
+     *
+     *   ShortNewsCard         → 'classic'    (title + desc + optional image)
+     *   CaptionedImageCard    → 'captionedImage'
+     *   BannerImageCard       → 'imageOnly'
+     *   TextAnnouncementCard  → 'classic'    (title + desc, no image)
+     *   ControlCard           → 'control'
+     *
+     * `TextAnnouncementCard` doesn't have an image; we fold it into
+     * 'classic' (which also allows no image) rather than introducing a
+     * fifth public type for parity with the SDK's distinction. Returns
+     * null for unrecognized subclasses (future SDK additions).
+     */
+    private fun serializeContentCard(card: Card): JSObject? {
+        val base = JSObject()
+        base.put("id", card.id)
+        base.put("viewed", card.viewed)
+        base.put("pinned", card.isPinned)
+        val extras = JSObject()
+        for ((k, v) in card.extras) {
+            extras.put(k, v)
+        }
+        base.put("extras", extras)
+        // Card.updated is a Long in seconds-since-epoch (SDK convention).
+        // Multiply by 1000 to get the canonical millisecond shape.
+        base.put("updated", if (card.updated > 0) card.updated * 1000L else JSObject.NULL)
+        base.put("expiresAt", if (card.expiresAt > 0) card.expiresAt * 1000L else JSObject.NULL)
+
+        when (card) {
+            is BannerImageCard -> {
+                base.put("type", "imageOnly")
+                base.put("imageUrl", card.imageUrl ?: "")
+                base.put("url", card.url)
+                base.put("aspectRatio", card.aspectRatio)
+                attachNonControlFields(base, card)
+            }
+            is CaptionedImageCard -> {
+                base.put("type", "captionedImage")
+                base.put("title", card.title ?: "")
+                base.put("description", card.description ?: "")
+                base.put("imageUrl", card.imageUrl ?: "")
+                base.put("url", card.url)
+                base.put("linkText", card.domain)
+                base.put("aspectRatio", card.aspectRatio)
+                attachNonControlFields(base, card)
+            }
+            is ShortNewsCard -> {
+                base.put("type", "classic")
+                base.put("title", card.title ?: "")
+                base.put("description", card.description ?: "")
+                base.put("imageUrl", card.imageUrl)
+                base.put("url", card.url)
+                base.put("linkText", card.domain)
+                attachNonControlFields(base, card)
+            }
+            is TextAnnouncementCard -> {
+                base.put("type", "classic")
+                base.put("title", card.title ?: "")
+                base.put("description", card.description ?: "")
+                base.put("imageUrl", JSObject.NULL)
+                base.put("url", card.url)
+                base.put("linkText", card.domain)
+                attachNonControlFields(base, card)
+            }
+            is ControlCard -> {
+                base.put("type", "control")
+            }
+            else -> return null
+        }
+        return base
+    }
+
+    /**
+     * Adds the shared non-control card fields (clicked, dismissed,
+     * dismissible, language, altImageText) onto a base JSObject. Kept
+     * out of [serializeContentCard]'s switch so each branch reads as
+     * just the type-specific shape.
+     */
+    private fun attachNonControlFields(obj: JSObject, card: Card) {
+        obj.put("clicked", card.isClicked)
+        obj.put("dismissed", card.isDismissed)
+        obj.put("dismissible", card.isDismissibleByUser)
+        // `language` and `altImageText` are not consistently exposed on
+        // all Android Card subclasses; the SDK stores them in `extras`
+        // when present. Plugin consumers should read from `extras` if
+        // they need the platform-best fallback.
     }
 
     /**

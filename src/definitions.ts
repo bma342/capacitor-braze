@@ -298,6 +298,143 @@ export interface BrazeFeatureFlagsUpdatedEvent {
 }
 
 // =============================================================================
+// Content cards
+// =============================================================================
+
+/**
+ * Discriminator for the four content card variants. Mirrors the Web SDK
+ * `Card` class hierarchy (`ClassicCard`, `CaptionedImage`, `ImageOnly`,
+ * `ControlCard`) flattened to a string tag so the plugin's DTO survives
+ * JSON serialization across the Capacitor bridge.
+ */
+export type BrazeContentCardType = 'classic' | 'captionedImage' | 'imageOnly' | 'control';
+
+/**
+ * Fields present on every content card regardless of type. Cross-platform
+ * note: `updated` and `expiresAt` are Unix epoch milliseconds because the
+ * Capacitor bridge can't JSON-serialize JS `Date` objects faithfully.
+ * Web bridge converts via `.getTime()`; iOS / Android convert via the
+ * SDK's millisecond accessors.
+ */
+export interface BrazeContentCardBase {
+  /** Braze-issued card identifier. Used by impression / click logging. */
+  id: string;
+  /** Discriminator; narrow to a concrete card type with this field. */
+  type: BrazeContentCardType;
+  /** Whether the card has been shown to the user. */
+  viewed: boolean;
+  /** Whether the card is pinned to the top of the feed. */
+  pinned: boolean;
+  /** Custom key/value metadata configured in the Braze dashboard. */
+  extras: Record<string, string>;
+  /** Last modification time as Unix epoch ms; `null` if never modified. */
+  updated: number | null;
+  /** Expiry time as Unix epoch ms; `null` if no expiry. */
+  expiresAt: number | null;
+}
+
+/**
+ * Classic content card: title + description + optional image and click URL.
+ * The most common card type.
+ */
+export interface BrazeClassicContentCard extends BrazeContentCardBase {
+  type: 'classic';
+  title: string;
+  description: string;
+  imageUrl?: string;
+  url?: string;
+  linkText?: string;
+  clicked: boolean;
+  dismissed: boolean;
+  dismissible: boolean;
+  language?: string;
+  altImageText?: string;
+}
+
+/**
+ * Card with a large image, title, and description text.
+ */
+export interface BrazeCaptionedImageContentCard extends BrazeContentCardBase {
+  type: 'captionedImage';
+  title: string;
+  description: string;
+  imageUrl: string;
+  url?: string;
+  linkText?: string;
+  /** Aspect ratio hint for image loading. `null` when not provided. */
+  aspectRatio: number | null;
+  clicked: boolean;
+  dismissed: boolean;
+  dismissible: boolean;
+  language?: string;
+  altImageText?: string;
+}
+
+/**
+ * Image-only card; no title or description.
+ */
+export interface BrazeImageOnlyContentCard extends BrazeContentCardBase {
+  type: 'imageOnly';
+  imageUrl: string;
+  url?: string;
+  aspectRatio: number | null;
+  clicked: boolean;
+  dismissed: boolean;
+  dismissible: boolean;
+  language?: string;
+  altImageText?: string;
+}
+
+/**
+ * Control card: represents a user enrolled in the control arm of a
+ * content card multivariate test. Should be impression-logged but not
+ * rendered as visible content.
+ */
+export interface BrazeControlContentCard extends BrazeContentCardBase {
+  type: 'control';
+}
+
+/**
+ * Tagged union over the four content card variants. Use the `type`
+ * discriminator to narrow.
+ *
+ * @example
+ * if (card.type === 'classic') console.log(card.title);
+ */
+export type BrazeContentCard =
+  | BrazeClassicContentCard
+  | BrazeCaptionedImageContentCard
+  | BrazeImageOnlyContentCard
+  | BrazeControlContentCard;
+
+export interface BrazeGetContentCardsResult {
+  /** All cards currently cached for the user. Empty if not yet fetched. */
+  cards: BrazeContentCard[];
+  /** Last-refresh time as Unix epoch ms; `null` if never fetched. */
+  lastUpdated: number | null;
+}
+
+export interface BrazeLogContentCardClickOptions {
+  /** Identifier of the card the user clicked. */
+  cardId: string;
+}
+
+export interface BrazeLogContentCardImpressionOptions {
+  /** Identifier of the card that was shown to the user. */
+  cardId: string;
+}
+
+/**
+ * Payload delivered to `'contentCardsUpdated'` listeners. Same shape as
+ * {@link BrazeGetContentCardsResult}; the full current card set is
+ * included on every update, not a delta.
+ */
+export interface BrazeContentCardsUpdatedEvent {
+  cards: BrazeContentCard[];
+  lastUpdated: number | null;
+}
+
+// =============================================================================
 // Purchases
 // =============================================================================
 
@@ -632,6 +769,55 @@ export interface BrazePlugin {
   logFeatureFlagImpression(options: BrazeLogFeatureFlagImpressionOptions): Promise<void>;
 
   // ---------------------------------------------------------------------------
+  // Content cards
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns all content cards currently cached for the user. Reads from
+   * the SDK's local cache; call {@link BrazePlugin.requestContentCardsRefresh}
+   * to force a fetch.
+   *
+   * @example
+   * const { cards } = await Braze.getContentCards();
+   * for (const card of cards) {
+   *   if (card.type === 'classic') console.log(card.title);
+   * }
+   */
+  getContentCards(): Promise<BrazeGetContentCardsResult>;
+
+  /**
+   * Requests an immediate refresh of content cards from the Braze backend.
+   * Fire-and-forget: the returned promise resolves once the refresh has
+   * been dispatched, **not** once new cards arrive. Use the
+   * `'contentCardsUpdated'` listener to react to fresh cards, or re-read
+   * via {@link BrazePlugin.getContentCards} after a short delay.
+   *
+   * @example
+   * await Braze.requestContentCardsRefresh();
+   */
+  requestContentCardsRefresh(): Promise<void>;
+
+  /**
+   * Logs a click event for a content card. Call when the user taps a card
+   * in your UI. Per Braze: only call when bypassing Braze's built-in
+   * display module; the SDK's built-in renderer logs clicks automatically.
+   *
+   * @example
+   * await Braze.logContentCardClick({ cardId: card.id });
+   */
+  logContentCardClick(options: BrazeLogContentCardClickOptions): Promise<void>;
+
+  /**
+   * Logs an impression for a content card. Call when a card scrolls into
+   * view in your UI. Per Braze: only call when bypassing Braze's built-in
+   * display module.
+   *
+   * @example
+   * await Braze.logContentCardImpression({ cardId: card.id });
+   */
+  logContentCardImpression(options: BrazeLogContentCardImpressionOptions): Promise<void>;
+
+  // ---------------------------------------------------------------------------
   // Listeners
   // ---------------------------------------------------------------------------
 
@@ -656,6 +842,25 @@ export interface BrazePlugin {
   addListener(
     eventName: 'featureFlagsUpdated',
     listenerFunc: (event: BrazeFeatureFlagsUpdatedEvent) => void,
+  ): Promise<PluginListenerHandle>;
+
+  /**
+   * Subscribes to content card updates. Fires whenever the Braze SDK
+   * refreshes its content card cache — either on session open, after
+   * {@link BrazePlugin.requestContentCardsRefresh}, or after a
+   * server-driven sync. Initial state is not replayed when the listener
+   * attaches; call {@link BrazePlugin.getContentCards} once after
+   * `addListener` if you need the current snapshot.
+   *
+   * @example
+   * const handle = await Braze.addListener(
+   *   'contentCardsUpdated',
+   *   ({ cards }) => console.log(`${cards.length} cards`),
+   * );
+   */
+  addListener(
+    eventName: 'contentCardsUpdated',
+    listenerFunc: (event: BrazeContentCardsUpdatedEvent) => void,
   ): Promise<PluginListenerHandle>;
 
   /**
