@@ -11,6 +11,46 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+## [0.0.5] — 2026-05-19
+
+### Added — User attributes (standard + custom)
+
+All work against the current user (anonymous or identified). Pass `null` to
+clear a standard attribute. Email/phone are treated as PII per SECURITY.md §3;
+the bridge never logs attribute values at any level.
+
+- `Braze.setEmail({ email })` — string | null
+- `Braze.setPhoneNumber({ phoneNumber })` — E.164 recommended
+- `Braze.setFirstName({ firstName })`
+- `Braze.setLastName({ lastName })`
+- `Braze.setLanguage({ language })` — ISO 639-1
+- `Braze.setCountry({ country })` — ISO 3166-1 alpha-2
+- `Braze.setCustomUserAttribute({ key, value })` — value is `string | number |
+  boolean`; native bridges dispatch on the inferred type to the matching Braze
+  SDK overload.
+
+### Improved
+
+- Android: new `requireUser(call)` helper that combines init guard +
+  `currentUser` null check, returning the user object or rejecting cleanly.
+- iOS: `setCustomAttribute` dispatch order is `getBool` → `getString` →
+  `getInt` → `getDouble`. Booleans-first prevents JSON `true`/`false` from
+  being misread as integer 1/0.
+- Android: `setCustomUserAttribute` reads from `call.data.opt("value")` (raw
+  JSONObject) to preserve the original value type before Capacitor's getter
+  coercion gets a chance to confuse it.
+- TS: explicit `BrazeAttributeValue` and `BrazeAttributeValueType` types
+  exported so consumers can write helper functions that produce attribute
+  payloads with full type safety.
+
+### Notes
+- v0.0.5 is the first cut where a consumer can deliver a complete Braze
+  customer profile: identify a user (`changeUser`), set their standard
+  attributes (email, name, etc.), tag them with custom attributes, log
+  events, and respect privacy methods. This is the minimum viable profile
+  surface — push, content cards, IAM, feature flags still pending.
+- Plugin currently exposes **16 methods** across all three platforms.
+
 ## [0.0.4] — 2026-05-19
 
 ### Added — Privacy & lifecycle methods

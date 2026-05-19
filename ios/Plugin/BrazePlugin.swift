@@ -4,11 +4,15 @@ import Foundation
 
 /// Capacitor bridge for the Braze iOS SDK (BrazeKit 14.1.0).
 ///
-/// ## Surface in 0.0.4
+/// ## Surface in 0.0.5
 ///
 /// - **Bridge sanity:** `echo(value)`
 /// - **Configuration:** `initialize(apiKey, endpoint, ...)`
 /// - **User identity:** `changeUser(userId, sdkAuthSignature?)`
+/// - **User attributes (standard):** `setEmail`, `setPhoneNumber`,
+///   `setFirstName`, `setLastName`, `setLanguage`, `setCountry`
+/// - **User attributes (custom):** `setCustomUserAttribute(key, value)` —
+///   dispatches on inferred value type
 /// - **Custom events:** `logCustomEvent(name, properties?)`
 /// - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
 ///   `requestImmediateDataFlush`
@@ -25,6 +29,12 @@ import Foundation
 /// work even before `initialize` has been called. This matches the semantics
 /// of GDPR/CCPA consent flows where the SDK may need to be disabled before any
 /// user data is sent.
+///
+/// User attribute setters operate on `braze.user`, which is always non-nil
+/// post-init (the SDK creates an anonymous user profile by default until
+/// `changeUser` is called).
+///
+/// PII handling per SECURITY.md §3: this bridge never logs attribute values.
 ///
 /// See PLAN.md, SDK_SURFACE.md, and SECURITY.md for design context.
 @objc(BrazePlugin)
@@ -87,6 +97,82 @@ public class BrazePlugin: CAPPlugin {
         }
         let sdkAuthSignature = call.getString("sdkAuthSignature")
         braze.changeUser(userId: userId, sdkAuthSignature: sdkAuthSignature)
+        call.resolve()
+    }
+
+    // MARK: - User attributes (standard)
+    //
+    // Each setter retrieves the optional string from the call (nil clears the
+    // attribute, matching native SDK semantics) and forwards to the matching
+    // labeled `braze.user.set(...)` method.
+
+    @objc func setEmail(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        let email = call.getString("email")
+        braze.user.set(email: email)
+        call.resolve()
+    }
+
+    @objc func setPhoneNumber(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        let phoneNumber = call.getString("phoneNumber")
+        braze.user.set(phoneNumber: phoneNumber)
+        call.resolve()
+    }
+
+    @objc func setFirstName(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        let firstName = call.getString("firstName")
+        braze.user.set(firstName: firstName)
+        call.resolve()
+    }
+
+    @objc func setLastName(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        let lastName = call.getString("lastName")
+        braze.user.set(lastName: lastName)
+        call.resolve()
+    }
+
+    @objc func setLanguage(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        let language = call.getString("language")
+        braze.user.set(language: language)
+        call.resolve()
+    }
+
+    @objc func setCountry(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        let country = call.getString("country")
+        braze.user.set(country: country)
+        call.resolve()
+    }
+
+    // MARK: - User attributes (custom)
+
+    /// Dispatches `setCustomAttribute(key:value:)` to the appropriate Braze
+    /// SDK overload based on the inferred type of `value`. Order matters:
+    /// `getBool` first (so JSON booleans aren't misread as ints), then string,
+    /// then int (most specific number), then double.
+    @objc func setCustomUserAttribute(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let key = call.getString("key"), !key.isEmpty else {
+            call.reject("Braze.setCustomUserAttribute: `key` is required (string).")
+            return
+        }
+
+        if let boolValue = call.getBool("value") {
+            braze.user.setCustomAttribute(key: key, value: boolValue)
+        } else if let stringValue = call.getString("value") {
+            braze.user.setCustomAttribute(key: key, value: stringValue)
+        } else if let intValue = call.getInt("value") {
+            braze.user.setCustomAttribute(key: key, value: intValue)
+        } else if let doubleValue = call.getDouble("value") {
+            braze.user.setCustomAttribute(key: key, value: doubleValue)
+        } else {
+            call.reject("Braze.setCustomUserAttribute: `value` must be string, number, or boolean.")
+            return
+        }
         call.resolve()
     }
 

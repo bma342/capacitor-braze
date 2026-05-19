@@ -13,11 +13,15 @@ import com.getcapacitor.annotation.CapacitorPlugin
 /**
  * Capacitor bridge for the Braze Android SDK (com.braze:android-sdk-ui 42.2.0).
  *
- * ## Surface in 0.0.4
+ * ## Surface in 0.0.5
  *
  * - **Bridge sanity:** `echo(value)`
  * - **Configuration:** `initialize(apiKey, endpoint, ...)`
  * - **User identity:** `changeUser(userId, sdkAuthSignature?)`
+ * - **User attributes (standard):** `setEmail`, `setPhoneNumber`,
+ *   `setFirstName`, `setLastName`, `setLanguage`, `setCountry`
+ * - **User attributes (custom):** `setCustomUserAttribute(key, value)` —
+ *   dispatches on inferred value type
  * - **Custom events:** `logCustomEvent(name, properties?)`
  * - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
  *   `requestImmediateDataFlush`
@@ -34,6 +38,12 @@ import com.getcapacitor.annotation.CapacitorPlugin
  * operate on global SDK state, not the configured instance. They work even
  * before `initialize` has been called, which matches the semantics of GDPR/CCPA
  * consent flows.
+ *
+ * User attribute setters operate on `Braze.getInstance(context).currentUser`,
+ * which is non-null post-init (the SDK creates an anonymous user profile by
+ * default until `changeUser` is called).
+ *
+ * PII handling per SECURITY.md §3: this bridge never logs attribute values.
  *
  * See PLAN.md, SDK_SURFACE.md, and SECURITY.md for design context.
  */
@@ -125,6 +135,93 @@ class BrazePlugin : Plugin() {
     }
 
     // -------------------------------------------------------------------------
+    // User attributes (standard)
+    //
+    // Each setter retrieves the optional string from the call (null clears the
+    // attribute, matching native SDK semantics). currentUser is non-null
+    // post-init; we still null-check defensively.
+    // -------------------------------------------------------------------------
+
+    @PluginMethod
+    fun setEmail(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        user.setEmail(call.getString("email"))
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setPhoneNumber(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        user.setPhoneNumber(call.getString("phoneNumber"))
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setFirstName(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        user.setFirstName(call.getString("firstName"))
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setLastName(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        user.setLastName(call.getString("lastName"))
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setLanguage(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        user.setLanguage(call.getString("language"))
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setCountry(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        user.setCountry(call.getString("country"))
+        call.resolve()
+    }
+
+    // -------------------------------------------------------------------------
+    // User attributes (custom)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Dispatches `setCustomUserAttribute(key, value)` to the appropriate
+     * Braze SDK overload based on the inferred type of `value`. The TS
+     * interface narrows to string/number/boolean — other types are rejected.
+     */
+    @PluginMethod
+    fun setCustomUserAttribute(call: PluginCall) {
+        val user = requireUser(call) ?: return
+        val key = call.getString("key")
+        if (key.isNullOrEmpty()) {
+            call.reject("Braze.setCustomUserAttribute: `key` is required (string).")
+            return
+        }
+        // call.data is the raw JSONObject passed from JS — gives us access to
+        // the original value type without Capacitor's coercion.
+        when (val value = call.data.opt("value")) {
+            is String -> user.setCustomUserAttribute(key, value)
+            is Boolean -> user.setCustomUserAttribute(key, value)
+            is Int -> user.setCustomUserAttribute(key, value)
+            is Long -> user.setCustomUserAttribute(key, value.toInt())
+            is Double -> user.setCustomUserAttribute(key, value)
+            is Float -> user.setCustomUserAttribute(key, value.toDouble())
+            else -> {
+                call.reject(
+                    "Braze.setCustomUserAttribute: `value` must be string, number, " +
+                        "or boolean. Got: ${value?.javaClass?.simpleName ?: "null"}",
+                )
+                return
+            }
+        }
+        call.resolve()
+    }
+
+    // -------------------------------------------------------------------------
     // Custom events
     // -------------------------------------------------------------------------
 
@@ -196,7 +293,7 @@ class BrazePlugin : Plugin() {
      * Asserts that `initialize()` has been called. If not, rejects the call
      * with a clear error and returns `false`.
      *
-     * Use in any bridge method that mutates user state or queues events.
+     * Use in any bridge method that mutates state or queues events.
      * Init-independent privacy/lifecycle statics bypass this helper.
      */
     private fun requireInitialized(call: PluginCall): Boolean {
@@ -208,9 +305,28 @@ class BrazePlugin : Plugin() {
     }
 
     /**
+     * Returns the Braze SDK's current user object, or rejects the call.
+     *
+     * The user object is non-null post-init (Braze creates an anonymous profile
+     * by default), but we null-check defensively to avoid NPEs in edge cases.
+     */
+    private fun requireUser(call: PluginCall): com.braze.BrazeUser? {
+        if (!requireInitialized(call)) return null
+        val user = Braze.getInstance(context).currentUser
+        if (user == null) {
+            call.reject(
+                "Braze: `currentUser` returned null. This should not happen post-init; " +
+                    "file an issue at https://github.com/bma342/capacitor-braze/issues.",
+            )
+            return null
+        }
+        return user
+    }
+
+    /**
      * Converts a Capacitor `JSObject` into Braze's properties wrapper.
      *
-     * v0.0.4 supports `string` / `number` / `boolean` values per the TS
+     * v0.0.5 supports `string` / `number` / `boolean` values per the TS
      * interface (`BrazeEventPropertyValue`). Date and array support land in a
      * later version per SDK_SURFACE.md §2.
      *

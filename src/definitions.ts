@@ -80,6 +80,66 @@ export interface BrazeChangeUserOptions {
 }
 
 // =============================================================================
+// User attributes (standard)
+//
+// Every standard setter accepts `string | null`. Passing null clears the
+// attribute (matches native SDK semantics). All work against the current user,
+// which defaults to an anonymous profile until `changeUser` is called.
+// =============================================================================
+
+export interface BrazeSetEmailOptions {
+  /** Email address. Pass `null` to clear. */
+  email: string | null;
+}
+
+export interface BrazeSetPhoneNumberOptions {
+  /** Phone number, ideally E.164 format. Pass `null` to clear. */
+  phoneNumber: string | null;
+}
+
+export interface BrazeSetFirstNameOptions {
+  /** First name. Pass `null` to clear. */
+  firstName: string | null;
+}
+
+export interface BrazeSetLastNameOptions {
+  /** Last name. Pass `null` to clear. */
+  lastName: string | null;
+}
+
+export interface BrazeSetLanguageOptions {
+  /** ISO 639-1 language code, e.g. `"en"`. Pass `null` to clear. */
+  language: string | null;
+}
+
+export interface BrazeSetCountryOptions {
+  /** ISO 3166-1 alpha-2 country code, e.g. `"US"`. Pass `null` to clear. */
+  country: string | null;
+}
+
+// =============================================================================
+// User attributes (custom)
+// =============================================================================
+
+/**
+ * Value types accepted by {@link BrazePlugin.setCustomUserAttribute} in v0.1.
+ * Date and array support land in a later version per `SDK_SURFACE.md` §2.
+ *
+ * Note: numeric values may surface in the Braze dashboard as floats. To
+ * preserve integer vs. float distinction, send `{ value: 42 }` (no decimal)
+ * for integers and `{ value: 42.0 }` (or any value with decimal) for floats —
+ * the native bridge dispatches each type to the appropriate Braze SDK overload.
+ */
+export type BrazeAttributeValue = string | number | boolean;
+
+export interface BrazeSetCustomUserAttributeOptions {
+  /** Attribute key. Max length / character constraints enforced by Braze backend. */
+  key: string;
+  /** Attribute value. Use `setCustomUserAttribute` to remove via wipeData. */
+  value: BrazeAttributeValue;
+}
+
+// =============================================================================
 // Custom events
 // =============================================================================
 
@@ -114,6 +174,10 @@ export interface BrazeIsDisabledResult {
 // =============================================================================
 
 export interface BrazePlugin {
+  // ---------------------------------------------------------------------------
+  // Bridge sanity check
+  // ---------------------------------------------------------------------------
+
   /**
    * Round-trips a value through the native bridge. Useful as a sanity check
    * that the plugin installed correctly on the current platform. Not a Braze
@@ -125,11 +189,15 @@ export interface BrazePlugin {
    */
   echo(options: BrazeEchoOptions): Promise<BrazeEchoResult>;
 
+  // ---------------------------------------------------------------------------
+  // Configuration
+  // ---------------------------------------------------------------------------
+
   /**
    * Initialize the Braze SDK. **Must be called before any other Braze method**
-   * (except {@link BrazePlugin.echo}, {@link BrazePlugin.wipeData},
-   * {@link BrazePlugin.disableSDK}, {@link BrazePlugin.enableSDK}, and
-   * {@link BrazePlugin.isDisabled}, all of which are init-independent).
+   * except {@link BrazePlugin.echo} and the init-independent privacy/lifecycle
+   * methods ({@link BrazePlugin.wipeData}, {@link BrazePlugin.disableSDK},
+   * {@link BrazePlugin.enableSDK}, {@link BrazePlugin.isDisabled}).
    *
    * @example
    * await Braze.initialize({
@@ -139,6 +207,10 @@ export interface BrazePlugin {
    * });
    */
   initialize(options: BrazeInitializeOptions): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // User identity
+  // ---------------------------------------------------------------------------
 
   /**
    * Identifies the current user. Pass an `sdkAuthSignature` if SDK
@@ -152,6 +224,77 @@ export interface BrazePlugin {
    */
   changeUser(options: BrazeChangeUserOptions): Promise<void>;
 
+  // ---------------------------------------------------------------------------
+  // User attributes (standard)
+  //
+  // All setters work on the current user (anonymous or identified). Pass
+  // `null` to clear an attribute. Email/phone are treated as PII per
+  // SECURITY.md §3 — the plugin never logs them, even at debug level.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Sets the current user's email.
+   * @example
+   * await Braze.setEmail({ email: 'jane@example.com' });
+   * await Braze.setEmail({ email: null }); // clear
+   */
+  setEmail(options: BrazeSetEmailOptions): Promise<void>;
+
+  /**
+   * Sets the current user's phone number. E.164 format recommended.
+   * @example
+   * await Braze.setPhoneNumber({ phoneNumber: '+14155552671' });
+   */
+  setPhoneNumber(options: BrazeSetPhoneNumberOptions): Promise<void>;
+
+  /**
+   * Sets the current user's first name.
+   * @example
+   * await Braze.setFirstName({ firstName: 'Jane' });
+   */
+  setFirstName(options: BrazeSetFirstNameOptions): Promise<void>;
+
+  /**
+   * Sets the current user's last name.
+   * @example
+   * await Braze.setLastName({ lastName: 'Doe' });
+   */
+  setLastName(options: BrazeSetLastNameOptions): Promise<void>;
+
+  /**
+   * Sets the current user's language. Use ISO 639-1 codes.
+   * @example
+   * await Braze.setLanguage({ language: 'en' });
+   */
+  setLanguage(options: BrazeSetLanguageOptions): Promise<void>;
+
+  /**
+   * Sets the current user's country. Use ISO 3166-1 alpha-2 codes.
+   * @example
+   * await Braze.setCountry({ country: 'US' });
+   */
+  setCountry(options: BrazeSetCountryOptions): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // User attributes (custom)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Sets a custom user attribute. The native bridge dispatches based on the
+   * inferred type of `value` (string / number / boolean → matching Braze SDK
+   * overload).
+   *
+   * @example
+   * await Braze.setCustomUserAttribute({ key: 'loyalty_tier', value: 'gold' });
+   * await Braze.setCustomUserAttribute({ key: 'lifetime_orders', value: 12 });
+   * await Braze.setCustomUserAttribute({ key: 'has_subscription', value: true });
+   */
+  setCustomUserAttribute(options: BrazeSetCustomUserAttributeOptions): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // Custom events
+  // ---------------------------------------------------------------------------
+
   /**
    * Logs a custom event for the current user.
    *
@@ -162,6 +305,10 @@ export interface BrazePlugin {
    * });
    */
   logCustomEvent(options: BrazeLogCustomEventOptions): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // Privacy / lifecycle
+  // ---------------------------------------------------------------------------
 
   /**
    * **Destructive.** Removes all locally stored Braze SDK data on the device,

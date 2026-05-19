@@ -8,6 +8,13 @@ import type {
   BrazeIsDisabledResult,
   BrazeLogCustomEventOptions,
   BrazePlugin,
+  BrazeSetCountryOptions,
+  BrazeSetCustomUserAttributeOptions,
+  BrazeSetEmailOptions,
+  BrazeSetFirstNameOptions,
+  BrazeSetLanguageOptions,
+  BrazeSetLastNameOptions,
+  BrazeSetPhoneNumberOptions,
 } from './definitions';
 
 type BrazeWebSdk = typeof import('@braze/web-sdk');
@@ -23,6 +30,8 @@ type BrazeWebSdk = typeof import('@braze/web-sdk');
  *   fast with a clear error if `initialize()` wasn't called. Init-independent
  *   methods (wipeData, enableSDK, disableSDK, isDisabled) lazily import the
  *   SDK on first call.
+ * - User attribute setters operate on `braze.getUser()`, which is non-null
+ *   after init (returns the anonymous profile until `changeUser` is called).
  */
 export class BrazeWeb extends WebPlugin implements BrazePlugin {
   /** Cached SDK module after first import. */
@@ -66,6 +75,59 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       throw new Error('Braze.changeUser: `userId` is required (string).');
     }
     braze.changeUser(options.userId, options.sdkAuthSignature);
+  }
+
+  // ---------------------------------------------------------------------------
+  // User attributes (standard)
+  //
+  // All setters fetch braze.getUser() — non-null after init — and forward
+  // to the matching SDK setter. `null` values clear the attribute.
+  // ---------------------------------------------------------------------------
+
+  async setEmail(options: BrazeSetEmailOptions): Promise<void> {
+    const user = this.requireUser();
+    user.setEmail(options.email);
+  }
+
+  async setPhoneNumber(options: BrazeSetPhoneNumberOptions): Promise<void> {
+    const user = this.requireUser();
+    user.setPhoneNumber(options.phoneNumber);
+  }
+
+  async setFirstName(options: BrazeSetFirstNameOptions): Promise<void> {
+    const user = this.requireUser();
+    user.setFirstName(options.firstName);
+  }
+
+  async setLastName(options: BrazeSetLastNameOptions): Promise<void> {
+    const user = this.requireUser();
+    user.setLastName(options.lastName);
+  }
+
+  async setLanguage(options: BrazeSetLanguageOptions): Promise<void> {
+    const user = this.requireUser();
+    user.setLanguage(options.language);
+  }
+
+  async setCountry(options: BrazeSetCountryOptions): Promise<void> {
+    const user = this.requireUser();
+    user.setCountry(options.country);
+  }
+
+  // ---------------------------------------------------------------------------
+  // User attributes (custom)
+  // ---------------------------------------------------------------------------
+
+  async setCustomUserAttribute(
+    options: BrazeSetCustomUserAttributeOptions,
+  ): Promise<void> {
+    const user = this.requireUser();
+    if (!options.key || typeof options.key !== 'string') {
+      throw new Error(
+        'Braze.setCustomUserAttribute: `key` is required (string).',
+      );
+    }
+    user.setCustomUserAttribute(options.key, options.value);
   }
 
   // ---------------------------------------------------------------------------
@@ -131,6 +193,23 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       );
     }
     return this.braze;
+  }
+
+  /**
+   * Asserts that init succeeded and returns the current user object.
+   * The Braze Web SDK guarantees `getUser()` is non-null post-init.
+   */
+  private requireUser(): ReturnType<BrazeWebSdk['getUser']> {
+    const braze = this.requireInitialized();
+    const user = braze.getUser();
+    if (!user) {
+      // Defensive: per Braze docs, getUser() shouldn't return null post-init.
+      throw new Error(
+        'Braze: `getUser()` returned null. This should not happen post-init; ' +
+          'file an issue at https://github.com/bma342/capacitor-braze/issues.',
+      );
+    }
+    return user;
   }
 
   /**
