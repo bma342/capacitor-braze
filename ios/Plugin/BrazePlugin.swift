@@ -4,7 +4,7 @@ import Foundation
 
 /// Capacitor bridge for the Braze iOS SDK (BrazeKit 14.1.0).
 ///
-/// ## Surface in 0.0.8
+/// ## Surface in 0.0.9
 ///
 /// - **Bridge sanity:** `echo(value)`
 /// - **Configuration:** `initialize(apiKey, endpoint, ...)`
@@ -23,6 +23,7 @@ import Foundation
 ///   `logPurchase(productId, currency, price, quantity?, properties?)`
 /// - **Feature flags:** `getFeatureFlag(id)`, `getAllFeatureFlags`,
 ///   `refreshFeatureFlags`, `logFeatureFlagImpression(id)`
+/// - **Listeners:** `addListener('featureFlagsUpdated', ...)`
 /// - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
 ///   `requestImmediateDataFlush`
 ///
@@ -53,6 +54,12 @@ public class BrazePlugin: CAPPlugin {
     /// delegate hooks (added in later versions) can reach it without plugin lookup.
     /// Nil before `initialize` is called or after `wipeData`.
     public private(set) static var braze: Braze?
+
+    /// Retained handle for the persistent feature-flag update subscription
+    /// created at `initialize` time. Held to keep the subscription alive
+    /// (BrazeKit cancels when the handle is released) and released during
+    /// `wipeData` so the post-wipe re-init starts from a clean slate.
+    private var featureFlagsSubscription: Braze.Cancellable?
 
     // MARK: - Bridge sanity check
 
@@ -92,6 +99,15 @@ public class BrazePlugin: CAPPlugin {
 
         let braze = Braze(configuration: configuration)
         BrazePlugin.braze = braze
+
+        // Wire the persistent feature-flag update subscription. Retaining the
+        // returned cancellable keeps the subscription alive; releasing it (in
+        // `wipeData`) cancels at the SDK boundary so a re-init starts clean.
+        featureFlagsSubscription = braze.featureFlags.subscribeToUpdates { [weak self] flags in
+            guard let self = self else { return }
+            let payload: [[String: Any]] = flags.map { Self.serializeFeatureFlag($0) }
+            self.notifyListeners("featureFlagsUpdated", data: ["flags": payload])
+        }
 
         call.resolve()
     }
@@ -470,7 +486,9 @@ public class BrazePlugin: CAPPlugin {
         Braze.wipeData()
         // Per Braze docs, `wipeData` invalidates the current SDK instance.
         // Drop our reference so subsequent `requireInitialized` calls fail
-        // until `initialize` is called again.
+        // until `initialize` is called again. Cancel the feature-flag
+        // subscription at the same time so re-init creates a fresh one.
+        featureFlagsSubscription = nil
         BrazePlugin.braze = nil
         call.resolve()
     }

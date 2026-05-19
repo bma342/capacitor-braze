@@ -11,6 +11,50 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+## [0.0.9] — 2026-05-19
+
+### Added — Listener infrastructure + feature flag update events (Phase H)
+
+First event-based surface in the plugin. Same pattern will host in-app
+message and content card update events in later versions; this commit
+establishes the cross-platform shape so those land as additions, not
+infrastructure work.
+
+- `Braze.addListener('featureFlagsUpdated', cb)` →
+  `Promise<PluginListenerHandle>`. The callback receives
+  `{ flags: BrazeFeatureFlag[] }` — the full current set, not a delta.
+- `Braze.removeAllListeners()`.
+
+### Implementation notes
+
+The native subscription is created once per `initialize` and torn down
+in `wipeData`, so listener registration on the JS side is cheap (no
+extra native traffic per addListener call). All registered JS listeners
+share the same native subscription.
+
+- **iOS:** `braze.featureFlags.subscribeToUpdates { flags in ... }`
+  returns a `Braze.Cancellable`; retained on the plugin instance, set
+  to `nil` in `wipeData`.
+- **Android:** `Braze.getInstance(context).subscribeToFeatureFlagsUpdates(
+  IEventSubscriber<FeatureFlagsUpdatedEvent>)`. The same subscriber
+  instance is passed to `removeSingleSubscription` during teardown —
+  the Android SDK identifies subscriptions by listener identity, not by
+  a returned handle.
+- **Web:** `braze.subscribeToFeatureFlagsUpdates(cb)`. The Web SDK has
+  no unsubscribe handle, so the bridge uses a one-shot subscribe guard
+  and lets the subscription live for the page lifetime.
+
+Initial state is not replayed on `addListener` — Capacitor adds
+listeners on the JS side without triggering the native callback. If
+the consumer needs the current snapshot, they call
+`Braze.getAllFeatureFlags()` once after `addListener`. This is
+documented in the JSDoc.
+
+### Improved
+
+- Plugin surface: 29 callable methods + `addListener` /
+  `removeAllListeners` (Capacitor-native bridge methods).
+
 ## [0.0.8] — 2026-05-19
 
 ### Added — Feature flags read API (Phase G)

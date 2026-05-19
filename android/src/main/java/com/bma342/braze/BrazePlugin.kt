@@ -5,6 +5,8 @@ import com.braze.Braze
 import com.braze.configuration.BrazeConfig
 import com.braze.enums.Gender
 import com.braze.enums.Month
+import com.braze.events.FeatureFlagsUpdatedEvent
+import com.braze.events.IEventSubscriber
 import com.braze.models.FeatureFlag
 import com.braze.models.outgoing.BrazeProperties
 import com.getcapacitor.JSArray
@@ -18,7 +20,7 @@ import java.math.BigDecimal
 /**
  * Capacitor bridge for the Braze Android SDK (com.braze:android-sdk-ui 42.2.0).
  *
- * ## Surface in 0.0.8
+ * ## Surface in 0.0.9
  *
  * - **Bridge sanity:** `echo(value)`
  * - **Configuration:** `initialize(apiKey, endpoint, ...)`
@@ -37,6 +39,7 @@ import java.math.BigDecimal
  *   `logPurchase(productId, currency, price, quantity?, properties?)`
  * - **Feature flags:** `getFeatureFlag(id)`, `getAllFeatureFlags`,
  *   `refreshFeatureFlags`, `logFeatureFlagImpression(id)`
+ * - **Listeners:** `addListener('featureFlagsUpdated', ...)`
  * - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
  *   `requestImmediateDataFlush`
  *
@@ -66,6 +69,15 @@ class BrazePlugin : Plugin() {
 
     /** `true` once `initialize` has been called successfully. */
     private var initialized: Boolean = false
+
+    /**
+     * Retained reference to the feature-flag update subscriber created at
+     * `initialize` time. Held so we can unsubscribe in `wipeData`; the
+     * Android SDK identifies subscriptions by listener identity, not by
+     * a returned handle, so the same instance must be passed to
+     * `removeSingleSubscription`.
+     */
+    private var featureFlagsSubscriber: IEventSubscriber<FeatureFlagsUpdatedEvent>? = null
 
     // -------------------------------------------------------------------------
     // Bridge sanity check
@@ -123,6 +135,22 @@ class BrazePlugin : Plugin() {
 
         Braze.configure(context, builder.build())
         initialized = true
+
+        // Wire the persistent feature-flag update subscription. Drop any
+        // previous subscriber first so re-init doesn't double-fire events
+        // through stacked subscriptions.
+        teardownFeatureFlagsSubscription()
+        val subscriber = IEventSubscriber<FeatureFlagsUpdatedEvent> { event ->
+            val flags = JSArray()
+            for (flag in event.featureFlags) {
+                flags.put(serializeFeatureFlag(flag))
+            }
+            val payload = JSObject()
+            payload.put("flags", flags)
+            notifyListeners("featureFlagsUpdated", payload)
+        }
+        Braze.getInstance(context).subscribeToFeatureFlagsUpdates(subscriber)
+        featureFlagsSubscriber = subscriber
 
         call.resolve()
     }
@@ -562,6 +590,9 @@ class BrazePlugin : Plugin() {
         Braze.wipeData(context)
         // wipeData invalidates the configured singleton; require explicit
         // re-initialization before any subsequent post-init method is called.
+        // Drop the feature-flag subscription too so re-init creates a fresh
+        // one rather than leaving a zombie subscriber against the wiped SDK.
+        teardownFeatureFlagsSubscription()
         initialized = false
         call.resolve()
     }
@@ -628,6 +659,22 @@ class BrazePlugin : Plugin() {
             return null
         }
         return user
+    }
+
+    /**
+     * Unsubscribes the persistent feature-flag listener if present.
+     * No-op when nothing is subscribed. The Android SDK identifies a
+     * subscription by listener identity, so removal uses the same
+     * `IEventSubscriber` instance that was passed to subscribe.
+     */
+    private fun teardownFeatureFlagsSubscription() {
+        featureFlagsSubscriber?.let { subscriber ->
+            Braze.getInstance(context).removeSingleSubscription(
+                subscriber,
+                FeatureFlagsUpdatedEvent::class.java,
+            )
+        }
+        featureFlagsSubscriber = null
     }
 
     /**

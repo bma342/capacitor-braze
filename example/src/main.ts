@@ -14,12 +14,22 @@
  *    native bridge to com.braze:android-sdk-ui.
  */
 
+import type { PluginListenerHandle } from '@capacitor/core';
+
 import { Braze } from 'capacitor-braze';
 import type {
   BrazeAttributeValue,
   BrazeEventProperties,
   BrazeGender,
 } from 'capacitor-braze';
+
+/**
+ * Listener handles retained so `removeAllListeners` can clear them on the
+ * Capacitor side without leaking stale references. The Capacitor SDK's
+ * `removeAllListeners` already detaches the native subscription; we just
+ * forget about the handles here.
+ */
+const activeListeners: PluginListenerHandle[] = [];
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -182,6 +192,18 @@ const runMethods: Record<string, () => Promise<unknown>> = {
   refreshFeatureFlags: () => Braze.refreshFeatureFlags(),
   logFeatureFlagImpression: () =>
     Braze.logFeatureFlagImpression({ id: input('featureFlagId') }),
+
+  subscribeFeatureFlagsUpdated: async () => {
+    const handle = await Braze.addListener('featureFlagsUpdated', ({ flags }) => {
+      log(`event featureFlagsUpdated: ${flags.length} flag(s)`, 'ok');
+    });
+    activeListeners.push(handle);
+    return { listenerHandles: activeListeners.length };
+  },
+  removeAllListeners: async () => {
+    await Braze.removeAllListeners();
+    activeListeners.length = 0;
+  },
 
   logPurchase: () => {
     const quantityRaw = input('quantity');

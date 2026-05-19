@@ -69,6 +69,14 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   /** `true` once {@link BrazeWeb.initialize} resolved successfully. */
   private initialized = false;
 
+  /**
+   * Cancels the native feature flag update subscription. The Braze Web SDK
+   * does not return an unsubscribe handle from `subscribeToFeatureFlagsUpdates`
+   * (the API is fire-and-forget), so this stays `null` on web; we use it as
+   * a "subscribed already" guard so we don't re-subscribe on every init.
+   */
+  private featureFlagsSubscribed = false;
+
   // ---------------------------------------------------------------------------
   // Bridge sanity check
   // ---------------------------------------------------------------------------
@@ -92,6 +100,17 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     });
     braze.openSession();
     this.initialized = true;
+
+    // Wire the persistent native feature-flag subscription once. The Web SDK
+    // doesn't expose an unsubscribe handle, so subscribing twice would queue
+    // duplicate callbacks — the boolean guards against that.
+    if (!this.featureFlagsSubscribed) {
+      braze.subscribeToFeatureFlagsUpdates((flags) => {
+        const serialized = flags.map((flag) => this.serializeFeatureFlag(flag));
+        this.notifyListeners('featureFlagsUpdated', { flags: serialized });
+      });
+      this.featureFlagsSubscribed = true;
+    }
   }
 
   // ---------------------------------------------------------------------------

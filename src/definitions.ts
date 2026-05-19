@@ -7,6 +7,8 @@
  * `SDK_SURFACE.md`. New methods are scope decisions, not casual additions.
  */
 
+import type { PluginListenerHandle } from '@capacitor/core';
+
 // =============================================================================
 // Configuration
 // =============================================================================
@@ -290,6 +292,15 @@ export interface BrazeGetAllFeatureFlagsResult {
 export interface BrazeLogFeatureFlagImpressionOptions {
   /** Feature flag identifier whose impression should be logged. */
   id: string;
+}
+
+/**
+ * Payload delivered to `'featureFlagsUpdated'` listeners. The full current
+ * set of feature flags is included on every update; consumers should
+ * treat this as a replacement, not a delta.
+ */
+export interface BrazeFeatureFlagsUpdatedEvent {
+  flags: BrazeFeatureFlag[];
 }
 
 // =============================================================================
@@ -631,6 +642,44 @@ export interface BrazePlugin {
   logFeatureFlagImpression(
     options: BrazeLogFeatureFlagImpressionOptions,
   ): Promise<void>;
+
+  // ---------------------------------------------------------------------------
+  // Listeners
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Subscribes to feature flag updates. Fires whenever the Braze SDK
+   * refreshes its feature flag cache — either automatically on session
+   * open, manually via {@link BrazePlugin.refreshFeatureFlags}, or after
+   * a server-driven sync. Initial state is not replayed when the
+   * listener attaches; if you need the current snapshot, call
+   * {@link BrazePlugin.getAllFeatureFlags} once after `addListener`.
+   *
+   * @example
+   * const handle = await Braze.addListener(
+   *   'featureFlagsUpdated',
+   *   ({ flags }) => {
+   *     console.log(`${flags.length} flags`);
+   *   },
+   * );
+   * // Later:
+   * await handle.remove();
+   */
+  addListener(
+    eventName: 'featureFlagsUpdated',
+    listenerFunc: (event: BrazeFeatureFlagsUpdatedEvent) => void,
+  ): Promise<PluginListenerHandle>;
+
+  /**
+   * Removes all listeners registered via {@link BrazePlugin.addListener}.
+   * Underlying native subscriptions stay alive (managed by the plugin)
+   * so adding a listener again after `removeAllListeners` works without
+   * an `initialize` cycle.
+   *
+   * @example
+   * await Braze.removeAllListeners();
+   */
+  removeAllListeners(): Promise<void>;
 
   // ---------------------------------------------------------------------------
   // Privacy / lifecycle
