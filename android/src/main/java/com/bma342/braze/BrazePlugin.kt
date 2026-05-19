@@ -1,5 +1,8 @@
 package com.bma342.braze
 
+import android.util.Log
+import com.braze.Braze
+import com.braze.configuration.BrazeConfig
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -7,17 +10,21 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 
 /**
- * Capacitor bridge for the Braze Android SDK.
+ * Capacitor bridge for the Braze Android SDK (com.braze:android-sdk-ui 42.2.0).
  *
- * Scaffold release (0.0.1): `echo` is fully wired; `initialize` validates
- * options and stores config. Actual `Braze.getInstance(context)` wiring lands in 0.0.2.
+ * Surface in 0.0.2:
+ * - `echo(value)` — bridge sanity check
+ * - `initialize(apiKey, endpoint, enableLogging?, enableSdkAuthentication?, allowInsecureEndpoint?)`
+ *   — builds `BrazeConfig` from the supplied options and calls
+ *   `Braze.configure(context, config)`. Subsequent calls reconfigure the
+ *   singleton (Braze's documented behavior).
  *
- * See PLAN.md and SECURITY.md for design decisions.
+ * Real user/event/push methods (`changeUser`, `logCustomEvent`, etc.) land in 0.1.0.
+ *
+ * See PLAN.md, SDK_SURFACE.md, and SECURITY.md for design context.
  */
 @CapacitorPlugin(name = "Braze")
 class BrazePlugin : Plugin() {
-
-    private var storedConfig: BrazeStoredConfig? = null
 
     @PluginMethod
     fun echo(call: PluginCall) {
@@ -56,28 +63,17 @@ class BrazePlugin : Plugin() {
         val enableLogging = call.getBoolean("enableLogging", false) ?: false
         val enableSdkAuthentication = call.getBoolean("enableSdkAuthentication", false) ?: false
 
-        storedConfig = BrazeStoredConfig(
-            apiKey = apiKey,
-            endpoint = endpoint,
-            enableLogging = enableLogging,
-            enableSdkAuthentication = enableSdkAuthentication,
-        )
+        val builder = BrazeConfig.Builder()
+            .setApiKey(apiKey)
+            .setCustomEndpoint(endpoint)
+            .setIsSdkAuthenticationEnabled(enableSdkAuthentication)
 
-        // 0.0.2 will wire actual SDK init here:
-        //   val config = BrazeConfig.Builder()
-        //       .setApiKey(apiKey)
-        //       .setCustomEndpoint(endpoint)
-        //       .setSdkAuthenticationEnabled(enableSdkAuthentication)
-        //       .build()
-        //   Braze.configure(context, config)
+        if (enableLogging) {
+            builder.setLoggerLevel(Log.VERBOSE)
+        }
+
+        Braze.configure(context, builder.build())
 
         call.resolve()
     }
 }
-
-private data class BrazeStoredConfig(
-    val apiKey: String,
-    val endpoint: String,
-    val enableLogging: Boolean,
-    val enableSdkAuthentication: Boolean,
-)
