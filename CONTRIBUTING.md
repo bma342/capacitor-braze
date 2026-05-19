@@ -11,6 +11,7 @@ basis; PRs are welcome and reviewed actively.
    - [`SECURITY.md`](./SECURITY.md) — security model and design constraints
    - [`REVIEW_READINESS.md`](./REVIEW_READINESS.md) — quality bar
    - [`CLAUDE.md`](./CLAUDE.md) — internal dev guide (also useful for humans)
+   - [`docs/mdcs/`](./docs/mdcs/) — per-subsystem design contracts. Read the index, then the MDC matching your change.
 2. **Confirm scope.** New methods must align with [SDK_SURFACE.md §2](./SDK_SURFACE.md#2-plugin-version-roadmap). If your feature isn't on the roadmap, open an issue first to discuss.
 3. **Confirm it's a plugin issue, not a Braze SDK issue.** If `@braze/web-sdk` (or the native SDK) fails the same way without this plugin, file with Braze instead.
 
@@ -43,7 +44,11 @@ npm install   # picks up the rebuilt artifacts via file:.. link
 
 ## Adding a new plugin method
 
-Every new method must touch **eight files in lockstep** (the PR template
+Read [`docs/mdcs/C01-METHOD-ANATOMY.md`](./docs/mdcs/C01-METHOD-ANATOMY.md) first — it
+covers the eight-file lockstep, init-guard helpers, and the error message
+format. Below is the short-form checklist; C01 is the authoritative version.
+
+Every new method touches **eight files in lockstep** (the PR template
 enforces this checklist):
 
 1. `src/definitions.ts` — type signature with JSDoc + `@example`
@@ -57,9 +62,16 @@ enforces this checklist):
 
 Skip any one of these and you'll get drift between the platforms.
 
+Depending on what your method does, also read:
+
+- [C02](./docs/mdcs/C02-DTO-SHAPES.md) if it returns a Braze model object.
+- [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md) if its argument or return shape behaves differently across the three SDKs.
+- [C04](./docs/mdcs/C04-VALIDATION.md) if it takes user-provided input.
+- [C05](./docs/mdcs/C05-LISTENERS.md) if it's a new `addListener('eventName', ...)` surface.
+
 ### Bridge style
 
-Match existing patterns exactly:
+Match existing patterns exactly (see [C01](./docs/mdcs/C01-METHOD-ANATOMY.md) for the full reference):
 
 - **TS:** strict mode, no `any`, JSDoc with `@example` on every public method
 - **Swift:** `@objc func name(_ call: CAPPluginCall)`, guard required inputs, dispatch to `Braze` SDK static or `braze.user.set(...)` instance methods, resolve/reject via the call

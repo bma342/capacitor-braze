@@ -9,6 +9,12 @@
 - [`SDK_SURFACE.md`](./SDK_SURFACE.md) — complete Braze SDK capability catalog and version coverage
 - [`SECURITY.md`](./SECURITY.md) — security model, threat analysis, plugin design decisions for every security-sensitive surface
 - [`REVIEW_READINESS.md`](./REVIEW_READINESS.md) — quality bar (DX + completeness + would-pass-Braze-review), pre-release checklist
+- [`docs/mdcs/`](./docs/mdcs/) — per-subsystem design contracts (MDCs). Read the one matching your task before coding:
+  - [C01](./docs/mdcs/C01-METHOD-ANATOMY.md) — 8-file lockstep, init guards, error message format
+  - [C02](./docs/mdcs/C02-DTO-SHAPES.md) — Web SDK wire format as canonical DTO shape
+  - [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md) — month indexing, currency, decimals, dates, enums, sentinels
+  - [C04](./docs/mdcs/C04-VALIDATION.md) — TS-at-boundary + native duplication
+  - [C05](./docs/mdcs/C05-LISTENERS.md) — event listener lifecycle (eager-on-init, shared, no replay)
 
 > **THIS PROJECT WRAPS — IT DOES NOT REIMPLEMENT.** Braze's native SDKs do all the actual work (network calls, encryption, push handling, IAM rendering, analytics batching). This plugin is a thin bridge layer that translates Capacitor `PluginCall`s into native SDK invocations. Before writing any code, confirm whether the underlying Braze SDK already does what you want — almost always, the answer is yes, and your job is to expose it through the bridge.
 
@@ -259,6 +265,7 @@ When the plugin reaches `0.1.0`, the README cites Aromo as a production user. Th
 ## Key reminders
 
 - **Read [`PLAN.md`](./PLAN.md), [`SDK_SURFACE.md`](./SDK_SURFACE.md), and [`SECURITY.md`](./SECURITY.md) before starting any non-trivial work.** They are the source of truth for strategy, capability scope, and security posture respectively.
+- **Read the matching MDC in [`docs/mdcs/`](./docs/mdcs/) before coding.** C01 (any method), C02 (returning a Braze model), C03 (cross-platform conversion), C04 (any user input), C05 (any listener). If your change invents a new pattern, write a new MDC in the same commit as the code.
 - **The TS interface is the contract.** Native bridges implement it; web impl implements it; tests assert it. Drift = bug.
 - **Mock server first, real Braze last.** ~95% of dev cycles never hit real Braze.
 - **Pin native SDKs exactly.** Range pins make Layer 4 smoke flaky and CI non-reproducible.
