@@ -45,16 +45,16 @@
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
-    "@capacitor/android": "^6.0.0",
-    "@capacitor/core": "^6.0.0",
-    "@capacitor/ios": "^6.0.0",
-    "@rollup/plugin-node-resolve": "^15.2.3",
-    "rimraf": "^5.0.5",
+    "@capacitor/android": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@capacitor/ios": "^8.3.4",
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "rimraf": "^6.1.3",
     "rollup": "^4.13.0",
-    "typescript": "~5.4.2"
+    "typescript": "~6.0.3"
   },
   "peerDependencies": {
-    "@capacitor/core": "^6.0.0",
+    "@capacitor/core": "^8.3.4",
     "@braze/web-sdk": "^6.0.0"
   },
   "peerDependenciesMeta": {
