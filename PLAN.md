@@ -44,6 +44,24 @@ Today's options for a Capacitor team that needs Braze:
 
 This plugin makes the answer `npm install` + 10 lines of init code. That's the entire value proposition.
 
+### Why not just use `braze-cordova-sdk` via Capacitor's Cordova-compat layer?
+
+This is the most reasonable question a skeptical reader can ask, so it gets a real answer here. The Cordova plugin is officially maintained by Braze (currently `braze-cordova-sdk@16.x` on npm), and Capacitor ships a Cordova-compat layer that lets Capacitor apps consume Cordova plugins. The composition exists. So why write our own?
+
+**1. Capacitor itself is steering users off the Cordova-compat layer.** Capacitor's 6.x release notes and ongoing roadmap deprioritize Cordova-compat support; the official position is "use a Capacitor plugin when one exists, Cordova-compat is a migration aid." Anchoring a production integration on a deprecated compat layer is technical debt with a known expiration date.
+
+**2. Cordova's plugin API is callback-based and predates modern TS.** Calls look like `cordova.plugins.appboy.logCustomEvent('name', props, success, failure)` with weak or absent TS types. Capacitor consumers expect `await Braze.logCustomEvent({ name, properties })` and full type-checked option shapes. Wrapping Cordova in promise adapters works but ships a second layer of indirection on top of the compat layer — two layers of glue between the consumer and the SDK.
+
+**3. Push token handoff is the specific failure mode.** In Capacitor 6+, the push registration lifecycle is owned by Capacitor's own push notification subsystem. The Cordova plugin's push registration path assumes a Cordova-managed lifecycle that no longer runs the same way; reports of push tokens never reaching Braze, or reaching it after the user has already churned, recur on the Braze community forum and the Ionic Discord. The fix is a Capacitor-native bridge that integrates with Capacitor's push lifecycle directly — which is what this plugin will do (see §8 "Push token handoff — the gnarly bit").
+
+**4. In-app message rendering fights the WKWebView lifecycle.** Cordova's IAM display strategy puts up its own native view layer; Capacitor apps already manage a WKWebView for their primary UI. The two layering systems compete for the topmost window on iOS, producing flickers, mis-z-ordered modals, and dismissed messages that don't fire their dismissal callbacks. Capacitor-native rendering avoids the conflict by deferring to Capacitor's view hierarchy.
+
+**5. Configuration is split across `config.xml` (Cordova) and `capacitor.config.ts` (Capacitor).** Consumers maintain two config files for one integration, with no cross-validation. A Capacitor-native plugin uses Capacitor's config system directly.
+
+**6. The Cordova plugin has no listener support that matches Capacitor's `addListener` shape.** Capacitor's event model (typed listeners returning `PluginListenerHandle`) is fundamentally different from Cordova's callback registration. Bridging the two is possible but each adapter is another translation layer that can drop, mis-order, or double-fire events.
+
+**The trade-off:** writing our own plugin means we own the bridge code on three platforms (~25-50 methods worth) and accept the maintenance burden. Adopting `braze-cordova-sdk` would let us skip all that, with the costs above. For Aromo and for the broader Capacitor + Braze cohort, the Capacitor-native path produces a measurably better integration. For a "Braze working on Capacitor in two days" need, the Cordova route is faster — and that's a legitimate choice for someone with that constraint.
+
 ### Strategic positioning in the Braze ecosystem
 
 ```
