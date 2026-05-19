@@ -9,6 +9,9 @@ Per-subsystem design contracts that codify the load-bearing patterns this plugin
 | [C03](./C03-CROSS-PLATFORM-TRANSLATION.md) | Per-platform conversion conventions (months, currency, decimals, dates, enums, anonymous sentinels) | Adding a method whose argument or return type behaves differently on the three native SDKs |
 | [C04](./C04-VALIDATION.md) | Input validation — TS validates at boundary, native bridges duplicate | Adding a method that takes user-provided input |
 | [C05](./C05-LISTENERS.md) | Event-listener lifecycle — eager-on-initialize, shared, no replay, cleanup on wipeData | Adding any `addListener('eventName', ...)` event |
+| [C06](./C06-SECURITY-DEFAULTS.md) | Security defaults & PII discipline — default-deny toggles, HTTPS-required endpoint, never log values | Touching configuration toggles, the network layer, or any field that carries user data |
+| [C07](./C07-INIT-INDEPENDENT-METHODS.md) | When a plugin method may legitimately skip the init guard | Adding a method that needs to work during consent revocation, GDPR erasure, or other pre-init lifecycle paths |
+| [C08](./C08-NATIVE-SDK-PINNING.md) | Native SDK pin policy (exact on iOS/Android, caret on Web peer dep) and the bump protocol | Updating the version of BrazeKit, `com.braze:android-sdk-ui`, or `@braze/web-sdk` |
 
 ## How to use this set
 
@@ -19,6 +22,12 @@ When you add a method:
 3. If your method has args whose semantics differ across SDKs, open [C03](./C03-CROSS-PLATFORM-TRANSLATION.md) and pick the canonical shape per the rules there.
 4. If your method takes user input, open [C04](./C04-VALIDATION.md) and duplicate the validation across TS + Swift + Kotlin.
 5. If your method is a listener, open [C05](./C05-LISTENERS.md) and follow the eager-on-init pattern.
+6. If your method touches configuration, network, or user data, open [C06](./C06-SECURITY-DEFAULTS.md) and run its checklist.
+7. If your method must work before `initialize` (consent revocation, GDPR erasure), open [C07](./C07-INIT-INDEPENDENT-METHODS.md) and confirm your method meets all five criteria for joining the init-independent set.
+
+When you bump a native SDK:
+
+- Open [C08](./C08-NATIVE-SDK-PINNING.md) and follow the bump protocol step by step.
 
 If your method introduces a pattern none of these MDCs cover, add a new MDC in the **same commit as the code**. Don't ship a new pattern and a new MDC separately — the gap between is when contributors invent ad-hoc variants.
 
