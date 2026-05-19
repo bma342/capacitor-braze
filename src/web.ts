@@ -197,13 +197,15 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
 
   /**
    * Asserts that init succeeded and returns the current user object.
-   * The Braze Web SDK guarantees `getUser()` is non-null post-init.
+   *
+   * The Braze Web SDK guarantees `getUser()` is non-null post-init, but its
+   * TS type signature is `User | undefined`, so we narrow with the explicit
+   * `NonNullable<...>` return type plus a defensive runtime check.
    */
-  private requireUser(): ReturnType<BrazeWebSdk['getUser']> {
+  private requireUser(): NonNullable<ReturnType<BrazeWebSdk['getUser']>> {
     const braze = this.requireInitialized();
     const user = braze.getUser();
     if (!user) {
-      // Defensive: per Braze docs, getUser() shouldn't return null post-init.
       throw new Error(
         'Braze: `getUser()` returned null. This should not happen post-init; ' +
           'file an issue at https://github.com/bma342/capacitor-braze/issues.',
