@@ -1,6 +1,6 @@
 {
   "name": "capacitor-braze",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Capacitor 6+ plugin wrapping the official Braze SDKs for Android, iOS, and Web.",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",

@@ -3,6 +3,7 @@ package com.bma342.braze
 import android.util.Log
 import com.braze.Braze
 import com.braze.configuration.BrazeConfig
+import com.braze.models.outgoing.BrazeProperties
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -12,19 +13,18 @@ import com.getcapacitor.annotation.CapacitorPlugin
 /**
  * Capacitor bridge for the Braze Android SDK (com.braze:android-sdk-ui 42.2.0).
  *
- * Surface in 0.0.2:
+ * Surface in 0.0.3:
  * - `echo(value)` — bridge sanity check
- * - `initialize(apiKey, endpoint, enableLogging?, enableSdkAuthentication?, allowInsecureEndpoint?)`
- *   — builds `BrazeConfig` from the supplied options and calls
- *   `Braze.configure(context, config)`. Subsequent calls reconfigure the
- *   singleton (Braze's documented behavior).
- *
- * Real user/event/push methods (`changeUser`, `logCustomEvent`, etc.) land in 0.1.0.
+ * - `initialize(...)` — builds `BrazeConfig`, calls `Braze.configure(context, config)`
+ * - `changeUser(userId, sdkAuthSignature?)` — identifies the current user
+ * - `logCustomEvent(name, properties?)` — logs a custom event
  *
  * See PLAN.md, SDK_SURFACE.md, and SECURITY.md for design context.
  */
 @CapacitorPlugin(name = "Braze")
 class BrazePlugin : Plugin() {
+
+    private var initialized: Boolean = false
 
     @PluginMethod
     fun echo(call: PluginCall) {
@@ -73,7 +73,81 @@ class BrazePlugin : Plugin() {
         }
 
         Braze.configure(context, builder.build())
+        initialized = true
 
         call.resolve()
+    }
+
+    @PluginMethod
+    fun changeUser(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        val userId = call.getString("userId")
+        if (userId.isNullOrEmpty()) {
+            call.reject("Braze.changeUser: `userId` is required (string).")
+            return
+        }
+        val sdkAuthSignature = call.getString("sdkAuthSignature")
+        if (sdkAuthSignature != null) {
+            Braze.getInstance(context).changeUser(userId, sdkAuthSignature)
+        } else {
+            Braze.getInstance(context).changeUser(userId)
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun logCustomEvent(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        val name = call.getString("name")
+        if (name.isNullOrEmpty()) {
+            call.reject("Braze.logCustomEvent: `name` is required (string).")
+            return
+        }
+        val brazeProperties = jsObjectToBrazeProperties(call.getObject("properties"))
+        if (brazeProperties != null) {
+            Braze.getInstance(context).logCustomEvent(name, brazeProperties)
+        } else {
+            Braze.getInstance(context).logCustomEvent(name)
+        }
+        call.resolve()
+    }
+
+    // MARK: - Helpers
+
+    private fun requireInitialized(call: PluginCall): Boolean {
+        if (!initialized) {
+            call.reject("Braze.initialize() must be called before any other Braze method.")
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Converts a Capacitor JSObject into Braze's properties wrapper. v0.0.3
+     * supports string / number / boolean values per the TS interface
+     * (`BrazeEventPropertyValue`). Date and array support land in a later
+     * version per SDK_SURFACE.md §2.
+     */
+    private fun jsObjectToBrazeProperties(jsObject: JSObject?): BrazeProperties? {
+        if (jsObject == null || jsObject.length() == 0) {
+            return null
+        }
+        val props = BrazeProperties()
+        val keys = jsObject.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            when (val value = jsObject.get(key)) {
+                is String -> props.addProperty(key, value)
+                is Int -> props.addProperty(key, value)
+                is Long -> props.addProperty(key, value)
+                is Double -> props.addProperty(key, value)
+                is Float -> props.addProperty(key, value.toDouble())
+                is Boolean -> props.addProperty(key, value)
+                // Other types silently dropped — TS interface narrows to
+                // primitives, so this only triggers if a consumer bypasses the
+                // type system.
+            }
+        }
+        return props
     }
 }

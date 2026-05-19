@@ -11,6 +11,30 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+## [0.0.3] — 2026-05-19
+
+### Added
+- `Braze.changeUser({ userId, sdkAuthSignature? })` — identifies the current
+  user. Required JWT signature parameter (optional in TS, validated server-side
+  by Braze when SDK Authentication is enabled). All three platforms.
+- `Braze.logCustomEvent({ name, properties? })` — logs a custom event with
+  optional string / number / boolean properties. All three platforms.
+- TS types: `BrazeChangeUserOptions`, `BrazeLogCustomEventOptions`,
+  `BrazeEventProperties`, `BrazeEventPropertyValue`.
+- Init guard on all platforms — any plugin method other than `initialize` /
+  `echo` rejects with a clear error if `initialize` wasn't called first.
+- Android: `jsObjectToBrazeProperties` helper that narrows JSObject to
+  `BrazeProperties` while only accepting primitive values per the TS
+  interface contract.
+
+### Notes
+- This is the first commit where the plugin actually pushes data into Braze.
+  A consumer can call `initialize` → `changeUser` → `logCustomEvent` against
+  a real Braze account and see the user profile + event appear in the
+  dashboard within ~30 seconds.
+- Date / array property values not yet supported (TS interface excludes them);
+  lands in a later 0.0.x patch.
+
 ## [0.0.2] — 2026-05-19
 
 ### Changed

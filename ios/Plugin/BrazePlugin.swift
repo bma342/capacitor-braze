@@ -4,25 +4,23 @@ import Foundation
 
 /// Capacitor bridge for the Braze iOS SDK (BrazeKit 14.1.0).
 ///
-/// Surface in 0.0.2:
+/// Surface in 0.0.3:
 /// - `echo(value)` — bridge sanity check
-/// - `initialize(apiKey, endpoint, enableLogging?, enableSdkAuthentication?, allowInsecureEndpoint?)`
-///   — constructs `Braze.Configuration`, validates inputs, instantiates the
-///   `Braze` singleton and retains it as a static for use by future plugin
-///   methods (`changeUser`, `logCustomEvent`, etc. land in 0.1.0).
-///
-/// Pattern follows Braze's own `AppDelegate.braze` convention from their docs;
-/// the static accessor lets push delegate hooks and other Capacitor plugins
-/// reach the configured Braze instance without re-initialization.
+/// - `initialize(...)` — constructs `Braze.Configuration`, instantiates `Braze`,
+///   retains as `BrazePlugin.braze` static
+/// - `changeUser(userId, sdkAuthSignature?)` — identifies the current user
+/// - `logCustomEvent(name, properties?)` — logs a custom event
 ///
 /// See PLAN.md, SDK_SURFACE.md, and SECURITY.md for design context.
 @objc(BrazePlugin)
 public class BrazePlugin: CAPPlugin {
 
     /// Retained Braze instance after successful `initialize`. Static so push
-    /// delegate hooks (added in 0.1.0+) can reach it without plugin lookup.
+    /// delegate hooks (added in later versions) can reach it without plugin lookup.
     /// Nil before `initialize` is called.
     public private(set) static var braze: Braze?
+
+    // MARK: - Bridge methods
 
     @objc func echo(_ call: CAPPluginCall) {
         guard let value = call.getString("value") else {
@@ -60,5 +58,37 @@ public class BrazePlugin: CAPPlugin {
         BrazePlugin.braze = braze
 
         call.resolve()
+    }
+
+    @objc func changeUser(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let userId = call.getString("userId"), !userId.isEmpty else {
+            call.reject("Braze.changeUser: `userId` is required (string).")
+            return
+        }
+        let sdkAuthSignature = call.getString("sdkAuthSignature")
+        braze.changeUser(userId: userId, sdkAuthSignature: sdkAuthSignature)
+        call.resolve()
+    }
+
+    @objc func logCustomEvent(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let name = call.getString("name"), !name.isEmpty else {
+            call.reject("Braze.logCustomEvent: `name` is required (string).")
+            return
+        }
+        let properties = call.getObject("properties") as? [String: Any]
+        braze.logCustomEvent(name: name, properties: properties)
+        call.resolve()
+    }
+
+    // MARK: - Helpers
+
+    private static func requireInitialized(_ call: CAPPluginCall) -> Braze? {
+        guard let braze = braze else {
+            call.reject("Braze.initialize() must be called before any other Braze method.")
+            return nil
+        }
+        return braze
     }
 }
