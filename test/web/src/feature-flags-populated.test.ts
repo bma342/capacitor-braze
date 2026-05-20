@@ -121,6 +121,28 @@ describe('feature flags (populated cache via refresh end-to-end)', () => {
       when: { type: 'datetime', value: 1735689600000 },
       cfg: { type: 'jsonobject', value: { nested: { key: 'value' } } },
     });
+
+    // logFeatureFlagImpression POSTs to the wire when the flag IS in the
+    // cache (see log-feature-flag-impression.js: gates on cache presence
+    // + tracking string presence). On the wire, the SDK emits an event
+    // with name 'ffi' and data { fid: <flag id>, fts: <tracking string> }.
+    // Verified against @braze/web-sdk/shared-lib/event-types.js (EventTypes.xo = "ffi").
+    mock.clearCaptured();
+    await plugin.logFeatureFlagImpression({ id: 'ff_string_only' });
+    await plugin.requestImmediateDataFlush();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const impressionPost = mock.captured.find((r) => {
+      if (r.method !== 'POST') return false;
+      const body = JSON.stringify(r.body ?? '');
+      return body.includes('"name":"ffi"') && body.includes('"fid":"ff_string_only"');
+    });
+    expect(
+      impressionPost,
+      `logFeatureFlagImpression did not POST 'ffi' event with fid='ff_string_only'. Captured: ${mock.captured
+        .map((r) => `${r.method} ${r.path}`)
+        .join(', ')}`,
+    ).toBeTruthy();
   });
 
   it('getFeatureFlag returns flag:null for an id NOT in the refreshed cache', async () => {

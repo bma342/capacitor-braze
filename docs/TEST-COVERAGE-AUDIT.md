@@ -57,8 +57,8 @@ The populated-cache gap that this section originally tracked is **closed**. Two 
 | `getFeatureFlag` with populated cache | ✅ covered by `feature-flags-populated.test.ts` (single + multi-flag + all property types) |
 | `getAllFeatureFlags` with populated cache | ✅ covered same file |
 | `getContentCards` with real cards | ✅ covered by `content-cards-populated.test.ts` (3 card-type variants, type discriminator validated per C02) |
-| `logFeatureFlagImpression` with known flag | ⚠ partial: works with empty cache (no-throw). Wire-level "the impression POST hits /data/" is still gated on adding event-capture to the populated test, which requires draining the SDK's outbound queue. ~1 hr follow-up. |
-| `logContentCardClick` / `logContentCardImpression` with known card | ✅ resolve-without-throw covered when card is in cache (`content-cards-populated.test.ts`). Wire-level POST assertion same caveat as above. |
+| `logFeatureFlagImpression` with known flag | ✅ covered in `feature-flags-populated.test.ts`: refresh → impression → flush → wire-level capture asserts the POST body contains the `ffi` event with `fid: <flag id>`. Event code verified against `@braze/web-sdk` `EventTypes.xo` = `"ffi"`. |
+| `logContentCardClick` / `logContentCardImpression` with known card | ✅ wire-level covered in `content-cards-populated.test.ts`: refresh → click + impression → flush → captures assert `ccc` event for click and `cci` event for impression, each with `ids: [<card id>]`. Event codes verified against `@braze/web-sdk` card-manager (`p.os`/`p.ds`). |
 
 ### Gaps blocked on SDK event injection
 
@@ -86,7 +86,7 @@ The 0.1.0 release notes will reference this doc so adopters know exactly what is
 ## Next moves to close remaining gaps
 
 1. **SDK event injection helper** (~half day): a small test helper that drives the underlying `@braze/web-sdk` subscription system from inside vitest, so listener lifecycle (`addListener` / `removeAllListeners`) becomes assertable end-to-end.
-2. **Wire-level event-capture for impression methods** (~1 hr): drain the SDK's outbound queue after `logFeatureFlagImpression` / `logContentCardImpression` to assert the POST body, not just no-throw.
+2. ~~**Wire-level event-capture for impression methods**~~ ✅ done 2026-05-20: `logFeatureFlagImpression` POSTs `ffi`, `logContentCardClick` POSTs `ccc`, `logContentCardImpression` POSTs `cci`. All three asserted via the populated-cache tests.
 3. **C11 native harness implementation** (post-trial-smoke, ~1-2 days): described in the MDC.
 
 Estimate: with the trial smoke + C11 + the two web-side enhancements above, the plugin reaches "every method has at least one end-to-end behavioral test on the platform it runs on." That is the bar this doc tracks against.

@@ -154,7 +154,39 @@ describe('content cards (populated cache via refresh end-to-end)', () => {
     // reject with a 'no cached content card with id "<id>"' message). Same
     // describe block to avoid the @braze/web-sdk module-singleton constraint
     // that bites cross-test plugin instances.
+    mock.clearCaptured();
     await expect(plugin.logContentCardClick({ cardId: 'card_captioned_1' })).resolves.toBeUndefined();
     await expect(plugin.logContentCardImpression({ cardId: 'card_classic_1' })).resolves.toBeUndefined();
+    await plugin.requestImmediateDataFlush();
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Wire-level: the SDK emits 'ccc' for clicks and 'cci' for impressions,
+    // each carrying { ids: [<card id>] } in the data field. Codes verified
+    // against @braze/web-sdk/src/Card/card-manager.js (logClick uses p.os
+    // = EventTypes 'ccc'; impressions use p.ds = 'cci' for regular cards
+    // or p.js = 'ccic' for control cards).
+    const clickPost = mock.captured.find((r) => {
+      if (r.method !== 'POST') return false;
+      const body = JSON.stringify(r.body ?? '');
+      return body.includes('"name":"ccc"') && body.includes('"card_captioned_1"');
+    });
+    expect(
+      clickPost,
+      `logContentCardClick did not POST 'ccc' event with id 'card_captioned_1'. Captured: ${mock.captured
+        .map((r) => `${r.method} ${r.path}`)
+        .join(', ')}`,
+    ).toBeTruthy();
+
+    const impressionPost = mock.captured.find((r) => {
+      if (r.method !== 'POST') return false;
+      const body = JSON.stringify(r.body ?? '');
+      return body.includes('"name":"cci"') && body.includes('"card_classic_1"');
+    });
+    expect(
+      impressionPost,
+      `logContentCardImpression did not POST 'cci' event with id 'card_classic_1'. Captured: ${mock.captured
+        .map((r) => `${r.method} ${r.path}`)
+        .join(', ')}`,
+    ).toBeTruthy();
   });
 });

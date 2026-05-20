@@ -36,3 +36,6 @@ android/gradlew.bat
 .env
 .env.local
 .env.*.local
+
+# Claude Code internal state (worktrees, session data)
+.claude/

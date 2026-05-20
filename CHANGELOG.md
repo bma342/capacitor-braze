@@ -75,6 +75,32 @@ emits `1987-7-14`" anchor pre-filled, `FeatureFlag` DTO, `ContentCard`
 DTO) and a cross-platform drift table. Real passes get renamed
 `<platform>-YYYY-MM-DD.md`.
 
+### Added — Wire-level POST capture for impression methods (FF + CC)
+
+Extended the populated-cache fat tests with assertions that
+`logFeatureFlagImpression`, `logContentCardClick`, and
+`logContentCardImpression` actually POST events to `/api/v3/data/`
+with the correct event-type codes and payload shape:
+
+  - `logFeatureFlagImpression` → event name `"ffi"` (EventTypes.xo)
+    with data `{ fid: <flag id>, fts: <tracking string> }`.
+  - `logContentCardClick` → event name `"ccc"` (EventTypes.os) with
+    data `{ ids: [<card id>] }`.
+  - `logContentCardImpression` → event name `"cci"` (EventTypes.ds)
+    with data `{ ids: [<card id>] }`. (Control-card impressions use
+    `"ccic"`/EventTypes.js; not yet covered separately.)
+
+Codes verified against `@braze/web-sdk` source
+(`shared-lib/event-types.js` + `src/Card/card-manager.js` +
+`src/FeatureFlags/log-feature-flag-impression.js`). Assertions are
+nested in the existing populated-cache fat tests rather than separate
+`it()` blocks because of the same module-singleton constraint that
+required consolidation in the first place.
+
+Test count stays at 71 (per-it boundary), but the contract validated
+is meaningfully stronger. The audit now lists all three impression
+methods as ✅ wire-level covered.
+
 ### Added — Populated-cache FF + CC tests via initialize-time config scripting (+3 tests, 68 → 71)
 
 Closes the populated-cache gap that the original test-coverage audit
