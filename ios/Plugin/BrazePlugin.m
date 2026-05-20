@@ -18,6 +18,7 @@ CAP_PLUGIN(BrazePlugin, "Braze",
     // User identity
     CAP_PLUGIN_METHOD(changeUser, CAPPluginReturnPromise);
     CAP_PLUGIN_METHOD(getUserId, CAPPluginReturnPromise);
+    CAP_PLUGIN_METHOD(setSdkAuthenticationSignature, CAPPluginReturnPromise);
 
     // User attributes (standard)
     CAP_PLUGIN_METHOD(setEmail, CAPPluginReturnPromise);

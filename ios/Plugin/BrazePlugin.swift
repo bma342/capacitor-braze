@@ -4,12 +4,12 @@ import Foundation
 
 /// Capacitor bridge for the Braze iOS SDK (BrazeKit 14.1.0).
 ///
-/// ## Surface in 0.0.11
+/// ## Surface in 0.0.12
 ///
 /// - **Bridge sanity:** `echo(value)`
 /// - **Configuration:** `initialize(apiKey, endpoint, ...)`
 /// - **User identity:** `changeUser(userId, sdkAuthSignature?)`, `getUserId`,
-///   `addAlias(alias, label)`
+///   `setSdkAuthenticationSignature(signature)`, `addAlias(alias, label)`
 /// - **Device ID:** `getDeviceId`
 /// - **User attributes (standard):** `setEmail`, `setPhoneNumber`,
 ///   `setFirstName`, `setLastName`, `setLanguage`, `setCountry`
@@ -105,6 +105,12 @@ public class BrazePlugin: CAPPlugin {
         let configuration = Braze.Configuration(apiKey: apiKey, endpoint: endpoint)
         configuration.logger.level = enableLogging ? .debug : .info
         configuration.api.sdkAuthentication = enableSdkAuthentication
+        if let sessionTimeout = call.getInt("sessionTimeoutInSeconds"), sessionTimeout > 0 {
+            // BrazeKit's sessionTimeout is a TimeInterval (seconds); the
+            // plugin contract uses Int seconds for cross-platform parity
+            // per C03, so we just cast.
+            configuration.sessionTimeout = TimeInterval(sessionTimeout)
+        }
 
         let braze = Braze(configuration: configuration)
         BrazePlugin.braze = braze
@@ -145,6 +151,20 @@ public class BrazePlugin: CAPPlugin {
     @objc func getUserId(_ call: CAPPluginCall) {
         guard let braze = Self.requireInitialized(call) else { return }
         call.resolve(["userId": braze.user.id as Any])
+    }
+
+    /// Pushes a new SDK Authentication signature into the configured
+    /// Braze instance. Used to rotate the signature after expiry without
+    /// running a fresh `changeUser` round-trip. No-op at the SDK level
+    /// when `enableSdkAuthentication` was false at init time.
+    @objc func setSdkAuthenticationSignature(_ call: CAPPluginCall) {
+        guard let braze = Self.requireInitialized(call) else { return }
+        guard let signature = call.getString("signature"), !signature.isEmpty else {
+            call.reject("Braze.setSdkAuthenticationSignature: `signature` is required (string).")
+            return
+        }
+        braze.set(sdkAuthenticationSignature: signature)
+        call.resolve()
     }
 
     // MARK: - User attributes (standard)

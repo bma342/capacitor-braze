@@ -28,12 +28,12 @@ import java.math.BigDecimal
 /**
  * Capacitor bridge for the Braze Android SDK (com.braze:android-sdk-ui 42.2.0).
  *
- * ## Surface in 0.0.11
+ * ## Surface in 0.0.12
  *
  * - **Bridge sanity:** `echo(value)`
  * - **Configuration:** `initialize(apiKey, endpoint, ...)`
  * - **User identity:** `changeUser(userId, sdkAuthSignature?)`, `getUserId`,
- *   `addAlias(alias, label)`
+ *   `setSdkAuthenticationSignature(signature)`, `addAlias(alias, label)`
  * - **Device ID:** `getDeviceId`
  * - **User attributes (standard):** `setEmail`, `setPhoneNumber`,
  *   `setFirstName`, `setLastName`, `setLanguage`, `setCountry`
@@ -151,6 +151,14 @@ class BrazePlugin : Plugin() {
             builder.setLoggerLevel(Log.VERBOSE)
         }
 
+        val sessionTimeoutInSeconds = call.getInt("sessionTimeoutInSeconds")
+        if (sessionTimeoutInSeconds != null && sessionTimeoutInSeconds > 0) {
+            // Android SDK's setter takes seconds (Int); we accept seconds
+            // at the plugin boundary per C03 so cross-platform parity is
+            // maintained without a unit conversion.
+            builder.setSessionTimeout(sessionTimeoutInSeconds)
+        }
+
         Braze.configure(context, builder.build())
         initialized = true
 
@@ -219,6 +227,23 @@ class BrazePlugin : Plugin() {
             result.put("userId", raw)
         }
         call.resolve(result)
+    }
+
+    /**
+     * Rotates the SDK Authentication signature on the live Braze instance.
+     * No-op at the SDK level when `enableSdkAuthentication` was false at
+     * init time — the signature is stored but never sent.
+     */
+    @PluginMethod
+    fun setSdkAuthenticationSignature(call: PluginCall) {
+        if (!requireInitialized(call)) return
+        val signature = call.getString("signature")
+        if (signature.isNullOrEmpty()) {
+            call.reject("Braze.setSdkAuthenticationSignature: `signature` is required (string).")
+            return
+        }
+        Braze.getInstance(context).setSdkAuthenticationSignature(signature)
+        call.resolve()
     }
 
     // -------------------------------------------------------------------------

@@ -59,6 +59,7 @@ await Braze.logCustomEvent({ name: 'app_opened' });
 * [`initialize(...)`](#initialize)
 * [`changeUser(...)`](#changeuser)
 * [`getUserId()`](#getuserid)
+* [`setSdkAuthenticationSignature(...)`](#setsdkauthenticationsignature)
 * [`setEmail(...)`](#setemail)
 * [`setPhoneNumber(...)`](#setphonenumber)
 * [`setFirstName(...)`](#setfirstname)
@@ -162,6 +163,27 @@ getUserId() => Promise<BrazeGetUserIdResult>
 Returns the current external user ID, or `null` if the user is anonymous.
 
 **Returns:** <code>Promise&lt;<a href="#brazegetuseridresult">BrazeGetUserIdResult</a>&gt;</code>
+
+--------------------
+
+
+### setSdkAuthenticationSignature(...)
+
+```typescript
+setSdkAuthenticationSignature(options: BrazeSetSdkAuthenticationSignatureOptions) => Promise<void>
+```
+
+Rotates the SDK Authentication signature without re-running
+`changeUser`. Use after the previous signature expires (typically
+every 12-24h depending on your backend's JWT lifetime) or after
+receiving an SDK Auth error from the Braze backend.
+
+Calling this without `enableSdkAuthentication: true` at init time
+is a no-op in the SDK — the signature is stored but never sent.
+
+| Param         | Type                                                                                                            |
+| ------------- | --------------------------------------------------------------------------------------------------------------- |
+| **`options`** | <code><a href="#brazesetsdkauthenticationsignatureoptions">BrazeSetSdkAuthenticationSignatureOptions</a></code> |
 
 --------------------
 
@@ -749,13 +771,14 @@ Options passed to {@link BrazePlugin.initialize}.
 `apiKey` is a **public Braze SDK API key** (the kind embedded in your app).
 Never pass a REST API key here — they are different things. See `SECURITY.md` §1.
 
-| Prop                          | Type                 | Description                                                                                                                                                                                                                   |
-| ----------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`apiKey`**                  | <code>string</code>  | Braze SDK API key (public).                                                                                                                                                                                                   |
-| **`endpoint`**                | <code>string</code>  | Braze SDK endpoint, e.g. `sdk.iad-03.braze.com`. Must be HTTPS in production. For mock-server testing, set {@link <a href="#brazeinitializeoptions">BrazeInitializeOptions.allowInsecureEndpoint</a>}.                        |
-| **`enableLogging`**           | <code>boolean</code> | Enable verbose SDK logging. Defaults to `false`. Never enable in production builds — Braze SDK logs include event payloads which may contain PII. See `SECURITY.md` §8.                                                       |
-| **`enableSdkAuthentication`** | <code>boolean</code> | Enable SDK Authentication (signed JWT validation). **Strongly recommended for production.** Without it, anyone with the public SDK API key can spoof events for arbitrary user IDs. See `SECURITY.md` §2 for the full design. |
-| **`allowInsecureEndpoint`**   | <code>boolean</code> | Allow non-HTTPS `endpoint`. Defaults to `false` and should remain so in production. Only set `true` for local mock-server testing per `SECURITY.md` §4.                                                                       |
+| Prop                          | Type                 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`apiKey`**                  | <code>string</code>  | Braze SDK API key (public).                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **`endpoint`**                | <code>string</code>  | Braze SDK endpoint, e.g. `sdk.iad-03.braze.com`. Must be HTTPS in production. For mock-server testing, set {@link <a href="#brazeinitializeoptions">BrazeInitializeOptions.allowInsecureEndpoint</a>}.                                                                                                                                                                                                                                                                     |
+| **`enableLogging`**           | <code>boolean</code> | Enable verbose SDK logging. Defaults to `false`. Never enable in production builds — Braze SDK logs include event payloads which may contain PII. See `SECURITY.md` §8.                                                                                                                                                                                                                                                                                                    |
+| **`enableSdkAuthentication`** | <code>boolean</code> | Enable SDK Authentication (signed JWT validation). **Strongly recommended for production.** Without it, anyone with the public SDK API key can spoof events for arbitrary user IDs. See `SECURITY.md` §2 for the full design.                                                                                                                                                                                                                                              |
+| **`allowInsecureEndpoint`**   | <code>boolean</code> | Allow non-HTTPS `endpoint`. Defaults to `false` and should remain so in production. Only set `true` for local mock-server testing per `SECURITY.md` §4.                                                                                                                                                                                                                                                                                                                    |
+| **`sessionTimeoutInSeconds`** | <code>number</code>  | Session timeout in seconds. After this much inactivity, the SDK opens a new session on the next event. Braze's default across all three SDKs is 30 minutes (1800 seconds); supply a value here to override. Must be a positive integer; values ≤ 0 are rejected. Cross-platform note: Capacitor's plugin layer normalizes seconds across all three SDKs. The Android SDK's underlying setter takes milliseconds and the iOS SDK takes a TimeInterval; the bridges convert. |
 
 
 #### BrazeChangeUserOptions
@@ -774,6 +797,13 @@ Braze; subsequent events and attributes are attributed to this user.
 | Prop         | Type                        | Description                                                                                                                       |
 | ------------ | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | **`userId`** | <code>string \| null</code> | The current external user ID, or `null` if the user is still anonymous (i.e. {@link BrazePlugin.changeUser} has not been called). |
+
+
+#### BrazeSetSdkAuthenticationSignatureOptions
+
+| Prop            | Type                | Description                                                                                                                                                                                                                                        |
+| --------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`signature`** | <code>string</code> | New SDK Authentication signature (signed JWT) to push into the SDK. Used to rotate the signature when the previous one expires or when an `sdkAuthError` event has fired indicating the backend rejected the previous token. See `SECURITY.md` §2. |
 
 
 #### BrazeSetEmailOptions

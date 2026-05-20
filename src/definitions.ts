@@ -44,6 +44,28 @@ export interface BrazeInitializeOptions {
    * production. Only set `true` for local mock-server testing per `SECURITY.md` §4.
    */
   allowInsecureEndpoint?: boolean;
+  /**
+   * Session timeout in seconds. After this much inactivity, the SDK
+   * opens a new session on the next event. Braze's default across all
+   * three SDKs is 30 minutes (1800 seconds); supply a value here to
+   * override. Must be a positive integer; values ≤ 0 are rejected.
+   *
+   * Cross-platform note: the plugin contract uses seconds across all
+   * three platforms. iOS's underlying setter takes a `TimeInterval`
+   * (a `Double` of seconds); the iOS bridge casts. Android and Web
+   * take seconds directly with no conversion.
+   */
+  sessionTimeoutInSeconds?: number;
+}
+
+export interface BrazeSetSdkAuthenticationSignatureOptions {
+  /**
+   * New SDK Authentication signature (signed JWT) to push into the SDK.
+   * Used to rotate the signature when the previous one expires or when
+   * an `sdkAuthError` event has fired indicating the backend rejected
+   * the previous token. See `SECURITY.md` §2.
+   */
+  signature: string;
 }
 
 // =============================================================================
@@ -552,6 +574,22 @@ export interface BrazePlugin {
    * if (!userId) await Braze.changeUser({ userId: 'user_123' });
    */
   getUserId(): Promise<BrazeGetUserIdResult>;
+
+  /**
+   * Rotates the SDK Authentication signature without re-running
+   * `changeUser`. Use after the previous signature expires (typically
+   * every 12-24h depending on your backend's JWT lifetime) or after
+   * receiving an SDK Auth error from the Braze backend.
+   *
+   * Calling this without `enableSdkAuthentication: true` at init time
+   * is a no-op in the SDK — the signature is stored but never sent.
+   *
+   * @example
+   * // On a 401-style SDK auth failure or before expiry:
+   * const signature = await myBackend.signBrazeSdkAuth(userId);
+   * await Braze.setSdkAuthenticationSignature({ signature });
+   */
+  setSdkAuthenticationSignature(options: BrazeSetSdkAuthenticationSignatureOptions): Promise<void>;
 
   // ---------------------------------------------------------------------------
   // User attributes (standard)

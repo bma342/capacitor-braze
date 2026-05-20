@@ -39,6 +39,12 @@
           <label><input id="allowInsecureEndpoint" type="checkbox" /> allowInsecureEndpoint</label>
         </div>
         <div class="row">
+          <label
+            >sessionTimeoutInSeconds (optional)
+            <input id="sessionTimeoutInSeconds" type="number" placeholder="1800" />
+          </label>
+        </div>
+        <div class="row">
           <button data-method="initialize">initialize</button>
           <button data-method="echo">echo</button>
         </div>
@@ -62,6 +68,13 @@
         <div class="row">
           <button data-method="changeUser">changeUser</button>
           <button data-method="getUserId">getUserId</button>
+        </div>
+        <div class="row">
+          <label
+            >SDK Auth signature (rotate)
+            <input id="rotateSdkAuthSignature" type="text" placeholder="<jwt>" />
+          </label>
+          <button data-method="setSdkAuthenticationSignature">setSdkAuthenticationSignature</button>
         </div>
         <div class="row">
           <label>alias <input id="alias" type="text" placeholder="cust_1234" /></label>

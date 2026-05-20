@@ -11,6 +11,35 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+## [0.0.12] — 2026-05-20
+
+### Added — session timeout config + SDK Auth signature rotation (Phase N)
+
+Two tightly-scoped enrichment additions from the v0.2 list:
+
+- **`sessionTimeoutInSeconds`** on `BrazeInitializeOptions`. Overrides
+  Braze's default 30-minute (1800-second) session timeout. Validated
+  at the TS boundary as a positive integer per C04; rejected at all
+  three native bridges with the same error text per C01.
+  Cross-platform unit normalization (per C03): the plugin contract
+  uses seconds. iOS converts to `TimeInterval`, Android takes Int
+  seconds directly via `setSessionTimeout`, Web passes through as
+  `sessionTimeoutInSeconds`.
+
+- **`Braze.setSdkAuthenticationSignature({ signature })`** —
+  rotates the SDK Authentication JWT on the live SDK instance
+  without re-running `changeUser`. Use when:
+  - The previous signature expires (typical JWT lifetime: 12-24h)
+  - An `sdkAuthError` event fires indicating backend rejection
+  No-op at the SDK level when `enableSdkAuthentication: true` was
+  not set at init time — the signature is stored but never sent.
+
+Both additions touch the existing `initialize` / identity surface
+without new DTO design or listener plumbing.
+
+Surface: **35 callable methods** + `addListener` / `removeAllListeners`
+for two events.
+
 ## [0.0.11] — 2026-05-19
 
 ### Added — `registerPushToken` (Phase M)

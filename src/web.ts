@@ -36,6 +36,7 @@ import type {
   BrazeSetLanguageOptions,
   BrazeSetLastNameOptions,
   BrazeSetPhoneNumberOptions,
+  BrazeSetSdkAuthenticationSignatureOptions,
   BrazeSubscriptionGroupOptions,
 } from './definitions';
 
@@ -112,6 +113,9 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       baseUrl: options.endpoint,
       enableLogging: options.enableLogging ?? false,
       enableSdkAuthentication: options.enableSdkAuthentication ?? false,
+      ...(options.sessionTimeoutInSeconds !== undefined && {
+        sessionTimeoutInSeconds: options.sessionTimeoutInSeconds,
+      }),
     });
     braze.openSession();
     this.initialized = true;
@@ -152,6 +156,14 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     // null so the public contract stays a clean nullable string.
     const userId = user.getUserId() ?? null;
     return { userId };
+  }
+
+  async setSdkAuthenticationSignature(options: BrazeSetSdkAuthenticationSignatureOptions): Promise<void> {
+    const braze = this.requireInitialized();
+    if (!options.signature || typeof options.signature !== 'string') {
+      throw new Error('Braze.setSdkAuthenticationSignature: `signature` is required (string).');
+    }
+    braze.setSdkAuthenticationSignature(options.signature);
   }
 
   // ---------------------------------------------------------------------------
@@ -748,6 +760,11 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
         'Braze.initialize: `endpoint` must use HTTPS. Set `allowInsecureEndpoint: true` ' +
           'only for local mock-server testing. See SECURITY.md §4.',
       );
+    }
+    if (options.sessionTimeoutInSeconds !== undefined) {
+      if (!Number.isInteger(options.sessionTimeoutInSeconds) || options.sessionTimeoutInSeconds <= 0) {
+        throw new Error('Braze.initialize: `sessionTimeoutInSeconds` must be a positive integer.');
+      }
     }
   }
 }

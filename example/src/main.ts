@@ -125,14 +125,17 @@ function parseJsonProperties(id: string): BrazeEventProperties | undefined {
 const runMethods: Record<string, () => Promise<unknown>> = {
   echo: () => Braze.echo({ value: 'hello' }),
 
-  initialize: () =>
-    Braze.initialize({
+  initialize: () => {
+    const sessionTimeoutRaw = input('sessionTimeoutInSeconds');
+    return Braze.initialize({
       apiKey: input('apiKey'),
       endpoint: input('endpoint'),
       enableLogging: checked('enableLogging'),
       enableSdkAuthentication: checked('enableSdkAuthentication'),
       allowInsecureEndpoint: checked('allowInsecureEndpoint'),
-    }),
+      sessionTimeoutInSeconds: sessionTimeoutRaw ? parseInt(sessionTimeoutRaw, 10) : undefined,
+    });
+  },
 
   changeUser: () =>
     Braze.changeUser({
@@ -140,6 +143,8 @@ const runMethods: Record<string, () => Promise<unknown>> = {
       sdkAuthSignature: input('sdkAuthSignature') || undefined,
     }),
   getUserId: () => Braze.getUserId(),
+  setSdkAuthenticationSignature: () =>
+    Braze.setSdkAuthenticationSignature({ signature: input('rotateSdkAuthSignature') }),
 
   setEmail: () => Braze.setEmail({ email: nullableInput('email') }),
   setPhoneNumber: () => Braze.setPhoneNumber({ phoneNumber: nullableInput('phoneNumber') }),
