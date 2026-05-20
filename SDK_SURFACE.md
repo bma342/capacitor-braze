@@ -67,6 +67,36 @@ Legend:
 - ❌ = not supported by the SDK
 - **v0.1 / v0.2 / v0.5 / v1.0 / —** = plugin coverage target (— = never)
 
+### Currently shipped (as of 0.0.12)
+
+This is the row-by-row truth that the matrix below references via version targets. Items in **bold below were already targeted to a version are also already shipped**.
+
+Identity & attributes:
+`echo`, `initialize` (with `sessionTimeoutInSeconds`), `changeUser` (with `sdkAuthSignature`), `getUserId`, `setSdkAuthenticationSignature`, `addAlias`, `setEmail`, `setPhoneNumber`, `setFirstName`, `setLastName`, `setLanguage`, `setCountry`, `setCustomUserAttribute`, `setDateOfBirth`, `setGender`, `setHomeCity`, `getDeviceId`, `addToSubscriptionGroup`, `removeFromSubscriptionGroup`.
+
+Events:
+`logCustomEvent`, `logPurchase`, `requestImmediateDataFlush`.
+
+Feature flags (full v0.2 surface):
+`getFeatureFlag`, `getAllFeatureFlags`, `refreshFeatureFlags`, `logFeatureFlagImpression`, `addListener('featureFlagsUpdated', ...)`.
+
+Content cards (full v0.1 surface):
+`getContentCards`, `requestContentCardsRefresh`, `logContentCardClick`, `logContentCardImpression`, `addListener('contentCardsUpdated', ...)`.
+
+Push:
+`registerPushToken` (iOS + Android; throws on web by design per [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md)).
+
+Privacy / lifecycle:
+`wipeData`, `disableSDK`, `enableSDK`, `isDisabled`.
+
+Listeners:
+`addListener` / `removeAllListeners` for the two events above.
+
+### Not yet shipped — planned per their version target
+
+In-app messages (all of v0.1's IAM row), push permission request, push action buttons, foreground display, deep link routing, banners (web-only), geofences, custom IAM view factory, content card filtering, session open/close explicit, custom log handler, CSP nonce, push primer prompts, push stories, Email/SMS notification subscription type, user attribute array operations, custom HTTP client, `isInitialized`, explicit `optOut`.
+
+
 ### User identity
 
 | Capability | Android | iOS | Web | Plugin |
