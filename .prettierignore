@@ -8,5 +8,9 @@ demo/node_modules/
 demo/package-lock.json
 demo/ios/
 demo/android/
+test/mock-server/node_modules/
+test/web/node_modules/
+test/mock-server/package-lock.json
+test/web/package-lock.json
 package-lock.json
 *.md

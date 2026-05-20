@@ -134,6 +134,41 @@ jobs:
         working-directory: demo
         run: npm run build
 
+  test-web:
+    name: Web behavioral tests (vitest + jsdom + mock)
+    runs-on: ubuntu-latest
+    needs: build-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            test/mock-server/package-lock.json
+            test/web/package-lock.json
+
+      - name: Install plugin deps
+        run: npm ci
+
+      - name: Build plugin (so test/web's file:.. links resolve)
+        run: npm run build
+
+      - name: Install mock-server deps
+        working-directory: test/mock-server
+        run: npm install
+
+      - name: Install web-test deps
+        working-directory: test/web
+        run: npm install
+
+      - name: Run web behavioral tests
+        working-directory: test/web
+        run: npm test
+
   audit:
     name: Security audit (plugin only)
     runs-on: ubuntu-latest

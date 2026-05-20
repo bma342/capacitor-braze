@@ -1,0 +1,20 @@
+{
+  "name": "capacitor-braze-mock-server",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Mock Braze SDK endpoint that captures POSTed payloads for assertion in plugin tests. Boots in-process from test/web's setup.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "standalone": "tsx src/standalone.ts"
+  },
+  "dependencies": {
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "~5.6.0"
+  }
+}

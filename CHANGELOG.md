@@ -11,6 +11,37 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+### Added — mock-server-driven behavioral tests for the web bridge (Phase P.1)
+
+The first behavioral validation that doesn't depend on a real Braze
+account. Two new packages under `test/`:
+
+- **`test/mock-server/`** — in-process Fastify HTTP capture endpoint.
+  Catch-all handler logs every request body; permissive CORS so jsdom
+  can XHR it; returns Braze's canonical `{ message: 'success' }`.
+- **`test/web/`** — vitest under jsdom. First test (`events.test.ts`)
+  exercises the full chain: `BrazeWeb` → `@braze/web-sdk` → HTTP →
+  mock receives a payload whose body contains the event name.
+
+This proves the plumbing works end-to-end on the web platform. Real
+behavioral coverage of the remaining 34 methods is incremental work
+on the same harness; the scaffolding is in place. Native bridges
+still need a real Braze trial account for behavioral validation
+(compile-validation already runs in `verify-ios` / `verify-android`).
+
+CI gains a `test-web` job that installs both test packages and runs
+`npm test` in `test/web/`. ~30s per run on ubuntu.
+
+The harness `waitForCaptured` polls for matching requests with a 5s
+default timeout — the Web SDK's `requestImmediateDataFlush` is itself
+async, and there's a small async hop between flush and the HTTP
+landing on the mock.
+
+Plugin's `.eslintrc.cjs` now ignores `test/` (it has its own
+tsconfig + module setup that the plugin's eslint config doesn't
+apply to cleanly). `.prettierignore` adds the test package
+node_modules / lock files.
+
 ## [0.0.12] — 2026-05-20
 
 ### Added — session timeout config + SDK Auth signature rotation (Phase N)

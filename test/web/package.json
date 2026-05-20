@@ -1,0 +1,23 @@
+{
+  "name": "capacitor-braze-web-tests",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Behavioral tests for the plugin's web bridge against @braze/web-sdk, captured by an in-process mock Braze endpoint. Runs in jsdom under vitest.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@braze/web-sdk": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "capacitor-braze": "file:../..",
+    "capacitor-braze-mock-server": "file:../mock-server"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "jsdom": "^25.0.0",
+    "typescript": "~5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
