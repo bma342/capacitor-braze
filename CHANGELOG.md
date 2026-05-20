@@ -75,6 +75,30 @@ emits `1987-7-14`" anchor pre-filled, `FeatureFlag` DTO, `ContentCard`
 DTO) and a cross-platform drift table. Real passes get renamed
 `<platform>-YYYY-MM-DD.md`.
 
+### Added — Listener end-to-end + echo round-trip (74 tests, 37/37 web methods covered)
+
+Closes the last remaining web-bridge coverage gaps from the audit.
+
+`test/web/src/listeners.test.ts` (2 tests):
+  - `addListener('featureFlagsUpdated', cb)` + `addListener('contentCardsUpdated', cb)`:
+    registers consumer callbacks, triggers refresh via mock-server scripted
+    responses, asserts each callback fires with the canonical DTO payload
+    (`{flags: BrazeFeatureFlag[]}` and `{cards: BrazeContentCard[], lastUpdated}`).
+  - `removeAllListeners`: subsequent refresh after removal does not invoke
+    the previously-registered callback.
+
+`test/web/src/privacy-lifecycle.test.ts` extended with:
+  - `echo({value})` round-trip: the Capacitor convention smoke method,
+    init-independent by design.
+
+Tests use `freshPluginWithConfig` to ensure the SDK has the server-config
+that enables refreshes (same pattern as the populated-cache tests).
+Module-singleton constraint navigated via per-test plugin instances.
+
+Total: 71 -> 74 behavioral tests. Audit doc updated: every one of the
+37 surface methods now has at least one direct behavioral test. The
+remaining work outside the audit is platform-native (C11 post-smoke).
+
 ### Added — Wire-level POST capture for impression methods (FF + CC)
 
 Extended the populated-cache fat tests with assertions that

@@ -71,4 +71,13 @@ describe('privacy + init-guard', () => {
       /Braze\.initialize\(\) must be called before/,
     );
   });
+
+  // Capacitor convention method: every plugin exposes echo() so generic
+  // Capacitor tooling can verify the bridge round-trips. Init-independent
+  // by design (echo is a smoke test for the bridge itself).
+  it('echo({ value }) returns { value } without requiring initialize', async () => {
+    const plugin = new BrazeWeb();
+    const result = await plugin.echo({ value: 'capacitor_smoke_test_LMNOP' });
+    expect(result).toEqual({ value: 'capacitor_smoke_test_LMNOP' });
+  });
 });

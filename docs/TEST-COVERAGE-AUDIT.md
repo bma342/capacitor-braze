@@ -1,12 +1,13 @@
 # Test coverage audit (web bridge)
 
-**Audited:** 2026-05-20, post Phase S tests + populated-cache work landing.
-**Test count:** 71 vitest behavioral tests + 17 serializer unit tests across 12 files.
+**Audited:** 2026-05-20, post Phase S tests + populated-cache + listener-end-to-end work.
+**Test count:** 74 vitest behavioral tests + 17 serializer unit tests across 13 files.
 **Methods on the surface:** 37 (per [`src/definitions.ts`](../src/definitions.ts)).
+**Directly covered:** **37 of 37**.
 
 ## What's directly covered
 
-Every consumer-facing method except 4 (`echo`, `addListener`, `removeAllListeners`, plus implicit `initialize` testing) has at least one direct behavioral test.
+Every consumer-facing method has at least one direct behavioral test. `initialize` is implicitly tested by every test that uses the freshly-initialized plugin (the `beforeAll` / `beforeEach` in every file).
 
 | Method | Test file | Coverage |
 |---|---|---|
@@ -33,6 +34,10 @@ Every consumer-facing method except 4 (`echo`, `addListener`, `removeAllListener
 | `requestImmediateDataFlush` | `lifecycle.test.ts` | weak: no-op when nothing queued |
 | `wipeData` | `privacy-lifecycle.test.ts` | resets `initialized` state + works pre-init (C07) |
 | `registerPushToken` | `push.test.ts` | rejects on web with named, helpful error |
+| `echo` | `privacy-lifecycle.test.ts` | Capacitor convention round-trip, init-independent |
+| `addListener('featureFlagsUpdated', cb)` | `listeners.test.ts` | refresh fires callback with serialized DTOs |
+| `addListener('contentCardsUpdated', cb)` | `listeners.test.ts` | same |
+| `removeAllListeners` | `listeners.test.ts` | subsequent refreshes do not invoke removed callbacks |
 | Init guard | `privacy-lifecycle.test.ts` | clear message on `logCustomEvent`, `getFeatureFlag`, `getContentCards` without prior `initialize()` |
 
 Plus 17 serializer unit tests (`serializers.test.ts`) covering `serializeFeatureFlag` / `serializeContentCard` / `detectContentCardType` / `serializeContentCards` in isolation, across all valid + edge-case shapes.
@@ -60,13 +65,15 @@ The populated-cache gap that this section originally tracked is **closed**. Two 
 | `logFeatureFlagImpression` with known flag | ✅ covered in `feature-flags-populated.test.ts`: refresh → impression → flush → wire-level capture asserts the POST body contains the `ffi` event with `fid: <flag id>`. Event code verified against `@braze/web-sdk` `EventTypes.xo` = `"ffi"`. |
 | `logContentCardClick` / `logContentCardImpression` with known card | ✅ wire-level covered in `content-cards-populated.test.ts`: refresh → click + impression → flush → captures assert `ccc` event for click and `cci` event for impression, each with `ids: [<card id>]`. Event codes verified against `@braze/web-sdk` card-manager (`p.os`/`p.ds`). |
 
-### Gaps blocked on SDK event injection
+### Gaps closed by listener-end-to-end tests (2026-05-20)
 
-| Method | What's untested today | Why it matters |
-|---|---|---|
-| `addListener('featureFlagsUpdated', cb)` | Whether the callback fires when the SDK emits its underlying `subscribeToFeatureFlagsUpdates` event, with the right DTO shape | The C05 "eager-on-init, shared, no replay" listener contract is documented and the serializer is tested, but the wire-up from `addListener` registration through to consumer callback isn't exercised end-to-end. |
-| `addListener('contentCardsUpdated', cb)` | Same | Same. |
-| `removeAllListeners` | Whether all registered callbacks actually stop firing | Lifecycle cleanup contract. |
+`listeners.test.ts` now drives the full listener lifecycle by triggering a real refresh through `freshPluginWithConfig` + mock-server scripted responses:
+
+| Method | Status |
+|---|---|
+| `addListener('featureFlagsUpdated', cb)` | ✅ asserts callback fires after `refreshFeatureFlags` with the canonical `{ flags: BrazeFeatureFlag[] }` payload |
+| `addListener('contentCardsUpdated', cb)` | ✅ asserts callback fires after `requestContentCardsRefresh` with the canonical `{ cards: BrazeContentCard[], lastUpdated: number \| null }` payload |
+| `removeAllListeners` | ✅ asserts no further callback invocations after removal, even when a subsequent refresh fires |
 
 ### Gaps blocked on platform-native test harness ([C11](./mdcs/C11-NATIVE-TEST-HARNESSES.md))
 
@@ -79,14 +86,13 @@ The populated-cache gap that this section originally tracked is **closed**. Two 
 
 ## Sufficient for tagging 0.1.0?
 
-Yes. The 71 behavioral + 17 serializer tests cover the consumer-visible contract for **35 of 37 methods** directly. The two uncovered (`echo`, `addListener`/`removeAllListeners`) are listed above as known gaps with clear unblocking paths. Neither is privacy-critical or load-bearing for a quick-start consumer's first hour with the plugin.
+Yes. The 74 behavioral + 17 serializer tests cover the consumer-visible contract for **all 37 surface methods** directly. There are no remaining web-bridge coverage gaps. The 0.1.0 release notes will reference this doc so adopters know what is proven before they consume the plugin.
 
-The 0.1.0 release notes will reference this doc so adopters know exactly what is and isn't proven before they consume the plugin.
+## Next moves (remaining work is platform-native, not web)
 
-## Next moves to close remaining gaps
+The web-side audit is closed. The two remaining outside-of-audit gaps live on the native platforms:
 
-1. **SDK event injection helper** (~half day): a small test helper that drives the underlying `@braze/web-sdk` subscription system from inside vitest, so listener lifecycle (`addListener` / `removeAllListeners`) becomes assertable end-to-end.
-2. ~~**Wire-level event-capture for impression methods**~~ ✅ done 2026-05-20: `logFeatureFlagImpression` POSTs `ffi`, `logContentCardClick` POSTs `ccc`, `logContentCardImpression` POSTs `cci`. All three asserted via the populated-cache tests.
-3. **C11 native harness implementation** (post-trial-smoke, ~1-2 days): described in the MDC.
+1. **C11 native harness implementation** (post-trial-smoke, ~1-2 days). Once the trial smoke produces the iOS + Android wire-format ground truth, C11's URLProtocol intercept (iOS) + MockWebServer/Robolectric (Android) lock that contract in for every PR. Until C11 lands, iOS + Android bridges have compile-only CI coverage via `verify-ios` and `verify-android`.
+2. **Trial smoke** (your hands, ~2-3 hrs). Walk [`SMOKE-TEST-PLAYBOOK.md`](./SMOKE-TEST-PLAYBOOK.md) against your Braze trial; pre-staged capture templates in [`smoke-tests/`](./smoke-tests/).
 
 Estimate: with the trial smoke + C11 + the two web-side enhancements above, the plugin reaches "every method has at least one end-to-end behavioral test on the platform it runs on." That is the bar this doc tracks against.
