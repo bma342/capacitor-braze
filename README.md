@@ -27,7 +27,7 @@ See [`PLAN.md`](./PLAN.md) for the full strategic case, including [why not the C
 | **TypeScript API** | 35 methods + `addListener` / `removeAllListeners` for 2 events |
 | **iOS bridge** (BrazeKit 14.1.0) | Compiles green on every PR via the `verify-ios` CI job; `PrivacyInfo.xcprivacy` shipped via podspec `resource_bundles` |
 | **Android bridge** (`com.braze:android-sdk-ui` 42.2.0) | Compiles green on every PR via the `verify-android` CI job |
-| **Web bridge** (`@braze/web-sdk` ^6.0.0) | Builds green; 68 behavioral + 17 serializer tests in ~2.4s; one method (`registerPushToken`) is platform-divergent and throws on web by design (per [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md)) |
+| **Web bridge** (`@braze/web-sdk` ^6.0.0) | Builds green; 74 behavioral + 17 serializer tests in ~2.4s; **37/37 surface methods directly covered** per [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md); one method (`registerPushToken`) is platform-divergent and throws on web by design (per [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md)) |
 | **Developer testbed** (`example/`) | Every plugin method has a button; clicking invokes + logs |
 | **Reference app** (`demo/`) | React 19 + Tailwind 4 + TanStack Router; restaurant ordering + e-commerce flows; iOS + Android Capacitor projects committed |
 | **MDC design contracts** | C01-C11 codify the patterns; CI gates enforce them |

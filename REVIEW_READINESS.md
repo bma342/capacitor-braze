@@ -336,14 +336,14 @@ Honest walk through every checkbox above, with verifiable state. Sections 1-5 se
 | Checkbox | Status | Evidence |
 |---|---|---|
 | TS types pass `tsc --strict --noEmit` | ✓ | `build-plugin` CI job |
-| `npm test` (Layer 1) passes | ✓ | `test-web` CI job 68 behavioral + 17 serializer tests across 10 files in ~2.4s. Coverage audit in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) |
+| `npm test` (Layer 1) passes | ✓ | `test-web` CI job 74 behavioral + 17 serializer tests across 13 files in ~2.4s. **37/37 surface methods directly covered.** Coverage audit in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) |
 | Android Layer 2 + 3 passes in CI | ⚠️ | `verify-android` compiles (Layer 2); Layer 3 mock-server tests are C11 (post-0.1.0 per design) |
 | iOS Layer 2 + 3 passes in CI | ⚠️ | `verify-ios` compiles (Layer 2); Layer 3 mock-server tests are C11 (post-0.1.0 per design) |
 | Web Layer 3 passes in CI | ✓ | `test-web` runs the vitest + Fastify-mock harness |
 | Layer 4 manual smoke test against real Braze trial | ◌ | Trial credentials available; smoke pass is the gate to 0.1.0 |
 | No `any`, no `!!`, no `TODO`, no `@Suppress` (without docs) | ✓ | Verified: 0 TODOs, 0 `@Suppress`, no force-unwraps in Swift (all `!apiKey.isEmpty` are negations), no `any` types in source |
 | Lint clean: ESLint, ktlint, SwiftLint | ⚠️ | ESLint clean in CI. SwiftLint runs in `verify-ios` on macOS. **ktlint not used** — per [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md) we don't enforce Kotlin formatting at the project level; Kotlin style is review-driven. Update the checklist when (if) ktlint is adopted |
-| Code coverage targets met | ○ | No numeric coverage targets enforced. 68 web behavioral + 17 serializer tests cover 33 of 37 methods directly; remaining gaps tracked in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) with unblock plans. Native bridges are compile-only until C11 implementation lands post-0.1.0. Recommend deferring numeric targets until C11 has a denominator |
+| Code coverage targets met | ○ | No numeric coverage targets enforced. 74 web behavioral + 17 serializer tests cover **all 37 surface methods directly**; full audit in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md). Native bridges are compile-only until C11 implementation lands post-0.1.0. Recommend deferring numeric targets until C11 has a denominator |
 | Bundle size budgets met | ○ | Budgets aren't enforced (no `size-limit` config). Plugin builds to ~9 KB gzipped per the rollup output. iOS / Android sizes aren't measured. Recommend setting concrete budgets only after a 0.1.0 baseline exists |
 
 ### Docs (§5)
