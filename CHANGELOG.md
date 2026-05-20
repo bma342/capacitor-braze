@@ -7,9 +7,120 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 ## [Unreleased]
 
 ### Pinned native SDK versions
-- `com.braze:android-sdk-ui` — **42.2.0**
-- `BrazeKit` / `BrazeUI` — **14.1.0**
-- `@braze/web-sdk` — peer dep `^6.0.0`
+- `com.braze:android-sdk-ui` **42.2.0**
+- `BrazeKit` / `BrazeUI` **14.1.0**
+- `@braze/web-sdk` peer dep `^6.0.0`
+
+### Fixed — `PrivacyInfo.xcprivacy` now actually ships (Phase S, App Store gate)
+
+The placeholder manifest at `ios/Plugin/PrivacyInfo.xcprivacy` existed
+since early Phases but was unreachable to consumers: the podspec's
+`source_files` glob only matched code files. Apple requires the
+manifest at the framework bundle root.
+
+  - Added `resource_bundles` declaration to `CapacitorBraze.podspec`
+    so the manifest lands inside `CapacitorBraze.bundle` alongside
+    the compiled framework.
+  - Expanded the manifest with an XML comment explaining scope: the
+    plugin binary declares its own behavior (none of the required-
+    reason APIs per a grep of `ios/Plugin/`); BrazeKit's own manifest
+    covers UserDefaults (CA92.1) + FileTimestamp (C617.1) + UserID/
+    DeviceID/ProductInteraction data types; consumer app manifest
+    covers ATT.
+  - Verified on a fresh `cap-init` install 2026-05-20:
+    `CapacitorBraze.bundle` resource target is generated in
+    Pods.xcodeproj with the manifest as a build file.
+
+### Added — Quick-start docs surface the iOS Podfile requirement
+
+Walked the README quick-start verbatim on a fresh Capacitor 6 app.
+`npm install` clean, TS snippet compiles green, `cap add android`
+auto-wired, but `cap add ios` failed pod install with "required a
+higher minimum deployment target." Cause: BrazeKit 14.x pins iOS 15
++ requires static linkage; default Capacitor Podfile uses iOS 13 +
+bare `use_frameworks!`. C10 documented this from Day 1 but the quick-
+start told consumers "just run cap sync" with no link. Now inlined
+into the quick-start so the first failure mode a consumer would hit
+is now the first thing they read.
+
+### Added — Prominent "unofficial / not from Braze" disclaimers
+
+User-facing surfaces (README header + bottom, demo README, example
+README) and strategic docs (PLAN, SDK_SURFACE, SECURITY) all carry
+an explicit statement that this is an independent personal project,
+not from or endorsed by Braze, Inc. `package.json` description
+prefixed with the same. README adds an "Unofficial Personal Project"
+shield + prominent disclaimer blockquote under the badges.
+
+### Added — `docs/REPO-HYGIENE.md` one-pager + branch protection
+
+Applied via `gh` CLI on `bma342/capacitor-braze`:
+  - 8 required CI status checks (strict; branch up-to-date)
+  - `allow_force_pushes`: false, `allow_deletions`: false
+  - `required_conversation_resolution`: true
+  - `required_signatures`: true (enabled; admin bypass available)
+  - `enforce_admins`: false (solo-project hotfix path)
+
+Doc covers the remaining personal-account setup: SSH signing (recommended
+over GPG), uploading SSH key as a *signing* key on GitHub (separate from
+auth), npm 2FA (`auth-and-writes`), tag-release flow + NPM_TOKEN secret.
+
+### Added — Smoke-test capture templates pre-staged
+
+`docs/smoke-tests/_template-{web,ios,android}.md` give each trial-smoke
+pass a consistent shape: setup block, pre-flight checklist, 10-12
+numbered steps from playbook §3/4/5, plus four "highest-leverage"
+captures (`logCustomEvent` body, `setDateOfBirth` body with the "web
+emits `1987-7-14`" anchor pre-filled, `FeatureFlag` DTO, `ContentCard`
+DTO) and a cross-platform drift table. Real passes get renamed
+`<platform>-YYYY-MM-DD.md`.
+
+### Added — Web behavioral tests for the previously-uncovered methods (+15 tests)
+
+Coverage audit ([`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md))
+found 9 plugin methods with zero direct behavioral tests, including the
+privacy-critical `wipeData` and 8 of the Feature Flags / Content Cards
+surface. This closes the easy half of that gap.
+
+  - `test/web/src/feature-flags.test.ts` (6 tests): `refreshFeatureFlags`
+    no-throw; `getFeatureFlag` empty-cache + empty-id reject;
+    `getAllFeatureFlags` empty-cache; `logFeatureFlagImpression` no-throw
+    when flag absent + empty-id reject.
+  - `test/web/src/content-cards.test.ts` (4 tests): `requestContentCardsRefresh`
+    no-throw; `getContentCards` empty-cache; `logContentCardClick` and
+    `logContentCardImpression` reject unknown cardId with a clear message
+    that names the missing id.
+  - `test/web/src/privacy-lifecycle.test.ts` (5 tests): init guard message
+    on `logCustomEvent`, `getFeatureFlag`, `getContentCards` without
+    `initialize()`; `wipeData()` works pre-init per C07; `wipeData()`
+    resets `initialized` state so post-wipe calls hit the init guard.
+
+Total: 53 → 68 vitest behavioral tests, 2.4s. Plus 17 serializer unit
+tests = 85 total. Real findings during this work:
+  - Content card rejection message wording got pinned in the assertion
+    so any future regression is caught (was 'no cached content card
+    with id ...').
+  - `logFeatureFlagImpression` silently no-ops at the wire layer when the
+    flag isn't in the cache. Test now asserts the no-throw contract and
+    the doc explains why the wire-level assertion is gated on
+    mock-server enhancement.
+
+The doc captures remaining gaps and how to close them (mock-server
+enhancement for populated-cache cases; SDK event injection for listener
+lifecycle; C11 for native platforms). The 4 still-uncovered methods
+(`echo`, `addListener`, `removeAllListeners`, populated-cache variants)
+are listed with their unblock plan.
+
+### Added — Root `npm test` + `npm test:watch` passthrough
+
+Was previously `cd test/web && npm test`. The README's "Local
+development & testing" section documented `npm test` from root; the
+root package.json didn't actually have the script. Added passthroughs
+so the documented commands match reality. Also added a "Local
+development & testing" section to README covering: vitest, lint,
+example/demo dev servers, native compile gates (`xcodebuild` /
+`./gradlew assembleDebug`), and what is honestly NOT yet locally
+testable (native bridge behavior, real-Braze backend acceptance).
 
 ### Added — C11 native test harness design + trial smoke-test playbook (Phase R)
 
