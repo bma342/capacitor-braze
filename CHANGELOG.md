@@ -11,6 +11,37 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+### Added — serializer unit tests (Phase P.3)
+
+`test/web/src/serializers.test.ts` (17 tests) covers the pure
+serialization logic inside BrazeWeb — the functions that drive the
+`addListener('featureFlagsUpdated')` and `addListener('contentCardsUpdated')`
+payloads:
+
+- **`serializeFeatureFlag`**: roundtrips `id` + `enabled` + every
+  valid property type (`string` / `number` / `boolean` / `image` /
+  `datetime` / `jsonobject`). Drops properties with unknown type
+  tags (future SDK additions won't break the consumer's DTO).
+  Tolerates missing / empty properties.
+- **`serializeContentCards`**: handles undefined input + Date →
+  epoch ms for lastUpdated.
+- **`serializeContentCard`**: validated for each of the four DTO
+  variants (`classic`, `captionedImage`, `imageOnly`, `control`).
+  Confirms `isControl` flag short-circuits the type-detection
+  heuristic.
+- **`detectContentCardType`**: pins the field-presence heuristic
+  (captionedImage = title+description+imageUrl; imageOnly =
+  imageUrl without title; classic = title+description without
+  imageUrl; null for nothing matched).
+
+These tests don't drive a full SDK round-trip — the listener
+callback only fires on real flag/card refreshes, which would
+require teaching the mock Braze's exact flag-sync wire format.
+Calling the serializers directly with synthetic SDK-shaped inputs
+pins the contract more sharply with less ceremony.
+
+Total test count is now **53** across 7 files, runtime ~2.4s.
+
 ### Added — expanded web behavioral test coverage (Phase P.2)
 
 Six test files now cover **36 behavioral tests** in under 3 seconds:
