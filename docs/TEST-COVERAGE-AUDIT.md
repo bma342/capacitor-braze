@@ -1,9 +1,9 @@
 # Test coverage audit (web bridge)
 
-**Audited:** 2026-05-20, post Phase S tests + populated-cache + listener-end-to-end work.
-**Test count:** 74 vitest behavioral tests + 17 serializer unit tests across 13 files.
+**Audited:** 2026-05-20, post defensive-validation pass.
+**Test count:** **92 tests** = 75 behavioral + 17 serializer across 14 files. ~2.4s total.
 **Methods on the surface:** 37 (per [`src/definitions.ts`](../src/definitions.ts)).
-**Directly covered:** **37 of 37**.
+**Directly covered:** **37 of 37**, plus dedicated rejection coverage for every input-validation branch in `src/web.ts` ([`validation.test.ts`](../test/web/src/validation.test.ts)).
 
 ## What's directly covered
 

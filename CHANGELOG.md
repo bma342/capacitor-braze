@@ -75,6 +75,27 @@ emits `1987-7-14`" anchor pre-filled, `FeatureFlag` DTO, `ContentCard`
 DTO) and a cross-platform drift table. Real passes get renamed
 `<platform>-YYYY-MM-DD.md`.
 
+### Added — Defensive validation tests (+18 tests, 92 total)
+
+New `test/web/src/validation.test.ts` exercises every input-validation
+branch in `src/web.ts`:
+
+  - `initialize`: empty `apiKey`, empty `endpoint`, `http://` endpoint
+    without `allowInsecureEndpoint` (default-deny per C06), negative
+    `sessionTimeoutInSeconds`.
+  - `setDateOfBirth`: out-of-range `year` (1899, 2101, -1), `month`
+    (0, 13, -1), `day` (0, 32, -1). C03's month-1-indexed convention
+    is now pinned in tests.
+  - Empty-arg rejection on `logCustomEvent` (name), `setCustomUserAttribute`
+    (key), `changeUser` (userId), `logContentCardClick` (cardId),
+    `logContentCardImpression` (cardId).
+
+Goal: defense in depth. Every method has its primary behavioral test
+elsewhere; this file specifically pins the validation contract so a
+future refactor that drops a guard fails CI immediately. Errors throw
+synchronously before any HTTP dispatch, per C04 ("validate at the
+boundary, fail loud, never queue garbage").
+
 ### Added — Listener end-to-end + echo round-trip (74 tests, 37/37 web methods covered)
 
 Closes the last remaining web-bridge coverage gaps from the audit.
