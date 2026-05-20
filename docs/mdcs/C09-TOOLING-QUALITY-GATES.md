@@ -95,13 +95,21 @@ The rules ARE the design contract. If a contributor wants to deviate, the deviat
 
 ## CI integration
 
-The `.github/workflows/test.yml` workflow runs:
+The `.github/workflows/test.yml` workflow runs the following jobs on every push to `main` and every PR targeting `main`:
 
-1. **`lint` job** (Ubuntu): `npm run eslint` + `npm run prettier -- --check`. SwiftLint is skipped because Ubuntu runners don't have it; SwiftLint runs in the verify:ios job (forthcoming) on macOS runners.
-2. **`build-plugin` job** (Ubuntu): `npm run build` then asserts `dist/` artifacts exist AND the README docgen markers are populated.
-3. **`build-example` job** (Ubuntu): builds the example app against the freshly built plugin.
+| Job | Runner | What it does | Cost (approx) |
+|---|---|---|---|
+| `lint` | ubuntu-latest | `npm run eslint` + `npm run prettier -- --check` | ~30s |
+| `build-plugin` | ubuntu-latest | `npm run build` + asserts dist artifacts and README docgen markers | ~20s |
+| `build-example` | ubuntu-latest | Builds the `example/` testbed app against the freshly built plugin | ~30s |
+| `build-demo` | ubuntu-latest | Builds the `demo/` reference app's web assets against the freshly built plugin | ~45s |
+| `audit` | ubuntu-latest | `npm audit --audit-level=high --omit=dev` against runtime deps | ~15s |
+| `verify-ios` | macos-latest | `xcodebuild` against `demo/ios/App` — compiles the Swift bridge against real BrazeKit 14.1.0 | ~8-12 min |
+| `verify-android` | ubuntu-latest | `./gradlew :app:assembleDebug` against `demo/android` — compiles the Kotlin bridge against real `com.braze:android-sdk-ui` 42.2.0 | ~5-8 min |
 
-A `verify:ios` macOS-runner job will land when iOS smoke testing is wired up; that's where SwiftLint runs in CI.
+**Why the verify-ios + verify-android jobs are non-negotiable now.** Phase N's commit had to be amended twice in Phase O once the iOS bridge was finally compiled against real BrazeKit — methods I'd inferred from documentation didn't exist; cases I'd assumed existed had different names. Same exercise for Android in the follow-up phase. These two slow jobs eliminate the "discover bugs by manual compile attempts every few weeks" pattern by running them on every PR. The cost is ~13-20 extra CI minutes per push; the savings are unbounded.
+
+SwiftLint runs inside `verify-ios` (the macOS runner ships with it; ubuntu does not). The `lint` job's SwiftLint step is skipped silently on Ubuntu.
 
 ## Rules for extending
 
