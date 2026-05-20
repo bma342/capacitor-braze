@@ -1156,6 +1156,38 @@ Pinned exactly per [release pinning policy](./SDK_SURFACE.md#4-native-sdk-pinnin
 - `BrazeKit` / `BrazeUI` **14.1.0**
 - `@braze/web-sdk` peer dep `^6.0.0`
 
+## Platform setup
+
+Two consumer-side requirements are non-optional because of how the underlying Braze SDKs are packaged. The full reference (rationale, error symptoms, future-bump policy) lives in [MDC C10 — Consumer integration requirements](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md).
+
+### iOS — `ios/App/Podfile`
+
+After `npx cap add ios`, edit the generated Podfile and set:
+
+```ruby
+platform :ios, '15.0'
+use_frameworks! :linkage => :static
+```
+
+- `platform :ios, '15.0'` — BrazeKit 14.x requires iOS 15+; Capacitor's stock `13.0` will fail `pod install`.
+- `use_frameworks! :linkage => :static` — BrazeKit ships as a static XCFramework; the stock dynamic-linkage `use_frameworks!` aborts the install with a `[!]` static-binary warning that's actually fatal.
+
+See [`demo/ios/App/Podfile`](./demo/ios/App/Podfile) for the canonical working example.
+
+### Android
+
+No extra config required. Capacitor's stock `cap add android` template satisfies Braze's `minSdkVersion 21` floor automatically.
+
+If you're using push, you'll also need a Firebase project + `google-services.json` — see [C10's Android push section](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md#android-push-setup-only-if-consumers-use-push).
+
+### Web
+
+`@braze/web-sdk` is a peer dependency. Install it alongside the plugin:
+
+```bash
+npm install capacitor-braze @braze/web-sdk
+```
+
 ## Contributing
 
 Issues and PRs welcome. Before opening either:

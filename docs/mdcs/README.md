@@ -13,6 +13,7 @@ Per-subsystem design contracts that codify the load-bearing patterns this plugin
 | [C07](./C07-INIT-INDEPENDENT-METHODS.md) | When a plugin method may legitimately skip the init guard | Adding a method that needs to work during consent revocation, GDPR erasure, or other pre-init lifecycle paths |
 | [C08](./C08-NATIVE-SDK-PINNING.md) | Native SDK pin policy (exact on iOS/Android, caret on Web peer dep) and the bump protocol | Updating the version of BrazeKit, `com.braze:android-sdk-ui`, or `@braze/web-sdk` |
 | [C09](./C09-TOOLING-QUALITY-GATES.md) | ESLint + Prettier + SwiftLint + `@capacitor/docgen` — Capacitor's official toolchain, locked-in | Touching `package.json` scripts, lint configs, or the README API section |
+| [C10](./C10-CONSUMER-INTEGRATION-REQUIREMENTS.md) | Consumer-side config the plugin's SDK pins force (Podfile linkage / deployment target, Android Gradle, Web peer dep) | Bumping a native SDK pin (per C08); adding a method that needs new permissions or entitlements |
 
 ## How to use this set
 
@@ -29,6 +30,7 @@ When you add a method:
 When you bump a native SDK:
 
 - Open [C08](./C08-NATIVE-SDK-PINNING.md) and follow the bump protocol step by step.
+- Audit [C10](./C10-CONSUMER-INTEGRATION-REQUIREMENTS.md) — any new consumer-side requirement from the upstream changelog gets added here in the same PR.
 
 If your method introduces a pattern none of these MDCs cover, add a new MDC in the **same commit as the code**. Don't ship a new pattern and a new MDC separately — the gap between is when contributors invent ad-hoc variants.
 
