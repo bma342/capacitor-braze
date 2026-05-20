@@ -38,9 +38,7 @@ describe('registerPushToken on web (platform divergence)', () => {
   });
 
   it('throws with a message naming the method', async () => {
-    await expect(plugin.registerPushToken({ token: 'abcdef' })).rejects.toThrow(
-      /Braze\.registerPushToken/,
-    );
+    await expect(plugin.registerPushToken({ token: 'abcdef' })).rejects.toThrow(/Braze\.registerPushToken/);
   });
 
   it('throws with a message explaining why (Web Push / VAPID)', async () => {

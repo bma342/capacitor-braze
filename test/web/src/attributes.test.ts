@@ -67,11 +67,9 @@ describe('user attributes (web bridge → @braze/web-sdk → mock)', () => {
     const phoneNumber = '15555550199';
     await plugin.setPhoneNumber({ phoneNumber });
     await plugin.requestImmediateDataFlush();
-    const req = await waitForCaptured(
-      mock,
-      (r) => JSON.stringify(r.body ?? '').includes(phoneNumber),
-      { label: `body containing phone "${phoneNumber}"` },
-    );
+    const req = await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(phoneNumber), {
+      label: `body containing phone "${phoneNumber}"`,
+    });
     expect(req.method).toBe('POST');
   });
 
@@ -156,8 +154,6 @@ describe('user attributes (web bridge → @braze/web-sdk → mock)', () => {
 
   it('setGender rejects an unknown value', async () => {
     // @ts-expect-error — testing runtime rejection for invalid input
-    await expect(plugin.setGender({ gender: 'nonexistent' })).rejects.toThrow(
-      /unknown gender/,
-    );
+    await expect(plugin.setGender({ gender: 'nonexistent' })).rejects.toThrow(/unknown gender/);
   });
 });

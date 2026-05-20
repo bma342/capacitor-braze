@@ -46,11 +46,9 @@ describe('events (web bridge → @braze/web-sdk → mock)', () => {
     });
     await plugin.requestImmediateDataFlush();
 
-    const req = await waitForCaptured(
-      mock,
-      (r) => JSON.stringify(r.body ?? '').includes('pluginTestCustomEvent'),
-      { label: 'event body containing pluginTestCustomEvent' },
-    );
+    const req = await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes('pluginTestCustomEvent'), {
+      label: 'event body containing pluginTestCustomEvent',
+    });
 
     expect(req.method).toBe('POST');
     expect(req.path).toMatch(/^\//);
@@ -66,11 +64,7 @@ describe('events (web bridge → @braze/web-sdk → mock)', () => {
       mock,
       (r) => {
         const body = JSON.stringify(r.body ?? '');
-        return (
-          body.includes('evt_with_props_ABC') &&
-          body.includes('propKey789') &&
-          body.includes('propValueXYZ')
-        );
+        return body.includes('evt_with_props_ABC') && body.includes('propKey789') && body.includes('propValueXYZ');
       },
       { label: 'event with both prop key and value' },
     );
@@ -91,20 +85,20 @@ describe('events (web bridge → @braze/web-sdk → mock)', () => {
   });
 
   it('logPurchase rejects an empty productId', async () => {
-    await expect(
-      plugin.logPurchase({ productId: '', currency: 'USD', price: 9.99 }),
-    ).rejects.toThrow(/productId.*required/i);
+    await expect(plugin.logPurchase({ productId: '', currency: 'USD', price: 9.99 })).rejects.toThrow(
+      /productId.*required/i,
+    );
   });
 
   it('logPurchase rejects negative price', async () => {
-    await expect(
-      plugin.logPurchase({ productId: 'sku', currency: 'USD', price: -1 }),
-    ).rejects.toThrow(/non-negative finite/i);
+    await expect(plugin.logPurchase({ productId: 'sku', currency: 'USD', price: -1 })).rejects.toThrow(
+      /non-negative finite/i,
+    );
   });
 
   it('logPurchase rejects quantity > 100', async () => {
-    await expect(
-      plugin.logPurchase({ productId: 'sku', currency: 'USD', price: 1, quantity: 200 }),
-    ).rejects.toThrow(/quantity.*between 1 and 100/i);
+    await expect(plugin.logPurchase({ productId: 'sku', currency: 'USD', price: 1, quantity: 200 })).rejects.toThrow(
+      /quantity.*between 1 and 100/i,
+    );
   });
 });

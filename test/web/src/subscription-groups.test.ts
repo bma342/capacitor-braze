@@ -52,14 +52,10 @@ describe('subscription groups (web bridge → @braze/web-sdk → mock)', () => {
   });
 
   it('addToSubscriptionGroup rejects empty groupId', async () => {
-    await expect(plugin.addToSubscriptionGroup({ groupId: '' })).rejects.toThrow(
-      /groupId.*required/i,
-    );
+    await expect(plugin.addToSubscriptionGroup({ groupId: '' })).rejects.toThrow(/groupId.*required/i);
   });
 
   it('removeFromSubscriptionGroup rejects empty groupId', async () => {
-    await expect(plugin.removeFromSubscriptionGroup({ groupId: '' })).rejects.toThrow(
-      /groupId.*required/i,
-    );
+    await expect(plugin.removeFromSubscriptionGroup({ groupId: '' })).rejects.toThrow(/groupId.*required/i);
   });
 });

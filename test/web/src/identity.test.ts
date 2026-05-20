@@ -82,15 +82,11 @@ describe('identity (web bridge → @braze/web-sdk → mock)', () => {
     // was true at init (false in these tests by default). The contract under
     // test is that the bridge accepts the call and forwards to the SDK; the
     // wire signature header is an SDK-internal concern.
-    await expect(
-      plugin.setSdkAuthenticationSignature({ signature: 'fake.jwt.signature' }),
-    ).resolves.not.toThrow();
+    await expect(plugin.setSdkAuthenticationSignature({ signature: 'fake.jwt.signature' })).resolves.not.toThrow();
   });
 
   it('setSdkAuthenticationSignature rejects empty signature', async () => {
-    await expect(
-      plugin.setSdkAuthenticationSignature({ signature: '' }),
-    ).rejects.toThrow(/signature.*required/i);
+    await expect(plugin.setSdkAuthenticationSignature({ signature: '' })).rejects.toThrow(/signature.*required/i);
   });
 
   it('getDeviceId returns a non-empty string', async () => {
