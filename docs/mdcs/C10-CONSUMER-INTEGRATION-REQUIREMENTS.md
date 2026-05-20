@@ -108,12 +108,65 @@ The plugin does not require these for non-push consumers (a consumer who only us
 
 ## Android — required config
 
-As of the pinned versions (`com.braze:android-sdk-ui 42.2.0`, Capacitor 6.x), **no consumer config beyond the Capacitor defaults is required.** `npx cap add android && npx cap sync` produces a working build.
+The consumer's `android/variables.gradle` and `android/build.gradle` need three adjustments beyond Capacitor 6's stock template. All three are forced by `com.braze:android-sdk-ui 42.2.0`'s transitive dependencies and were discovered during the Phase O Gradle-build verification.
 
-For reference, the plugin requires:
+### `android/variables.gradle` — bump `compileSdkVersion` to 35
+
+Capacitor 6's stock template ships `compileSdkVersion = 34`. Braze SDK 42.x pulls in `androidx.recyclerview 1.4.0` and `androidx.swiperefreshlayout 1.2.0`, both of which require `compileSdk >= 35` and fail the build with:
+
+```
+Dependency 'androidx.recyclerview:recyclerview:1.4.0' requires libraries and
+applications that depend on it to compile against version 35 or later of
+the Android APIs.
+```
+
+Fix:
+
+```groovy
+ext {
+    minSdkVersion = 22
+    compileSdkVersion = 35   // bumped from Capacitor stock 34
+    targetSdkVersion = 34
+    // ...
+}
+```
+
+`targetSdkVersion` can stay at 34 (it controls runtime opt-in, not compile-time API access).
+
+### `android/build.gradle` — bump AGP to 8.6.0
+
+Capacitor 6's stock template ships AGP 8.2.1. The transitive `androidx.swiperefreshlayout 1.2.0` requires AGP 8.6.0+ and fails with:
+
+```
+Dependency 'androidx.swiperefreshlayout:swiperefreshlayout:1.2.0' requires
+Android Gradle plugin 8.6.0 or higher.
+```
+
+Fix:
+
+```groovy
+buildscript {
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.6.0'  // bumped from 8.2.1
+        // ...
+    }
+}
+```
+
+### `android/gradle/wrapper/gradle-wrapper.properties` — bump Gradle to 8.7
+
+AGP 8.6.0 requires Gradle 8.7+. The stock wrapper ships Gradle 8.2.1.
+
+Fix:
+
+```
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
+```
+
+### Min SDK and runtime requirements
 
 - **`minSdkVersion`**: 21 (Braze Android SDK 42.x floor). Capacitor's stock template sets `minSdkVersion 22`, which satisfies this — no consumer action needed.
-- **`compileSdkVersion`**: 33+ (Capacitor 6 default is 35). Satisfied by Capacitor's defaults.
+- **`targetSdkVersion`**: ≥ 34 (per current Google Play submission requirements as of 2026).
 
 ### Android push setup (only if consumers use push)
 

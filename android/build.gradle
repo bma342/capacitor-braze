@@ -11,8 +11,15 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.2.2'
-        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22'
+        // AGP + Kotlin bumped from Capacitor's stock 8.2.2 / 1.9.22 to
+        // match what Braze Android SDK 42.x (com.braze:android-sdk-ui)
+        // demands. Braze 42 ships with Kotlin 2.2.0 metadata; Kotlin
+        // 1.9.x can only read up to 2.0.0 and aborts the compile with
+        // "incompatible version of Kotlin" errors. AGP 8.6.0 is the
+        // lowest version compatible with Braze's transitive
+        // androidx.swiperefreshlayout:1.2.0 dep. See plugin MDC C10.
+        classpath 'com.android.tools.build:gradle:8.6.0'
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0'
     }
 }
 

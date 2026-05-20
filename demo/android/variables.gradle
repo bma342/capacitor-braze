@@ -1,6 +1,9 @@
 ext {
     minSdkVersion = 22
-    compileSdkVersion = 34
+    // compileSdk bumped from Capacitor's stock 34 because Braze's
+    // transitive androidx deps (recyclerview 1.4.0, swiperefreshlayout
+    // 1.2.0) require Android API 35 to compile. See plugin MDC C10.
+    compileSdkVersion = 35
     targetSdkVersion = 34
     androidxActivityVersion = '1.8.0'
     androidxAppCompatVersion = '1.6.1'

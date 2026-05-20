@@ -1,22 +1,16 @@
 package com.bma342.braze
 
-import android.util.Log
 import com.braze.Braze
 import com.braze.configuration.BrazeConfig
-import com.braze.enums.CardCategory
 import com.braze.enums.Gender
 import com.braze.enums.Month
 import com.braze.events.ContentCardsUpdatedEvent
 import com.braze.events.FeatureFlagsUpdatedEvent
 import com.braze.events.IEventSubscriber
 import com.braze.models.FeatureFlag
-import com.braze.models.cards.BannerImageCard
-import com.braze.models.cards.CaptionedImageCard
 import com.braze.models.cards.Card
-import com.braze.models.cards.ControlCard
-import com.braze.models.cards.ShortNewsCard
-import com.braze.models.cards.TextAnnouncementCard
 import com.braze.models.outgoing.BrazeProperties
+import com.braze.support.BrazeLogger
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -148,7 +142,11 @@ class BrazePlugin : Plugin() {
             .setIsSdkAuthenticationEnabled(enableSdkAuthentication)
 
         if (enableLogging) {
-            builder.setLoggerLevel(Log.VERBOSE)
+            // Braze Android 42.x moved log level off the BrazeConfig.Builder
+            // and onto the static BrazeLogger. Setting it globally affects
+            // all Braze SDK logging in the process — fine for the plugin
+            // since logging is consumer-opt-in via `enableLogging: true`.
+            BrazeLogger.enableVerboseLogging()
         }
 
         val sessionTimeoutInSeconds = call.getInt("sessionTimeoutInSeconds")
@@ -620,45 +618,53 @@ class BrazePlugin : Plugin() {
      * conversion.
      */
     private fun serializeFeatureFlag(flag: FeatureFlag): JSObject {
-        val out = JSObject()
-        out.put("id", flag.id)
-        out.put("enabled", flag.enabled)
-        out.put("properties", JSObject(flag.properties.toString()))
-        return out
+        // Use the SDK's own JSON encoder (forJsonPut returns Braze's
+        // canonical wire format). Mirrors the iOS bridge's
+        // flag.json() approach so the wire-format reconciliation
+        // story is the same on both native platforms.
+        return JSObject(flag.forJsonPut().toString())
     }
 
     // -------------------------------------------------------------------------
     // Content cards
     //
-    // The Android SDK exposes content cards via the singleton:
+    // Braze Android 42.x exposes content cards via the singleton:
     //   - Braze.getInstance(context).getCachedContentCards()
-    //       returns ContentCardsUpdatedEvent? with `allCards: List<Card>`
-    //       and `lastUpdatedInSecondsFromEpoch: Long`.
-    //   - Braze.getInstance(context).requestContentCardsRefresh(...)
-    //       triggers a refresh. fromCache=false forces server fetch.
+    //       returns List<Card> directly (no Event wrapper on the cached
+    //       read).
+    //   - Braze.getInstance(context).getContentCardsLastUpdatedInSecondsFromEpoch()
+    //       last server-sync time; -1 if never fetched.
+    //   - Braze.getInstance(context).requestContentCardsRefresh()
+    //       no arguments. requestContentCardsRefreshFromCache() is a
+    //       separate method for the cache-only path.
     //   - card.logClick() / card.logImpression()
-    //       called on the Card instance directly.
+    //       called directly on the Card instance.
     //
-    // To match the plugin's `{ cardId: string }` contract, we look up the
-    // Card by id in the cached collection before invoking logClick /
-    // logImpression — the Android SDK doesn't have a static "log by id"
-    // form.
+    // The subscribeToContentCardsUpdates path gives us a
+    // ContentCardsUpdatedEvent with allCards + timestampSeconds.
+    //
+    // To match the plugin's `{ cardId: string }` contract, we look up
+    // the Card by id in the cached collection before invoking logClick
+    // / logImpression — the Android SDK doesn't have a static
+    // "log by id" form.
     // -------------------------------------------------------------------------
 
     @PluginMethod
     fun getContentCards(call: PluginCall) {
         if (!requireInitialized(call)) return
-        val event = Braze.getInstance(context).cachedContentCards
-        call.resolve(serializeContentCardsEvent(event))
+        val braze = Braze.getInstance(context)
+        // Kotlin doesn't auto-translate these Java getters to property
+        // accessors (likely due to generic return type on the cache
+        // method), so we call them explicitly.
+        val cards: List<Card> = braze.getCachedContentCards() ?: emptyList()
+        val timestampSeconds = braze.getContentCardsLastUpdatedInSecondsFromEpoch()
+        call.resolve(serializeContentCardsList(cards, timestampSeconds))
     }
 
     @PluginMethod
     fun requestContentCardsRefresh(call: PluginCall) {
         if (!requireInitialized(call)) return
-        // `fromCache = false` forces a server fetch; the cached path is
-        // covered by `getContentCards`. Consumers wanting a quick local
-        // re-read use `getContentCards`, not this.
-        Braze.getInstance(context).requestContentCardsRefresh(false)
+        Braze.getInstance(context).requestContentCardsRefresh()
         call.resolve()
     }
 
@@ -834,8 +840,8 @@ class BrazePlugin : Plugin() {
             call.reject("Braze.$method: `cardId` is required (string).")
             return null
         }
-        val cached = Braze.getInstance(context).cachedContentCards
-        val card = cached?.allCards?.firstOrNull { it.id == cardId }
+        val cached: List<Card> = Braze.getInstance(context).getCachedContentCards() ?: emptyList()
+        val card = cached.firstOrNull { it.id == cardId }
         if (card == null) {
             call.reject(
                 "Braze.$method: no cached content card with id \"$cardId\". " +
@@ -847,122 +853,54 @@ class BrazePlugin : Plugin() {
     }
 
     /**
-     * Serializes the SDK's `ContentCardsUpdatedEvent` to the plugin's
-     * wire-format `BrazeGetContentCardsResult`. The `lastUpdated`
-     * timestamp comes from `event.lastUpdatedInSecondsFromEpoch` and is
-     * converted to Unix epoch milliseconds to match the canonical TS
-     * contract.
+     * Serializes a list of cards + last-update timestamp to the plugin's
+     * wire-format `BrazeGetContentCardsResult`. Used by both the
+     * synchronous `getContentCards` reader and the
+     * `subscribeToContentCardsUpdates` listener payload.
      *
-     * A null `event` (no cache yet) yields `{ cards: [], lastUpdated: null }`,
-     * matching the Web bridge's handling of `undefined` cached cards.
+     * `timestampSeconds` of -1 (Braze's "never fetched" sentinel) is
+     * surfaced as JSON `null` per the canonical contract.
      */
-    private fun serializeContentCardsEvent(event: ContentCardsUpdatedEvent?): JSObject {
+    private fun serializeContentCardsList(cards: List<Card>, timestampSeconds: Long): JSObject {
         val result = JSObject()
         val cardsArray = JSArray()
-        if (event == null) {
-            result.put("cards", cardsArray)
-            result.put("lastUpdated", JSObject.NULL)
-            return result
-        }
-        for (card in event.allCards) {
+        for (card in cards) {
             serializeContentCard(card)?.let { cardsArray.put(it) }
         }
         result.put("cards", cardsArray)
-        result.put("lastUpdated", event.lastUpdatedInSecondsFromEpoch * 1000L)
+        if (timestampSeconds > 0) {
+            result.put("lastUpdated", timestampSeconds * 1000L)
+        } else {
+            result.put("lastUpdated", JSObject.NULL)
+        }
         return result
     }
 
     /**
-     * Maps a single `Card` to the plugin's tagged-union DTO. The
-     * Android SDK uses dedicated subclasses (`ShortNewsCard`,
-     * `CaptionedImageCard`, `BannerImageCard`, `TextAnnouncementCard`,
-     * `ControlCard`); we map them to the plugin's three visible types
-     * plus `control`:
-     *
-     *   ShortNewsCard         → 'classic'    (title + desc + optional image)
-     *   CaptionedImageCard    → 'captionedImage'
-     *   BannerImageCard       → 'imageOnly'
-     *   TextAnnouncementCard  → 'classic'    (title + desc, no image)
-     *   ControlCard           → 'control'
-     *
-     * `TextAnnouncementCard` doesn't have an image; we fold it into
-     * 'classic' (which also allows no image) rather than introducing a
-     * fifth public type for parity with the SDK's distinction. Returns
-     * null for unrecognized subclasses (future SDK additions).
+     * Adapts the ContentCardsUpdatedEvent shape used by the
+     * subscribeToContentCardsUpdates callback into the same list +
+     * timestamp pair used everywhere else. `event.timestampSeconds`
+     * is the SDK's last-server-sync time.
      */
-    private fun serializeContentCard(card: Card): JSObject? {
-        val base = JSObject()
-        base.put("id", card.id)
-        base.put("viewed", card.viewed)
-        base.put("pinned", card.isPinned)
-        val extras = JSObject()
-        for ((k, v) in card.extras) {
-            extras.put(k, v)
-        }
-        base.put("extras", extras)
-        // Card.updated is a Long in seconds-since-epoch (SDK convention).
-        // Multiply by 1000 to get the canonical millisecond shape.
-        base.put("updated", if (card.updated > 0) card.updated * 1000L else JSObject.NULL)
-        base.put("expiresAt", if (card.expiresAt > 0) card.expiresAt * 1000L else JSObject.NULL)
-
-        when (card) {
-            is BannerImageCard -> {
-                base.put("type", "imageOnly")
-                base.put("imageUrl", card.imageUrl ?: "")
-                base.put("url", card.url)
-                base.put("aspectRatio", card.aspectRatio)
-                attachNonControlFields(base, card)
-            }
-            is CaptionedImageCard -> {
-                base.put("type", "captionedImage")
-                base.put("title", card.title ?: "")
-                base.put("description", card.description ?: "")
-                base.put("imageUrl", card.imageUrl ?: "")
-                base.put("url", card.url)
-                base.put("linkText", card.domain)
-                base.put("aspectRatio", card.aspectRatio)
-                attachNonControlFields(base, card)
-            }
-            is ShortNewsCard -> {
-                base.put("type", "classic")
-                base.put("title", card.title ?: "")
-                base.put("description", card.description ?: "")
-                base.put("imageUrl", card.imageUrl)
-                base.put("url", card.url)
-                base.put("linkText", card.domain)
-                attachNonControlFields(base, card)
-            }
-            is TextAnnouncementCard -> {
-                base.put("type", "classic")
-                base.put("title", card.title ?: "")
-                base.put("description", card.description ?: "")
-                base.put("imageUrl", JSObject.NULL)
-                base.put("url", card.url)
-                base.put("linkText", card.domain)
-                attachNonControlFields(base, card)
-            }
-            is ControlCard -> {
-                base.put("type", "control")
-            }
-            else -> return null
-        }
-        return base
+    private fun serializeContentCardsEvent(event: ContentCardsUpdatedEvent): JSObject {
+        return serializeContentCardsList(event.allCards, event.timestampSeconds)
     }
 
     /**
-     * Adds the shared non-control card fields (clicked, dismissed,
-     * dismissible, language, altImageText) onto a base JSObject. Kept
-     * out of [serializeContentCard]'s switch so each branch reads as
-     * just the type-specific shape.
+     * Serializes a single Card via the SDK's own Codable encoder
+     * (`forJsonPut()` returns the JSONObject that Braze itself uses for
+     * persistence). Mirrors the iOS bridge's `card.json()` approach so
+     * native wire-format is symmetric across iOS / Android.
+     *
+     * Returns null only if the JSON roundtrip fails (effectively never
+     * for valid SDK-produced cards). The caller filters out nulls.
      */
-    private fun attachNonControlFields(obj: JSObject, card: Card) {
-        obj.put("clicked", card.isClicked)
-        obj.put("dismissed", card.isDismissed)
-        obj.put("dismissible", card.isDismissibleByUser)
-        // `language` and `altImageText` are not consistently exposed on
-        // all Android Card subclasses; the SDK stores them in `extras`
-        // when present. Plugin consumers should read from `extras` if
-        // they need the platform-best fallback.
+    private fun serializeContentCard(card: Card): JSObject? {
+        return try {
+            JSObject(card.forJsonPut().toString())
+        } catch (t: Throwable) {
+            null
+        }
     }
 
     /**
