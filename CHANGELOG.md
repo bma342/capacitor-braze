@@ -11,6 +11,50 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
+### Added — C11 native test harness design + trial smoke-test playbook (Phase R)
+
+The honest framing: implementing native behavioral test harnesses
+takes significant per-platform setup (Robolectric + Gradle ceremony
+on Android, Xcode test target creation on iOS) AND requires real
+wire-format ground truth to write the assertions against. Without
+that ground truth, the harness would test "what we think Braze
+emits" — recreating the Phase O vibe-coding trap one layer deeper.
+
+The trial smoke is both cheaper (~2-3 hrs) and produces the ground
+truth the harnesses need. So Phase R splits in two:
+
+  C11 (this commit, design only): documents URLProtocol intercept
+  for iOS XCTest, MockWebServer + Robolectric for Android JUnit.
+  Concrete code patterns for both platforms so the implementation,
+  when it lands, follows one shape rather than being reinvented
+  per phase.
+
+  docs/SMOKE-TEST-PLAYBOOK.md: walks every shipped method against
+  a Braze trial dashboard. Step-by-step instructions, dashboard
+  verification, wire-format capture template. Three platforms x
+  10-12 steps each. The output is the ground truth that future
+  C11 implementations assert against.
+
+Phase R implementation (the actual native test bodies) is sequenced
+after the smoke. The blocker to tag 0.1.0 changes shape:
+
+  Before:
+    1. Layer 4 trial smoke
+    2. Native mock harnesses
+    3. PrivacyInfo.xcprivacy + various hygiene
+
+  After:
+    1. Layer 4 trial smoke (per playbook)
+    2. PrivacyInfo.xcprivacy + various hygiene
+    Post-0.1.0: native mock harnesses (per C11)
+
+This isn't a deferral — it's correct sequencing. The harness can't
+write meaningful assertions until the smoke validates which assertions
+are correct.
+
+REVIEW_READINESS.md §7 updated to reflect the revised blocker list.
+CLAUDE.md MDC list adds C11; docs/mdcs/README.md index too.
+
 ### Added — serializer unit tests (Phase P.3)
 
 `test/web/src/serializers.test.ts` (17 tests) covers the pure

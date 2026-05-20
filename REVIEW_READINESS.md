@@ -432,12 +432,15 @@ Honest walk through every checkbox above, with verifiable state. Sections 1-5 se
 
 Items that MUST clear before `v0.1.0` ships to npm:
 
-1. **Layer 4 manual smoke against the Braze trial.** Run every method against the dashboard, verify events / attributes / purchases land. Identify any wire-format issues the mock didn't catch.
-2. **Phase R: native mock-server harnesses for iOS + Android.** Closes the Layer 3 gap; gives both native bridges the same behavioral coverage the web bridge has.
-3. **`PrivacyInfo.xcprivacy` manifest** for iOS. App Store gate as of May 2024.
-4. **`SDK_SURFACE.md §1` coverage table audit.** Walk the capability matrix, mark current coverage accurately.
-5. **README quick-start fresh-`cap-init` validation.** 5-minute sanity check on a clean repo.
-6. **Repo settings hygiene:** signed-commits, no-force-push-on-main, npm 2FA enabled. One-time GitHub config.
+1. **Layer 4 manual smoke against the Braze trial.** Walk through [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) — every method against the dashboard, on all three platforms, with wire-format captures. Catches anything the mock didn't model. ~2-3 hrs.
+2. **`PrivacyInfo.xcprivacy` manifest** for iOS. App Store gate as of May 2024.
+3. **`SDK_SURFACE.md §1` coverage table audit.** Done in Phase Q — verify the "Currently shipped" block stays accurate when new methods land.
+4. **README quick-start fresh-`cap-init` validation.** 5-minute sanity check on a clean repo (separate from the in-tree demo).
+5. **Repo settings hygiene:** signed-commits, no-force-push-on-main, npm 2FA enabled. One-time GitHub config.
+
+Items planned post-0.1.0 (not blockers):
+
+- **Native mock harnesses ([C11](./docs/mdcs/C11-NATIVE-TEST-HARNESSES.md) impl).** Design is pinned; implementation is incremental work after the trial smoke validates the wire format. The smoke catches the immediate "does this work" bugs; the harness then locks the verified contract in for every future PR.
 
 Items deliberately deferred past 0.1.0 (documented exclusions):
 
