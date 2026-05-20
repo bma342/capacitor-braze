@@ -11,7 +11,47 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 - `BrazeKit` / `BrazeUI` — **14.1.0**
 - `@braze/web-sdk` — peer dep `^6.0.0`
 
-### Added — mock-server-driven behavioral tests for the web bridge (Phase P.1)
+### Added — expanded web behavioral test coverage (Phase P.2)
+
+Six test files now cover **36 behavioral tests** in under 3 seconds:
+
+| File | Tests | Surface |
+|---|---|---|
+| `events.test.ts` | 6 | `logCustomEvent`, `logPurchase` + 3 input-validation rejection paths |
+| `attributes.test.ts` | 11 | `setEmail`, `setPhoneNumber`, `setFirstName`, `setLastName`, `setLanguage`, `setCountry`, `setHomeCity`, `setDateOfBirth`, `setGender`, `setCustomUserAttribute`, gender-rejection |
+| `identity.test.ts` | 8 | `changeUser`, `getUserId`, `addAlias`, `setSdkAuthenticationSignature`, `getDeviceId` + 3 rejection paths |
+| `subscription-groups.test.ts` | 4 | `addToSubscriptionGroup`, `removeFromSubscriptionGroup` + 2 rejections |
+| `lifecycle.test.ts` | 4 | `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`, `requestImmediateDataFlush` no-op |
+| `push.test.ts` | 3 | `registerPushToken` web divergence — pins the three-part error shape per C03 |
+
+### Real wire-format facts discovered during P.2
+
+Three concrete things the mock-server reveals about Braze's Web SDK
+wire format (verified by inspecting actual captured POSTs):
+
+- **DOB serializes as `<year>-<month>-<day>` without zero-padding.**
+  `setDateOfBirth(1987, 7, 14)` → `"dob":"1987-7-14"`. The plugin's
+  assertion now matches the canonical form.
+- **Endpoint path is `/api/v3/data/`** for events + attributes.
+- **Wire envelope shape** (verified):
+  ```
+  { respond_with, events: [...], attributes: [...], device,
+    api_key, time, sdk_version, device_id }
+  ```
+  Events have `{ name: "ce", time, data: { n, p }, session_id }`.
+  Attributes are a list of objects, each holding key→value pairs.
+
+### Lifecycle correction
+
+Initial P.1 commit used `beforeEach`/`afterEach` to boot a fresh mock
++ initialize per test. The Braze Web SDK is module-level singleton
+state — calling `initialize` twice in the same process retains the
+first endpoint, so the second test would XHR to a closed mock port
+and time out.
+
+Fix: every test file now uses `beforeAll` for the mock + SDK init,
+`beforeEach` for `mock.clearCaptured()`, `afterAll` for cleanup.
+Vitest forks per file so the singleton-per-file model is correct.
 
 The first behavioral validation that doesn't depend on a real Braze
 account. Two new packages under `test/`:

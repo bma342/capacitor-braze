@@ -41,7 +41,7 @@ export async function waitForCaptured(
 
   const seen = mock.captured.map((r) => {
     const bodyStr = r.body === undefined ? '(no body)' : (JSON.stringify(r.body) ?? '(unstringifiable)');
-    return `  ${r.method} ${r.path} ${bodyStr.slice(0, 120)}`;
+    return `  ${r.method} ${r.path}\n    body: ${bodyStr.slice(0, 800)}`;
   });
   throw new Error(
     `waitForCaptured("${label}") timed out after ${timeoutMs}ms. Captured so far:\n` +

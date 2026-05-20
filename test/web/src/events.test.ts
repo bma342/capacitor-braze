@@ -1,57 +1,44 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import type { MockServer } from 'capacitor-braze-mock-server';
 
 import { BrazeWeb } from '../../../src/web';
-import type { MockServer } from 'capacitor-braze-mock-server';
 
 import { freshMockServer, waitForCaptured } from './test-utils';
 
 /**
- * First end-to-end test exercising the plugin's web bridge against
- * the real @braze/web-sdk against the mock Braze endpoint.
- *
- * The trip:
- *   1. Boot the mock server on a random localhost port.
- *   2. Construct BrazeWeb (the plugin's web impl).
- *   3. Call initialize() with the mock as the endpoint +
- *      allowInsecureEndpoint: true (HTTP for the mock).
- *   4. changeUser + logCustomEvent.
- *   5. requestImmediateDataFlush — kicks the SDK's batcher.
- *   6. Wait for the mock to receive a request whose body mentions
- *      our event name.
- *
- * If this works, we've validated the entire web path: plugin's TS
- * surface → BrazeWeb implementation → @braze/web-sdk → HTTP wire →
- * Braze-compatible payload. Subsequent test files use the same
- * pattern across the rest of the plugin's methods.
+ * Behavioral tests for the event-logging surface (logCustomEvent +
+ * logPurchase). Verifies the captured wire body contains the values
+ * the consumer passed. See attributes.test.ts for the file-scoped
+ * lifecycle rationale (Braze Web SDK is a module-level singleton; one
+ * init per file works, init-per-test doesn't).
  */
 describe('events (web bridge → @braze/web-sdk → mock)', () => {
   let mock: MockServer;
   let plugin: BrazeWeb;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     mock = await freshMockServer();
     plugin = new BrazeWeb();
     await plugin.initialize({
       apiKey: 'test-public-sdk-key',
       endpoint: mock.baseUrl,
       allowInsecureEndpoint: true,
-      enableLogging: false,
     });
   });
 
-  afterEach(async () => {
-    // wipeData() clears the SDK's local state so the next test starts
-    // clean — without it the Web SDK retains the device id and
-    // event queue across instances.
+  beforeEach(() => {
+    mock.clearCaptured();
+  });
+
+  afterAll(async () => {
     try {
       await plugin.wipeData();
-    } catch {
-      // Best-effort; some test paths may have already torn down.
-    }
+    } catch {}
     await mock.stop();
   });
 
-  it('logCustomEvent posts a request whose body references the event name', async () => {
+  it('logCustomEvent posts the event name on the wire', async () => {
     await plugin.changeUser({ userId: 'user_test_001' });
     await plugin.logCustomEvent({
       name: 'pluginTestCustomEvent',
@@ -59,14 +46,65 @@ describe('events (web bridge → @braze/web-sdk → mock)', () => {
     });
     await plugin.requestImmediateDataFlush();
 
-    const req = await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes('pluginTestCustomEvent'), {
-      label: 'event body containing pluginTestCustomEvent',
-    });
+    const req = await waitForCaptured(
+      mock,
+      (r) => JSON.stringify(r.body ?? '').includes('pluginTestCustomEvent'),
+      { label: 'event body containing pluginTestCustomEvent' },
+    );
 
     expect(req.method).toBe('POST');
-    // The Braze Web SDK targets /api/v3/data/* by convention as of v6.
-    // The mock catches everything, so we just assert the path exists.
     expect(req.path).toMatch(/^\//);
-    expect(JSON.stringify(req.body)).toContain('pluginTestCustomEvent');
+  });
+
+  it('logCustomEvent properties survive the round-trip', async () => {
+    await plugin.logCustomEvent({
+      name: 'evt_with_props_ABC',
+      properties: { propKey789: 'propValueXYZ' },
+    });
+    await plugin.requestImmediateDataFlush();
+    await waitForCaptured(
+      mock,
+      (r) => {
+        const body = JSON.stringify(r.body ?? '');
+        return (
+          body.includes('evt_with_props_ABC') &&
+          body.includes('propKey789') &&
+          body.includes('propValueXYZ')
+        );
+      },
+      { label: 'event with both prop key and value' },
+    );
+  });
+
+  it('logPurchase fires with productId, currency, price on the wire', async () => {
+    const productId = 'sku_test_4F2A';
+    await plugin.logPurchase({ productId, currency: 'USD', price: 14.99, quantity: 1 });
+    await plugin.requestImmediateDataFlush();
+    await waitForCaptured(
+      mock,
+      (r) => {
+        const body = JSON.stringify(r.body ?? '');
+        return body.includes(productId) && body.includes('USD') && body.includes('14.99');
+      },
+      { label: 'purchase with productId + currency + price' },
+    );
+  });
+
+  it('logPurchase rejects an empty productId', async () => {
+    await expect(
+      plugin.logPurchase({ productId: '', currency: 'USD', price: 9.99 }),
+    ).rejects.toThrow(/productId.*required/i);
+  });
+
+  it('logPurchase rejects negative price', async () => {
+    await expect(
+      plugin.logPurchase({ productId: 'sku', currency: 'USD', price: -1 }),
+    ).rejects.toThrow(/non-negative finite/i);
+  });
+
+  it('logPurchase rejects quantity > 100', async () => {
+    await expect(
+      plugin.logPurchase({ productId: 'sku', currency: 'USD', price: 1, quantity: 200 }),
+    ).rejects.toThrow(/quantity.*between 1 and 100/i);
   });
 });
