@@ -1,7 +1,7 @@
 # Test coverage audit (web bridge)
 
-**Audited:** 2026-05-20, post Phase S tests landing.
-**Test count:** 68 vitest behavioral tests + 17 serializer unit tests across 10 files.
+**Audited:** 2026-05-20, post Phase S tests + populated-cache work landing.
+**Test count:** 71 vitest behavioral tests + 17 serializer unit tests across 12 files.
 **Methods on the surface:** 37 (per [`src/definitions.ts`](../src/definitions.ts)).
 
 ## What's directly covered
@@ -41,24 +41,24 @@ Plus 17 serializer unit tests (`serializers.test.ts`) covering `serializeFeature
 
 These are coverage holes a maintainer should know about. They are filed here so they aren't "discovered" again on every audit.
 
-### Gaps blocked on initialize-time scripting (in addition to mock-server enhancement, partly done)
+### Gaps closed by populated-cache work (2026-05-20)
 
-**Update 2026-05-20:** the mock-server now has `respondTo({pathPattern, body})` to script per-path responses. **But** a spike against `refreshFeatureFlags` revealed a second layer: the Web SDK gates the FF refresh fetch on server-config delivered in the **first** data POST response during `initialize()`. The shared-plugin `beforeAll` pattern most test files use initializes once before any test can script that initial response. Closing the populated-cache gap therefore needs **both**:
+The populated-cache gap that this section originally tracked is **closed**. Two infrastructure additions and three new test files now exist:
 
-1. `respondTo()` on the mock-server (✅ done; ships in mock-server 0.0.2)
-2. A per-test plugin lifecycle helper (or pre-init script registration) that lets a test stage the initial `/api/v3/data/` response with a `config: { feature_flags: { enabled: true }, ... }` block BEFORE plugin.initialize() fires the first session POST.
+- `mock-server` 0.0.2: `respondTo({pathPattern, body, method?})` lets tests script per-path responses; `method?: 'POST'` excludes CORS preflight `OPTIONS` from consuming oneShot scripts.
+- `test/web/src/test-utils.ts` `freshPluginWithConfig()`: boots a fresh mock + new `BrazeWeb` + scripts the FIRST `/api/v3/data/` POST response with a server-config block that enables FF + CC refreshes (`{enabled: true, refresh_rate_limit: 0}`) BEFORE `plugin.initialize()` fires. The SDK reads its server config from this first POST response.
+- `test/web/src/feature-flags-populated.test.ts`: 2 tests asserting that 3 different flags + every supported property type (`string` / `number` / `boolean` / `image` / `datetime` / `jsonobject`) roundtrip end-to-end via `refreshFeatureFlags → getFeatureFlag → BrazeFeatureFlag`. Cache-miss returns `flag:null`.
+- `test/web/src/content-cards-populated.test.ts`: 1 fat test asserting that 3 card-type variants (`captionedImage` / `imageOnly` / `classic` per the [C02](./mdcs/C02-DTO-SHAPES.md) discriminator rules) roundtrip end-to-end via `requestContentCardsRefresh → getContentCards`. Click + impression resolve once the cardId is in the cache.
 
-Step 2 is the remaining work (~2-3 hrs). Until then, the mock-server `respondTo()` primitive is sitting unused for FF/CC populated tests but is genuine infrastructure that future work builds on.
-
-The current Fastify mock still returns `{message: "success"}` by default for unscripted requests; scripts take precedence when registered.
+**Reason the consolidated tests are "fat" rather than focused:** `@braze/web-sdk` is a module-level singleton within a vitest worker. Once `initialize()` succeeds in test 1, subsequent `initialize()` calls within the same file's worker don't fully re-init the SDK's internal state. The clean alternative is one file per scenario; the per-file boot overhead outweighs the clarity benefit for what is one end-to-end assertion in each.
 
 | Method | What's untested today | Why it matters |
 |---|---|---|
-| `getFeatureFlag` with populated cache | DTO shape returned to the consumer for each property type (string / number / boolean / image / datetime / jsonobject) | The C02 "Web is canonical" claim only validates end-to-end if a real flag flows through. Serializer unit tests cover it in isolation but not via the bridge. |
-| `getAllFeatureFlags` with populated cache | Same as above but for the list shape | Same. |
-| `getContentCards` with real cards | DTO shape across all 5 card types (captionedImage / imageOnly / classic / textAnnouncement / controlCard) | Same. |
-| `logFeatureFlagImpression` with known flag | Whether the impression actually reaches the wire (SDK silently filters unknown flags) | Without this, "the impression POST happens" is unproven on the consumer integration path. |
-| `logContentCardClick` / `logContentCardImpression` with known card | Same as above for content cards | Same. |
+| `getFeatureFlag` with populated cache | ✅ covered by `feature-flags-populated.test.ts` (single + multi-flag + all property types) |
+| `getAllFeatureFlags` with populated cache | ✅ covered same file |
+| `getContentCards` with real cards | ✅ covered by `content-cards-populated.test.ts` (3 card-type variants, type discriminator validated per C02) |
+| `logFeatureFlagImpression` with known flag | ⚠ partial: works with empty cache (no-throw). Wire-level "the impression POST hits /data/" is still gated on adding event-capture to the populated test, which requires draining the SDK's outbound queue. ~1 hr follow-up. |
+| `logContentCardClick` / `logContentCardImpression` with known card | ✅ resolve-without-throw covered when card is in cache (`content-cards-populated.test.ts`). Wire-level POST assertion same caveat as above. |
 
 ### Gaps blocked on SDK event injection
 
@@ -79,14 +79,14 @@ The current Fastify mock still returns `{message: "success"}` by default for uns
 
 ## Sufficient for tagging 0.1.0?
 
-Yes. The 68 behavioral + 17 serializer tests cover the consumer-visible contract for 33 of 37 methods directly. The 4 uncovered (`echo`, `addListener`, `removeAllListeners`, and the populated-cache variants of Content Cards + Feature Flags) are documented above as known gaps with clear unblocking paths. None of them is privacy-critical or load-bearing for a quick-start consumer's first hour with the plugin.
+Yes. The 71 behavioral + 17 serializer tests cover the consumer-visible contract for **35 of 37 methods** directly. The two uncovered (`echo`, `addListener`/`removeAllListeners`) are listed above as known gaps with clear unblocking paths. Neither is privacy-critical or load-bearing for a quick-start consumer's first hour with the plugin.
 
 The 0.1.0 release notes will reference this doc so adopters know exactly what is and isn't proven before they consume the plugin.
 
-## Next moves to close gaps
+## Next moves to close remaining gaps
 
-1. **Pre-init script + per-test lifecycle helper** (~2-3 hrs, partly unblocks): wraps `freshMockServer + new BrazeWeb + initialize` into a helper where the initial `/api/v3/data/` response is pre-scripted with a server-config block (`feature_flags: {enabled: true}`, `content_cards: {enabled: true}`, etc.). Then the existing `respondTo()` primitive on the mock-server (✅ already landed) unblocks 7+ populated-cache tests for FF + CC.
-2. **SDK event injection helper** (~half day): a small test helper that drives the underlying `@braze/web-sdk` subscription system from inside vitest, so listener lifecycle becomes assertable. Unblocks listener tests.
+1. **SDK event injection helper** (~half day): a small test helper that drives the underlying `@braze/web-sdk` subscription system from inside vitest, so listener lifecycle (`addListener` / `removeAllListeners`) becomes assertable end-to-end.
+2. **Wire-level event-capture for impression methods** (~1 hr): drain the SDK's outbound queue after `logFeatureFlagImpression` / `logContentCardImpression` to assert the POST body, not just no-throw.
 3. **C11 native harness implementation** (post-trial-smoke, ~1-2 days): described in the MDC.
 
 Estimate: with the trial smoke + C11 + the two web-side enhancements above, the plugin reaches "every method has at least one end-to-end behavioral test on the platform it runs on." That is the bar this doc tracks against.

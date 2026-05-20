@@ -75,6 +75,44 @@ emits `1987-7-14`" anchor pre-filled, `FeatureFlag` DTO, `ContentCard`
 DTO) and a cross-platform drift table. Real passes get renamed
 `<platform>-YYYY-MM-DD.md`.
 
+### Added — Populated-cache FF + CC tests via initialize-time config scripting (+3 tests, 68 → 71)
+
+Closes the populated-cache gap that the original test-coverage audit
+called out. Two infrastructure additions + two new test files now
+validate that real Feature Flag and Content Card DTOs flow through
+the bridge end-to-end (not just the serializer in isolation):
+
+  - `mock-server` 0.0.2: `respondTo({pathPattern, body, method?})`
+    with a method filter that excludes CORS preflight `OPTIONS` from
+    consuming oneShot scripts (real bug found during the spike that
+    revealed the issue).
+  - `test/web/src/test-utils.ts` `freshPluginWithConfig()`: helper
+    that boots a fresh mock-server, scripts the FIRST `/api/v3/data/`
+    POST response with a server-config block enabling FF + CC
+    refreshes, then constructs + initializes a fresh `BrazeWeb`. The
+    initial data POST is where `@braze/web-sdk` reads its server
+    config; without enabling FF/CC there, `refreshFeatureFlags`
+    short-circuits at the SDK's `yo()` gate.
+  - `test/web/src/feature-flags-populated.test.ts` (2 tests):
+    `refreshFeatureFlags → getFeatureFlag / getAllFeatureFlags` with
+    3 flags including all 6 property types (`string`, `number`,
+    `boolean`, `image`, `datetime`, `jsonobject`) roundtripping
+    end-to-end. Cache-miss returns `flag:null`.
+  - `test/web/src/content-cards-populated.test.ts` (1 fat test):
+    `requestContentCardsRefresh → getContentCards` with 3 card-type
+    variants validating the C02 discriminator rules
+    (`captionedImage` / `imageOnly` / `classic`). Click + impression
+    resolve once the cardId is in the cache.
+
+Tests are consolidated rather than focused because `@braze/web-sdk`
+is a module-level singleton within a vitest worker. Once initialize()
+runs, subsequent init calls in tests 2+ don't fully re-init the SDK's
+internal state. One-file-per-scenario works but the per-file boot
+overhead outweighs the clarity benefit.
+
+Total: 53 → 71 web behavioral tests since Phase P.3. Coverage audit
+updated to reflect 35-of-37 methods directly covered.
+
 ### Added — Web behavioral tests for the previously-uncovered methods (+15 tests)
 
 Coverage audit ([`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md))

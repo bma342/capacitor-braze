@@ -1,5 +1,7 @@
 import { startMockServer, type MockServer, type CapturedRequest } from 'capacitor-braze-mock-server';
 
+import { BrazeWeb } from '../../../src/web';
+
 /**
  * Convenience for tests: boots a mock server, returns control to the
  * test. Caller's `afterEach` calls `mock.stop()`.
@@ -10,6 +12,67 @@ import { startMockServer, type MockServer, type CapturedRequest } from 'capacito
  */
 export async function freshMockServer(): Promise<MockServer> {
   return startMockServer();
+}
+
+/**
+ * Boots a fresh mock-server, scripts the FIRST `/api/v3/data/` POST
+ * response with a server-config block that enables Feature Flags and
+ * Content Cards (with `refresh_rate_limit: 0` so the SDK lets refreshes
+ * fire immediately), constructs a fresh `BrazeWeb`, and calls `initialize()`.
+ *
+ * Why this helper exists: the Braze Web SDK reads its server config from
+ * the response to the FIRST data POST during initialize(). Without that
+ * config, `refreshFeatureFlags` short-circuits (returns false from its
+ * `yo()` gate because `Ro()` returns null). The shared-plugin `beforeAll`
+ * pattern used by most test files initializes before any test can script
+ * that initial response. Tests that need populated FF/CC caches use this
+ * helper instead and pay the per-test init cost (still ~150ms).
+ *
+ * The script for the initial data POST is `oneShot: true`, so subsequent
+ * data POSTs in the same test go through the catch-all and won't accidentally
+ * re-apply the config (which would re-trigger config-change subscribers).
+ * Tests then call `mock.respondTo()` themselves to script the FF/CC
+ * refresh response, and the config we injected here is what lets
+ * `refreshFeatureFlags` / `requestContentCardsRefresh` actually fetch.
+ *
+ * Caller is responsible for `await plugin.wipeData()` + `await mock.stop()`
+ * in the test's teardown.
+ *
+ * Wire format reference (verified against @braze/web-sdk 6.7.x):
+ *   - server config envelope: `{ message: "success", config: { time, content_cards, feature_flags, ... } }`
+ *   - content_cards: `{ enabled: boolean, refresh_rate_limit?: number }`
+ *   - feature_flags: `{ enabled: boolean, refresh_rate_limit: number }`
+ *   - time: number, must be > 0 for the config to be applied (current starts at 0)
+ */
+export interface FreshPluginWithConfig {
+  mock: MockServer;
+  plugin: BrazeWeb;
+}
+
+export async function freshPluginWithConfig(): Promise<FreshPluginWithConfig> {
+  const mock = await freshMockServer();
+  mock.respondTo({
+    pathPattern: /\/api\/v3\/data\/?$/,
+    method: 'POST', // CORS preflight OPTIONS would otherwise consume the oneShot
+    body: {
+      message: 'success',
+      config: {
+        time: Math.floor(Date.now() / 1000),
+        feature_flags: { enabled: true, refresh_rate_limit: 0 },
+        content_cards: { enabled: true, refresh_rate_limit: 0 },
+      },
+    },
+    oneShot: true,
+  });
+
+  const plugin = new BrazeWeb();
+  await plugin.initialize({
+    apiKey: 'test-public-sdk-key',
+    endpoint: mock.baseUrl,
+    allowInsecureEndpoint: true,
+  });
+
+  return { mock, plugin };
 }
 
 /**

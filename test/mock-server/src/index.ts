@@ -54,6 +54,13 @@ export interface ScriptedResponse {
   status?: number;
   /** If true, the script unregisters after one match. Default: true. */
   oneShot?: boolean;
+  /**
+   * Optional HTTP method filter. When set, the script only fires for matching
+   * methods. Use this to avoid CORS preflight `OPTIONS` requests consuming a
+   * oneShot script intended for the subsequent `POST`. Default: no filter
+   * (any method matches the pathPattern). Common values: `'POST'`.
+   */
+  method?: string;
 }
 
 export interface MockServer {
@@ -134,15 +141,16 @@ export async function startMockServer(): Promise<MockServer> {
     // (default true) removes the script after firing.
     for (let i = 0; i < scripts.length; i += 1) {
       const script = scripts[i];
-      if (script && script.pathPattern.test(request.url)) {
-        const status = script.status ?? 200;
-        const body = script.body;
-        if (script.oneShot !== false) {
-          scripts.splice(i, 1);
-        }
-        reply.code(status);
-        return body;
+      if (!script) continue;
+      if (script.method && script.method !== request.method) continue;
+      if (!script.pathPattern.test(request.url)) continue;
+      const status = script.status ?? 200;
+      const body = script.body;
+      if (script.oneShot !== false) {
+        scripts.splice(i, 1);
       }
+      reply.code(status);
+      return body;
     }
 
     // Braze's canonical success envelope. Status 200.
