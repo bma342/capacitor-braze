@@ -41,6 +41,19 @@ See [`SDK_SURFACE.md` §2](./SDK_SURFACE.md#2-plugin-version-roadmap) for the ve
 ```bash
 # Until 0.1.0 hits npm, consume via git:
 npm install bma342/capacitor-braze @braze/web-sdk
+```
+
+**iOS requires two Podfile edits** before `cap sync` will succeed (BrazeKit 14.x pins minimum deployment target to iOS 15 and requires static linkage):
+
+```ruby
+# ios/App/Podfile
+platform :ios, '15.0'                         # was '13.0' in the Capacitor default
+use_frameworks! :linkage => :static           # was 'use_frameworks!' alone
+```
+
+Verified on a fresh `cap init` 2026-05-20: skipping these produces a CocoaPods "required a higher minimum deployment target" error. Full rationale in [MDC C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md). Android requires no consumer-side edits.
+
+```bash
 npx cap sync
 ```
 
