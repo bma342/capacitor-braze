@@ -75,24 +75,15 @@ Once uploaded, all your future signed commits show up with a green "Verified" ba
 
 ---
 
-## Step 3: Re-enable `required_signatures` on `main`
+## Step 3: `required_signatures` on `main` — already enabled
 
-After Steps 1+2 are working, turn the protection back on:
+The required-signatures rule is currently enabled (verify with `gh api repos/bma342/capacitor-braze/branches/main/protection/required_signatures` → `{"enabled": true}`).
 
-```bash
-gh api -X POST repos/bma342/capacitor-braze/branches/main/protection/required_signatures
-```
+Until Steps 1+2 are done, any direct push to `main` from your machine will hit this rule and require admin bypass (since `enforce_admins: false`). The push still goes through but GitHub records a "Bypassed rule violations" notice on the push.
 
-Verify:
+Once Steps 1+2 are done, your commits sign automatically and the bypass notices stop.
 
-```bash
-gh api repos/bma342/capacitor-braze/branches/main/protection/required_signatures
-# → {"enabled": true}
-```
-
-After this, any unsigned commit pushed directly to `main` is rejected. PR squash-merges via the GitHub UI auto-sign with GitHub's web-flow key, so PR workflows keep working.
-
-This step is parked until Steps 1+2 are done; I temporarily disabled it during the initial branch-protection setup because there were unsigned commits on local `main` that needed to push first.
+PR squash-merges via the GitHub UI auto-sign with GitHub's web-flow key, so PR workflows are clean regardless of local-signing setup.
 
 ---
 
