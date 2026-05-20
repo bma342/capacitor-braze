@@ -1,5 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Privacy manifest for the CapacitorBraze plugin framework.
+
+  Scope: this manifest declares the privacy-relevant behavior of THIS framework's compiled binary
+  (the Capacitor bridge code in ios/Plugin/), not of the underlying Braze SDK or the consumer app.
+
+  - The plugin binary itself does not track users, does not contact tracking domains, does not
+    access any required-reason APIs (no UserDefaults, FileTimestamp, SystemBootTime, DiskSpace,
+    or ActiveKeyboards calls in ios/Plugin/BrazePlugin.swift), and does not transmit data off-device.
+  - BrazeKit (the underlying SDK) declares its own manifest at
+    Pods/BrazeKit/Sources/BrazeKitResources/Resources/PrivacyInfo.xcprivacy and covers UserDefaults
+    (CA92.1), FileTimestamp (C617.1), and the UserID / DeviceID / ProductInteraction data types.
+    Xcode aggregates per-framework manifests into the consumer app's privacy report; do not
+    duplicate BrazeKit's declarations here.
+  - The consumer app is responsible for declaring App Tracking Transparency, NSUserTrackingUsageDescription,
+    and any IDFA usage in the app target's manifest.
+
+  If the plugin layer ever starts calling a required-reason API directly (e.g., adds UserDefaults
+  for caching, or reads file timestamps), add the corresponding declaration here in the same PR.
+-->
 <plist version="1.0">
 <dict>
     <key>NSPrivacyTracking</key>

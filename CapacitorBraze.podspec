@@ -11,6 +11,12 @@ Pod::Spec.new do |s|
   s.author = package['author']
   s.source = { :git => 'https://github.com/bma342/capacitor-braze.git', :tag => s.version.to_s }
   s.source_files = 'ios/Plugin/**/*.{swift,h,m,c,cc,mm,cpp}'
+  # Ships PrivacyInfo.xcprivacy at the framework bundle root, per Apple's spec
+  # (https://developer.apple.com/documentation/bundleresources/describing-use-of-required-reason-api).
+  # BrazeKit ships its own manifest; this one declares the plugin layer's own behavior.
+  s.resource_bundles = {
+    'CapacitorBraze' => ['ios/Plugin/PrivacyInfo.xcprivacy']
+  }
   s.ios.deployment_target = '15.0'
   s.swift_version = '5.9'
   s.dependency 'Capacitor'
