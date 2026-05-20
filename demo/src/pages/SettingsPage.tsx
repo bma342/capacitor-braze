@@ -13,6 +13,13 @@ import { useAuth } from '../auth/store';
 export function SettingsPage() {
   const signOut = useAuth((s) => s.signOut);
 
+  // Push token — pasted manually in the demo. Real apps wire this
+  // from @capacitor/push-notifications' `registration` event so the
+  // token roundtrip happens automatically; the demo accepts a paste
+  // so the surface is exercisable without standing up real APNs/FCM.
+  const [pushToken, setPushToken] = useState('');
+  const [pushStatus, setPushStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
   // Subscription groups — add / remove by id.
   const [groupId, setGroupId] = useState('');
   const [groupLog, setGroupLog] = useState<{ action: 'add' | 'remove'; id: string; at: number }[]>(
@@ -32,6 +39,20 @@ export function SettingsPage() {
   useEffect(() => {
     void Braze.isDisabled().then((r) => setDisabled(r.disabled));
   }, []);
+
+  async function registerPushToken() {
+    const token = pushToken.trim();
+    if (!token) return;
+    setPushStatus('saving');
+    try {
+      await Braze.registerPushToken({ token });
+      setPushStatus('saved');
+      window.setTimeout(() => setPushStatus('idle'), 1500);
+    } catch (err) {
+      console.warn('[demo] registerPushToken failed:', (err as Error).message);
+      setPushStatus('error');
+    }
+  }
 
   async function addGroup() {
     const id = groupId.trim();
@@ -125,6 +146,47 @@ export function SettingsPage() {
       <h1 className="mb-4 text-2xl font-semibold tracking-tight">Settings</h1>
 
       <section className="rounded-2xl bg-neutral-100 p-4">
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+          Push token
+        </h2>
+        <p className="mb-3 text-sm text-neutral-600">
+          Hand a push registration token to Braze. Real apps wire this from
+          <code className="mx-1">@capacitor/push-notifications</code>'
+          <code className="ml-1">registration</code> event; paste a token manually here
+          to exercise the surface. Native-only (calling on web throws by design).
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="hex APNs / FCM token"
+            value={pushToken}
+            onChange={(e) => setPushToken(e.target.value)}
+            className="flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm"
+          />
+          <button
+            type="button"
+            onClick={registerPushToken}
+            disabled={!pushToken.trim() || pushStatus === 'saving'}
+            className={`shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium ${
+              pushStatus === 'saved'
+                ? 'bg-green-100 text-green-700'
+                : pushStatus === 'error'
+                  ? 'bg-red-100 text-red-700'
+                  : 'bg-brand-500 text-white disabled:opacity-50'
+            }`}
+          >
+            {pushStatus === 'saving'
+              ? '…'
+              : pushStatus === 'saved'
+                ? '✓ Sent'
+                : pushStatus === 'error'
+                  ? 'Retry'
+                  : 'Register'}
+          </button>
+        </div>
+      </section>
+
+      <section className="mt-5 rounded-2xl bg-neutral-100 p-4">
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
           Subscription groups
         </h2>

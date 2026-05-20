@@ -637,7 +637,7 @@ public class BrazePlugin: CAPPlugin {
             return
         }
         guard let tokenData = Self.dataFromHex(token) else {
-            call.reject("Braze.registerPushToken: `token` is not a valid hex string.")
+            call.reject("Braze.registerPushToken: `token` must be a valid hex string.")
             return
         }
         braze.notifications.register(deviceToken: tokenData)
