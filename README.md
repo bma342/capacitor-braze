@@ -25,14 +25,16 @@ See [`PLAN.md`](./PLAN.md) for the full strategic case, including [why not the C
 | Surface | State |
 |---|---|
 | **TypeScript API** | 35 methods + `addListener` / `removeAllListeners` for 2 events |
-| **iOS bridge** (BrazeKit 14.1.0) | Compiles green on every PR via the `verify-ios` CI job |
+| **iOS bridge** (BrazeKit 14.1.0) | Compiles green on every PR via the `verify-ios` CI job; `PrivacyInfo.xcprivacy` shipped via podspec `resource_bundles` |
 | **Android bridge** (`com.braze:android-sdk-ui` 42.2.0) | Compiles green on every PR via the `verify-android` CI job |
-| **Web bridge** (`@braze/web-sdk` ^6.0.0) | Builds green; one method (`registerPushToken`) is platform-divergent and throws on web by design (per [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md)) |
+| **Web bridge** (`@braze/web-sdk` ^6.0.0) | Builds green; 68 behavioral + 17 serializer tests in ~2.4s; one method (`registerPushToken`) is platform-divergent and throws on web by design (per [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md)) |
 | **Developer testbed** (`example/`) | Every plugin method has a button; clicking invokes + logs |
 | **Reference app** (`demo/`) | React 19 + Tailwind 4 + TanStack Router; restaurant ordering + e-commerce flows; iOS + Android Capacitor projects committed |
-| **MDC design contracts** | C01–C10 codify the patterns; CI gates enforce them |
-| **Smoke-tested against real Braze** | ❌ Not yet — the next milestone |
-| **Published to npm** | ❌ Not yet — waiting on the smoke test |
+| **MDC design contracts** | C01-C11 codify the patterns; CI gates enforce them |
+| **Test coverage audit** | [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) tracks the 33/37 directly-covered methods + remaining gaps with unblock plans |
+| **Branch protection** | Applied via `gh` CLI: 8 required CI checks (strict), no force pushes, no deletions, signed commits required, admin bypass for hotfixes |
+| **Smoke-tested against real Braze** | ❌ Not yet the next milestone (templates pre-staged in `docs/smoke-tests/`) |
+| **Published to npm** | ❌ Not yet waiting on the smoke test |
 
 See [`SDK_SURFACE.md` §2](./SDK_SURFACE.md#2-plugin-version-roadmap) for the version roadmap and what's still unshipped (in-app message listener, banners, push permission helpers).
 

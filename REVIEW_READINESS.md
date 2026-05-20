@@ -327,7 +327,7 @@ Use this verbatim before publishing any version to npm.
 
 ---
 
-## 6. Current readiness snapshot (post-Phase-P.3)
+## 6. Current readiness snapshot (post-Phase-S)
 
 Honest walk through every checkbox above, with verifiable state. Sections 1-5 set the bar; this section reports where we actually are against it. Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open · ⚠️ partial.
 
@@ -336,26 +336,26 @@ Honest walk through every checkbox above, with verifiable state. Sections 1-5 se
 | Checkbox | Status | Evidence |
 |---|---|---|
 | TS types pass `tsc --strict --noEmit` | ✓ | `build-plugin` CI job |
-| `npm test` (Layer 1) passes | ✓ | `test-web` CI job — 53 tests across 7 files in ~2.4s |
-| Android Layer 2 + 3 passes in CI | ⚠️ | `verify-android` compiles (Layer 2); Layer 3 mock-server tests land in Phase R |
-| iOS Layer 2 + 3 passes in CI | ⚠️ | `verify-ios` compiles (Layer 2); Layer 3 mock-server tests land in Phase R |
+| `npm test` (Layer 1) passes | ✓ | `test-web` CI job 68 behavioral + 17 serializer tests across 10 files in ~2.4s. Coverage audit in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) |
+| Android Layer 2 + 3 passes in CI | ⚠️ | `verify-android` compiles (Layer 2); Layer 3 mock-server tests are C11 (post-0.1.0 per design) |
+| iOS Layer 2 + 3 passes in CI | ⚠️ | `verify-ios` compiles (Layer 2); Layer 3 mock-server tests are C11 (post-0.1.0 per design) |
 | Web Layer 3 passes in CI | ✓ | `test-web` runs the vitest + Fastify-mock harness |
 | Layer 4 manual smoke test against real Braze trial | ◌ | Trial credentials available; smoke pass is the gate to 0.1.0 |
 | No `any`, no `!!`, no `TODO`, no `@Suppress` (without docs) | ✓ | Verified: 0 TODOs, 0 `@Suppress`, no force-unwraps in Swift (all `!apiKey.isEmpty` are negations), no `any` types in source |
 | Lint clean: ESLint, ktlint, SwiftLint | ⚠️ | ESLint clean in CI. SwiftLint runs in `verify-ios` on macOS. **ktlint not used** — per [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md) we don't enforce Kotlin formatting at the project level; Kotlin style is review-driven. Update the checklist when (if) ktlint is adopted |
-| Code coverage targets met | ○ | No coverage targets enforced. The 53 web behavioral tests + 17 serializer unit tests cover the web bridge sharply; native bridges are compile-only until Phase R. Recommend deferring numeric targets until Phase R lands and we have a denominator to measure against |
+| Code coverage targets met | ○ | No numeric coverage targets enforced. 68 web behavioral + 17 serializer tests cover 33 of 37 methods directly; remaining gaps tracked in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) with unblock plans. Native bridges are compile-only until C11 implementation lands post-0.1.0. Recommend deferring numeric targets until C11 has a denominator |
 | Bundle size budgets met | ○ | Budgets aren't enforced (no `size-limit` config). Plugin builds to ~9 KB gzipped per the rollup output. iOS / Android sizes aren't measured. Recommend setting concrete budgets only after a 0.1.0 baseline exists |
 
 ### Docs (§5)
 
 | Checkbox | Status | Evidence |
 |---|---|---|
-| README quick-start works on a fresh `cap init` project | ⚠️ | Works on the bundled `demo/` (which goes through `cap add ios` + `cap add android`). Not yet validated on a literal new `cap init` outside this repo — that's a 5-min check before 0.1.0 |
-| Every public method has JSDoc + TypeDoc render | ⚠️ | All 36 methods carry JSDoc + `@example`. **TypeDoc not used** — we use `@capacitor/docgen` instead per [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md), which matches what Capacitor's first-party plugins do. Update the checklist accordingly |
+| README quick-start works on a fresh `cap init` project | ✓ | Validated 2026-05-20 on a fresh `cap-init` install in `/tmp/capbraze-freshtest-tLWX`. Surfaced an iOS Podfile-edit requirement (per C10) that was missing from the quick-start; now inlined |
+| Every public method has JSDoc + `@capacitor/docgen` render | ✓ | All 35 methods (+ listener pair) carry JSDoc + `@example`. **TypeDoc not used** per [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md); we use `@capacitor/docgen` instead which matches Capacitor's first-party plugins. README API section auto-generated |
 | Platform parity matrix updated | ⚠️ | Lives in `SDK_SURFACE.md §1` (capability catalog) and the new README "Status" table. Could be cross-referenced more loudly |
 | CHANGELOG entry written (human-readable) | ✓ | Every phase commit ships a CHANGELOG entry |
 | Migration notes if any breaking changes (pre-1.0) | ✓ | Podspec rename + AGP/Kotlin bumps documented in CHANGELOG with rationale |
-| All `SDK_SURFACE.md` coverage flags updated | ◌ | `SDK_SURFACE.md §1` table hasn't been touched since the early phases. **Audit needed before 0.1.0** |
+| All `SDK_SURFACE.md` coverage flags updated | ✓ | Audited in Phase Q; "Currently shipped (as of 0.0.12)" block at the top of §1 enumerates the 36 method names exactly |
 
 ### Security (§5)
 
@@ -377,7 +377,7 @@ Honest walk through every checkbox above, with verifiable state. Sections 1-5 se
 | GitHub Release drafted | ◌ | Same |
 | `npm publish --provenance` from CI (not local) | ✓ | `.github/workflows/release.yml` does provenance publish from tag push |
 | npm 2FA verified | ◌ | Account config; verify before first publish |
-| Repo settings (signed commits, no force-push) | ◌ | Verify in GitHub repo settings |
+| Repo settings (branch protection, signed commits, no force-push) | ⚠️ | Branch protection applied via `gh` CLI Phase S: 8 required CI checks (strict), no force pushes, no deletions, `required_signatures: true`, `enforce_admins: false` (solo hotfix path), conversation resolution required. Local SSH-signing setup + npm 2FA are user-personal actions; one-pager at [`docs/REPO-HYGIENE.md`](./docs/REPO-HYGIENE.md) |
 | Dependabot still enabled | ✓ | `.github/dependabot.yml` |
 
 ### Native code quality (§3)
@@ -394,7 +394,7 @@ Honest walk through every checkbox above, with verifiable state. Sections 1-5 se
 | iOS: official BrazeKit API | ✓ | All calls go through `braze.X` or `Braze.X` statics, verified by Phase O compile |
 | iOS: no force unwraps, proper `guard let` | ✓ | Verified |
 | iOS: `[weak self]` in closures | ✓ | Both subscribeToUpdates closures capture `[weak self]` |
-| iOS: `PrivacyInfo.xcprivacy` manifest | ◌ | **Required for App Store submission since May 2024.** Plugin doesn't ship one. Add before 0.1.0 |
+| iOS: `PrivacyInfo.xcprivacy` manifest | ✓ | Shipped via podspec `resource_bundles` (Phase S). Verified on fresh-`cap-init` install: `CapacitorBraze.bundle` resource target generated in Pods.xcodeproj with the manifest as a build file. The manifest declares "no tracking, no required-reason API access" because the plugin layer doesn't directly touch any (BrazeKit's own manifest covers what the SDK does) |
 | iOS: SwiftPM + CocoaPods install paths tested | ⚠️ | CocoaPods verified via `verify-ios`. SwiftPM not tested |
 | iOS: matches Braze RN bridge style | ⚠️ | Patterns are similar; no literal diff |
 | iOS: SwiftLint clean | ⚠️ | Runs in `verify-ios` but SwiftLint warnings haven't been audited |
@@ -409,8 +409,8 @@ Honest walk through every checkbox above, with verifiable state. Sections 1-5 se
 
 | Checkbox | Status | Evidence |
 |---|---|---|
-| Four-layer test pyramid | ⚠️ | Layer 1 (TS contract) ✓ via build. Layer 2 (native bridge) ✓ via verify-ios/verify-android compile. Layer 3 (mock server) ✓ for web; Phase R extends to native. Layer 4 (real Braze) ◌ — manual via trial |
-| CI runs Layer 1-3 across iOS sim + Android emulator + headless Chrome | ⚠️ | Web is headless (jsdom); iOS/Android compile only. Phase R will add native Layer 3 |
+| Four-layer test pyramid | ⚠️ | Layer 1 (TS contract) ✓ via build. Layer 2 (native bridge) ✓ via `verify-ios` / `verify-android` compile. Layer 3 (mock server) ✓ for web (68 tests); C11 (post-0.1.0) extends to native. Layer 4 (real Braze) ◌ via trial-smoke playbook |
+| CI runs Layer 1-3 across iOS sim + Android emulator + headless Chrome | ⚠️ | Web is headless (jsdom); iOS/Android compile only via `xcodebuild` + `./gradlew assembleDebug`. C11 implementation (post-0.1.0) adds native Layer 3 |
 | Daily spec-drift job against real Braze trial | ◌ | Not configured. The mock-server harness covers the bulk of this concern; spec drift is a quarterly concern, not daily |
 | Code coverage >80% TS, >70% native | ○ | Targets not enforced. See "Code coverage" row above for rationale |
 | No tests that depend on real Braze for every PR | ✓ | Mock-server harness is self-contained |
