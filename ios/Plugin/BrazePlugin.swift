@@ -126,7 +126,10 @@ public class BrazePlugin: CAPPlugin {
 
         contentCardsSubscription = braze.contentCards.subscribeToUpdates { [weak self] cards in
             guard let self = self else { return }
-            self.notifyListeners("contentCardsUpdated", data: Self.serializeContentCards(cards))
+            // Capture the manager's lastUpdate at notification time —
+            // BrazeKit updates it right before firing the subscription.
+            let payload = Self.serializeContentCards(cards, lastUpdate: braze.contentCards.lastUpdate)
+            self.notifyListeners("contentCardsUpdated", data: payload)
         }
 
         call.resolve()
@@ -461,72 +464,57 @@ public class BrazePlugin: CAPPlugin {
         call.resolve()
     }
 
-    /// Serializes a `Braze.FeatureFlag` to the plugin's portable wire
-    /// format. Properties are read via BrazeKit's typed accessors keyed
-    /// off the underlying `properties` dictionary, then re-emitted as
-    /// `{ type, value }` records matching the Web SDK `PropertiesJson`.
+    /// Serializes a `Braze.FeatureFlag` to a wire-format dict by going
+    /// through BrazeKit's own `Codable` conformance: `flag.json()`
+    /// returns the SDK's canonical JSON for the flag, which we re-parse
+    /// into `[String: Any]` for the Capacitor bridge.
     ///
-    /// Unknown / future property types are dropped rather than guessed.
+    /// Trade-off: the wire-format produced this way is *iOS BrazeKit's*
+    /// canonical shape, not necessarily byte-identical to the Web SDK
+    /// shape that C02 nominates as canonical. The actual `properties`
+    /// dict is `[String: Any]` on BrazeKit with no nested type-tagged
+    /// structure exposed publicly — there is no `Property` enum to
+    /// pattern-match, only typed accessors (`stringProperty(key:)`
+    /// etc.) keyed by string. Until cross-platform wire-format
+    /// reconciliation lands (planned), iOS consumers may see a
+    /// flatter `properties: Record<string, unknown>` shape than the
+    /// Web SDK's `{ type, value }` tagged entries.
     private static func serializeFeatureFlag(_ flag: Braze.FeatureFlag) -> [String: Any] {
-        var properties: [String: Any] = [:]
-        // BrazeKit exposes the raw property map as `properties: [String: Property]`.
-        // Each Property is an enum (`.string`, `.number`, `.boolean`, `.image`,
-        // `.timestamp`, `.json`). Pattern-match each case to the public type tag.
-        for (key, value) in flag.properties {
-            if let entry = Self.serializeProperty(value) {
-                properties[key] = entry
-            }
+        if let data = flag.json(),
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return dict
         }
         return [
             "id": flag.id,
             "enabled": flag.enabled,
-            "properties": properties,
+            "properties": [String: Any](),
         ]
-    }
-
-    /// Maps a single `Braze.FeatureFlag.Property` enum case to the wire
-    /// format `{ type, value }` record. Returns nil for unrecognized
-    /// cases (future SDK additions); the caller drops those entries.
-    ///
-    /// The plugin keeps the conversion local rather than depending on
-    /// any private encoder so consumers see exactly the shape declared
-    /// in `BrazeFeatureFlagPropertyValue`.
-    private static func serializeProperty(_ property: Braze.FeatureFlag.Property) -> [String: Any]? {
-        switch property {
-        case .string(let v):
-            return ["type": "string", "value": v]
-        case .number(let v):
-            return ["type": "number", "value": v]
-        case .boolean(let v):
-            return ["type": "boolean", "value": v]
-        case .timestamp(let v):
-            return ["type": "datetime", "value": v]
-        case .image(let v):
-            return ["type": "image", "value": v.absoluteString]
-        case .json(let v):
-            return ["type": "jsonobject", "value": v]
-        @unknown default:
-            return nil
-        }
     }
 
     // MARK: - Content cards
     //
     // BrazeKit exposes content cards via `braze.contentCards`:
-    //   - cards         -> [Braze.ContentCard]  (cached list)
-    //   - requestRefresh -> async refresh, fire-and-forget here
-    //   - logClick(cardId:) / logImpressions(idsAndImpressionsSent:)
-    //   - subscribeToUpdates -> [Braze.ContentCard] callback
+    //   - cards          -> [Braze.ContentCard]  (cached list)
+    //   - lastUpdate     -> Date? (most-recent server sync time)
+    //   - requestRefresh(_:) -> async refresh with optional Result callback
+    //   - subscribeToUpdates(_:) -> ([ContentCard]) -> Void callback
     //
-    // Card type is an enum (`.classic`, `.captionedImage`, `.imageOnly`,
-    // `.control`) on `Braze.ContentCard`; the bridge maps each case to
-    // the plugin's `BrazeContentCardType` string tag. Date fields are
-    // converted to Unix epoch milliseconds via `timeIntervalSince1970`
-    // matching the public `BrazeContentCardBase.updated` shape.
+    // Click + impression logging is NOT on the `ContentCards` manager
+    // but on the individual cards themselves: `card.logClick(using:)`
+    // and `card.logImpression(using:)`. We resolve cardId → card via
+    // the cached list before forwarding.
+    //
+    // Wire-format note: each card's serialization uses BrazeKit's own
+    // `card.json()` Codable encoder. The resulting shape is iOS-canonical
+    // and may differ from the Web SDK shape that C02 designates as
+    // plugin-canonical; cross-platform reconciliation is a follow-up.
 
     @objc func getContentCards(_ call: CAPPluginCall) {
         guard let braze = Self.requireInitialized(call) else { return }
-        call.resolve(Self.serializeContentCards(braze.contentCards.cards))
+        call.resolve(Self.serializeContentCards(
+            braze.contentCards.cards,
+            lastUpdate: braze.contentCards.lastUpdate
+        ))
     }
 
     @objc func requestContentCardsRefresh(_ call: CAPPluginCall) {
@@ -541,7 +529,11 @@ public class BrazePlugin: CAPPlugin {
             call.reject("Braze.logContentCardClick: `cardId` is required (string).")
             return
         }
-        braze.contentCards.logClick(cardId: cardId)
+        guard let card = Self.findCard(by: cardId, in: braze) else {
+            call.reject("Braze.logContentCardClick: no cached content card with id \"\(cardId)\".")
+            return
+        }
+        card.logClick(using: braze)
         call.resolve()
     }
 
@@ -551,88 +543,47 @@ public class BrazePlugin: CAPPlugin {
             call.reject("Braze.logContentCardImpression: `cardId` is required (string).")
             return
         }
-        braze.contentCards.logImpression(cardId: cardId)
+        guard let card = Self.findCard(by: cardId, in: braze) else {
+            call.reject("Braze.logContentCardImpression: no cached content card with id \"\(cardId)\".")
+            return
+        }
+        card.logImpression(using: braze)
         call.resolve()
     }
 
-    /// Builds the `BrazeGetContentCardsResult` wire shape from a Braze
-    /// SDK card array. `lastUpdated` is the most recent `updated`
-    /// timestamp across the cards; this is BrazeKit's convention for
-    /// surfacing freshness of the cached collection.
-    private static func serializeContentCards(_ cards: [Braze.ContentCard]) -> [String: Any] {
+    /// Looks up a cached content card by id. Returns nil if no match.
+    /// Used by logContentCardClick / logContentCardImpression since
+    /// BrazeKit's log methods are on the card instance, not the
+    /// ContentCards manager.
+    private static func findCard(by cardId: String, in braze: Braze) -> Braze.ContentCard? {
+        return braze.contentCards.cards.first(where: { $0.data.id == cardId })
+    }
+
+    /// Builds the `BrazeGetContentCardsResult` wire shape from BrazeKit's
+    /// card array + `ContentCards.lastUpdate`. lastUpdate is the SDK's
+    /// authoritative "freshness" timestamp — we don't derive it from
+    /// individual cards.
+    private static func serializeContentCards(
+        _ cards: [Braze.ContentCard],
+        lastUpdate: Date?
+    ) -> [String: Any] {
         let serialized: [[String: Any]] = cards.compactMap { Self.serializeContentCard($0) }
-        let lastUpdated: Any
-        if let mostRecent = cards.compactMap({ $0.updated }).max() {
-            lastUpdated = Int(mostRecent.timeIntervalSince1970 * 1000)
-        } else {
-            lastUpdated = NSNull()
-        }
+        let lastUpdated: Any = lastUpdate.map { Int($0.timeIntervalSince1970 * 1000) } ?? NSNull()
         return [
             "cards": serialized,
             "lastUpdated": lastUpdated,
         ]
     }
 
-    /// Maps a single `Braze.ContentCard` to the plugin's tagged-union
-    /// DTO. Returns nil for cards whose type doesn't fit the four known
-    /// variants; the caller filters via compactMap.
+    /// Serializes a `Braze.ContentCard` enum case via its Codable
+    /// `json()` extension. Returns nil if encoding fails — the caller
+    /// drops those entries via compactMap.
     private static func serializeContentCard(_ card: Braze.ContentCard) -> [String: Any]? {
-        let base: [String: Any] = [
-            "id": card.id,
-            "viewed": card.viewed,
-            "pinned": card.pinned,
-            "extras": card.extras,
-            "updated": card.updated.map { Int($0.timeIntervalSince1970 * 1000) } as Any,
-            "expiresAt": card.expiresAt.map { Int($0.timeIntervalSince1970 * 1000) } as Any,
-        ]
-
-        switch card {
-        case let .classic(c):
-            return base.merging([
-                "type": "classic",
-                "title": c.title,
-                "description": c.description,
-                "imageUrl": c.image?.absoluteString as Any,
-                "url": c.url?.absoluteString as Any,
-                "linkText": c.linkText as Any,
-                "clicked": c.clicked,
-                "dismissed": c.dismissed,
-                "dismissible": c.dismissible,
-                "language": c.language as Any,
-                "altImageText": c.altImageText as Any,
-            ]) { _, new in new }
-        case let .captionedImage(c):
-            return base.merging([
-                "type": "captionedImage",
-                "title": c.title,
-                "description": c.description,
-                "imageUrl": c.image.absoluteString,
-                "url": c.url?.absoluteString as Any,
-                "linkText": c.linkText as Any,
-                "aspectRatio": c.imageAspectRatio as Any,
-                "clicked": c.clicked,
-                "dismissed": c.dismissed,
-                "dismissible": c.dismissible,
-                "language": c.language as Any,
-                "altImageText": c.altImageText as Any,
-            ]) { _, new in new }
-        case let .imageOnly(c):
-            return base.merging([
-                "type": "imageOnly",
-                "imageUrl": c.image.absoluteString,
-                "url": c.url?.absoluteString as Any,
-                "aspectRatio": c.imageAspectRatio as Any,
-                "clicked": c.clicked,
-                "dismissed": c.dismissed,
-                "dismissible": c.dismissible,
-                "language": c.language as Any,
-                "altImageText": c.altImageText as Any,
-            ]) { _, new in new }
-        case .control:
-            return base.merging(["type": "control"]) { _, new in new }
-        @unknown default:
+        guard let data = card.json(),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
+        return dict
     }
 
     // MARK: - Push token registration
@@ -687,16 +638,39 @@ public class BrazePlugin: CAPPlugin {
 
     // MARK: - Privacy / lifecycle
     //
-    // All four are init-independent. They invoke class-level static methods on
-    // `Braze` and operate on the SDK's global state regardless of whether a
-    // configured `Braze` instance exists.
+    // BrazeKit 14.x reshapes the iOS API away from what C07 originally
+    // described. The actual surface in this SDK version:
+    //
+    //   - `Braze.disableSDK()` is still a class func (init-independent).
+    //   - `Braze.wipeDataAndDisableForAppRun()` is the class-level
+    //     wipe (init-independent), formerly `Braze.wipeData()`.
+    //   - `braze.wipeData()` exists on the instance (post-init).
+    //   - `braze.enabled = true/false` replaces `disableSDK()/enableSDK()`
+    //     on the instance.
+    //   - `Braze.enableSDK()` and `Braze.isDisabled` (the static)
+    //     no longer exist.
+    //
+    // What this means for the public plugin contract: `disableSDK` and
+    // `wipeData` stay genuinely init-independent (class-level fallbacks
+    // exist). `enableSDK` and `isDisabled` only work post-init in
+    // BrazeKit 14.x — there's no class-level form. The bridge handles
+    // both cases (pre-init vs post-init) per method, and a planned
+    // follow-up updates C07 to record this divergence.
 
     @objc func wipeData(_ call: CAPPluginCall) {
-        Braze.wipeData()
-        // Per Braze docs, `wipeData` invalidates the current SDK instance.
-        // Drop our reference so subsequent `requireInitialized` calls fail
-        // until `initialize` is called again. Cancel all subscriptions at
-        // the same time so re-init creates fresh ones.
+        if let braze = BrazePlugin.braze {
+            // Post-init: wipe via the instance method (BrazeKit 14.x
+            // canonical form). Drop subscriptions + the instance
+            // reference at the same time so subsequent
+            // requireInitialized calls fail until re-init.
+            braze.wipeData()
+        } else {
+            // Pre-init: fall back to the class-level wipe that also
+            // disables the SDK for the rest of this app run. Matches
+            // the consent-revocation flow this method is designed
+            // around (see C07 + SECURITY.md §10).
+            Braze.wipeDataAndDisableForAppRun()
+        }
         featureFlagsSubscription = nil
         contentCardsSubscription = nil
         BrazePlugin.braze = nil
@@ -704,17 +678,33 @@ public class BrazePlugin: CAPPlugin {
     }
 
     @objc func disableSDK(_ call: CAPPluginCall) {
+        // Class-level disable is still available pre-init in
+        // BrazeKit 14.x — use it unconditionally so disableSDK stays
+        // genuinely init-independent per C07's intent.
         Braze.disableSDK()
+        // Mirror the change on the instance if one exists, so an
+        // immediately-following isDisabled() read returns the new state
+        // without waiting for the SDK to re-sync its instance view.
+        BrazePlugin.braze?.enabled = false
         call.resolve()
     }
 
     @objc func enableSDK(_ call: CAPPluginCall) {
-        Braze.enableSDK()
+        // BrazeKit 14.x has NO class-level enable — only the instance
+        // `enabled` setter. Require an initialized Braze instance.
+        // This deviates from C07's claim of init-independence; the
+        // deviation is iOS-specific and tracked for a C07 update.
+        guard let braze = Self.requireInitialized(call) else { return }
+        braze.enabled = true
         call.resolve()
     }
 
     @objc func isDisabled(_ call: CAPPluginCall) {
-        call.resolve(["disabled": Braze.isDisabled])
+        // Pre-init: report as not disabled (the SDK simply hasn't
+        // been configured; that isn't a disabled state). Post-init:
+        // negate the instance's `enabled` property.
+        let disabled: Bool = BrazePlugin.braze.map { !$0.enabled } ?? false
+        call.resolve(["disabled": disabled])
     }
 
     @objc func requestImmediateDataFlush(_ call: CAPPluginCall) {

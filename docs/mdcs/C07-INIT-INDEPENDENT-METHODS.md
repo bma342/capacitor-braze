@@ -17,6 +17,28 @@ Init-independent methods skip the [C01](./C01-METHOD-ANATOMY.md#init-guards) ini
 
 A fifth method joins this set only when consumer code may legitimately need to call it before `initialize`, AND the underlying Braze SDK exposes a class-level static that operates without a configured instance, AND the regulatory pathway justifies the exception. See "Rules for adding" below.
 
+### Per-platform init-independence asymmetry — verified post-Phase-N
+
+When this MDC was first written (Phase G timeframe), we asserted all four methods were init-independent on all three platforms. **Phase O's iOS verification proved that's not strictly true on BrazeKit 14.x.** The actual situation:
+
+| Method | Web | iOS BrazeKit 14.x | Android |
+|---|---|---|---|
+| `wipeData` | init-independent (class-level `braze.wipeData()`) | dual-path: instance `braze.wipeData()` post-init, class-level `Braze.wipeDataAndDisableForAppRun()` pre-init | init-independent (`Braze.wipeData(context)` class-level) |
+| `disableSDK` | init-independent (class-level) | init-independent (class-level `Braze.disableSDK()`) | init-independent (`Braze.disableSdk(context)` class-level) |
+| `enableSDK` | init-independent (class-level) | **post-init only** — no class-level form in BrazeKit 14.x; instance setter `braze.enabled = true` is the only path | init-independent (`Braze.enableSdk(context)` class-level) |
+| `isDisabled` | init-independent (class-level) | **post-init only** — no class-level `isDisabled` static; query instance via `braze.enabled` | init-independent (`Braze.isDisabled` class-level) |
+
+The plugin's iOS bridge handles this by:
+
+- **`wipeData`**: dual-path — instance `wipeData()` if `BrazePlugin.braze` exists, else class-level `Braze.wipeDataAndDisableForAppRun()`. Either way, drops the instance reference + cancels subscriptions on exit.
+- **`disableSDK`**: still calls `Braze.disableSDK()` unconditionally (class-level). Also mirrors `braze.enabled = false` on the instance when one exists so a same-frame `isDisabled()` read returns the new state.
+- **`enableSDK`**: requires an initialized instance — uses `requireInitialized` guard. This is an iOS-specific deviation from C07's original "all four are init-independent" claim.
+- **`isDisabled`**: pre-init returns `false` (uninitialized != disabled, by convention). Post-init reads `!braze.enabled`.
+
+The user-facing TS contract still declares all four init-independent. iOS consumers who call `enableSDK` before `initialize` see the standard "init required" reject; that's a small, documented behavioral asymmetry vs. Web/Android. The alternative — restricting the public contract to "init-independent on the most restrictive platform" — would unnecessarily handicap Web and Android consumers who do legitimately need to call these pre-init.
+
+If BrazeKit ever re-adds class-level `Braze.enableSDK()` / `Braze.isDisabled`, the iOS bridge should switch back to the unconditional path and this section becomes historical.
+
 `getDeviceId` is **NOT** init-independent today even though the TS contract suggested it could be — see "Why getDeviceId is init-dependent" below.
 
 ## Rationale
