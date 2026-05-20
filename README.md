@@ -1,6 +1,6 @@
 # capacitor-braze
 
-> Capacitor 6+ plugin wrapping the official Braze SDKs for Android, iOS, and Web. **Pre-release scaffold — not yet published to npm.**
+> Capacitor 6+ plugin wrapping the official Braze SDKs for Android, iOS, and Web. **0.0.x — not yet published to npm; consume via git for now.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Capacitor 6+](https://img.shields.io/badge/Capacitor-6%2B-blue.svg)](https://capacitorjs.com/)
@@ -9,26 +9,31 @@ A community-maintained plugin that exposes the Braze customer engagement SDKs to
 
 ## Why this exists
 
-Braze ships first-party SDKs for native Android, iOS, Web, React Native, Flutter, Cordova, Expo, Unity, Xamarin, and Roku — but **not Capacitor**. Today's options for Capacitor teams are: ship the Cordova SDK (broken push handoff in Capacitor 6+), use the Web SDK only (lose native push + IAM), roll a custom bridge (2–3 weeks of native work), or skip Braze. This plugin makes it `npm install` + 10 lines.
+Braze ships first-party SDKs for native Android, iOS, Web, React Native, Flutter, Cordova, Expo, Unity, Xamarin, and Roku — but **not Capacitor**. Today's options for Capacitor teams are: ship the Cordova SDK via Capacitor's compat layer (broken push handoff in Capacitor 6+, deprecated upgrade path), use only the Web SDK (lose native push and in-app messages), roll a custom bridge (2–3 weeks of native work), or skip Braze. This plugin makes it `npm install` + ~10 lines.
 
-See the [demand evidence](./PLAN.md#2-market-validation-already-done) and [strategic plan](./PLAN.md).
+See [`PLAN.md`](./PLAN.md) for the full strategic case, including [why not the Cordova plugin](./PLAN.md#why-not-just-use-braze-cordova-sdk-via-capacitors-cordova-compat-layer).
 
 ## Status
 
-| Phase | Status |
+| Surface | State |
 |---|---|
-| Strategic documentation | ✅ complete |
-| Scaffold (0.0.1) | 🔨 in progress |
-| v0.1.0 (15 daily-use methods) | ⏳ target: 3 weeks from scaffold |
-| v0.2.0 (feature flags + enrichment) | ⏳ planned |
-| v1.0.0 (stable) | ⏳ requires ≥5 production users |
+| **TypeScript API** | 35 methods + `addListener` / `removeAllListeners` for 2 events |
+| **iOS bridge** (BrazeKit 14.1.0) | Compiles green on every PR via the `verify-ios` CI job |
+| **Android bridge** (`com.braze:android-sdk-ui` 42.2.0) | Compiles green on every PR via the `verify-android` CI job |
+| **Web bridge** (`@braze/web-sdk` ^6.0.0) | Builds green; one method (`registerPushToken`) is platform-divergent and throws on web by design (per [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md)) |
+| **Developer testbed** (`example/`) | Every plugin method has a button; clicking invokes + logs |
+| **Reference app** (`demo/`) | React 19 + Tailwind 4 + TanStack Router; restaurant ordering + e-commerce flows; iOS + Android Capacitor projects committed |
+| **MDC design contracts** | C01–C10 codify the patterns; CI gates enforce them |
+| **Smoke-tested against real Braze** | ❌ Not yet — the next milestone |
+| **Published to npm** | ❌ Not yet — waiting on the smoke test |
 
-See [`PLAN.md` §7](./PLAN.md#7-phased-roadmap) for the full roadmap.
+See [`SDK_SURFACE.md` §2](./SDK_SURFACE.md#2-plugin-version-roadmap) for the version roadmap and what's still unshipped (in-app message listener, banners, push permission helpers).
 
-## Quick start (preview — works once 0.1.0 ships)
+## Quick start
 
 ```bash
-npm install capacitor-braze @braze/web-sdk
+# Until 0.1.0 hits npm, consume via git:
+npm install bma342/capacitor-braze @braze/web-sdk
 npx cap sync
 ```
 
@@ -50,6 +55,8 @@ await Braze.logCustomEvent({ name: 'app_opened' });
 ```
 
 **Which API key do I use?** SDK key (public, embedded in app), not REST key (secret, server-only). See [`SECURITY.md` §1](./SECURITY.md#1-api-keys--public-sdk-keys-vs-secret-rest-keys).
+
+**Don't forget the [iOS Podfile setup](#platform-setup)** — Braze SDK 14.x requires `platform :ios, '15.0'` + `use_frameworks! :linkage => :static`. The plugin documents this in [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md); skipping it produces a confusing CocoaPods error.
 
 ## API reference
 
@@ -771,14 +778,14 @@ Options passed to {@link BrazePlugin.initialize}.
 `apiKey` is a **public Braze SDK API key** (the kind embedded in your app).
 Never pass a REST API key here — they are different things. See `SECURITY.md` §1.
 
-| Prop                          | Type                 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ----------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`apiKey`**                  | <code>string</code>  | Braze SDK API key (public).                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| **`endpoint`**                | <code>string</code>  | Braze SDK endpoint, e.g. `sdk.iad-03.braze.com`. Must be HTTPS in production. For mock-server testing, set {@link <a href="#brazeinitializeoptions">BrazeInitializeOptions.allowInsecureEndpoint</a>}.                                                                                                                                                                                                                                                                     |
-| **`enableLogging`**           | <code>boolean</code> | Enable verbose SDK logging. Defaults to `false`. Never enable in production builds — Braze SDK logs include event payloads which may contain PII. See `SECURITY.md` §8.                                                                                                                                                                                                                                                                                                    |
-| **`enableSdkAuthentication`** | <code>boolean</code> | Enable SDK Authentication (signed JWT validation). **Strongly recommended for production.** Without it, anyone with the public SDK API key can spoof events for arbitrary user IDs. See `SECURITY.md` §2 for the full design.                                                                                                                                                                                                                                              |
-| **`allowInsecureEndpoint`**   | <code>boolean</code> | Allow non-HTTPS `endpoint`. Defaults to `false` and should remain so in production. Only set `true` for local mock-server testing per `SECURITY.md` §4.                                                                                                                                                                                                                                                                                                                    |
-| **`sessionTimeoutInSeconds`** | <code>number</code>  | Session timeout in seconds. After this much inactivity, the SDK opens a new session on the next event. Braze's default across all three SDKs is 30 minutes (1800 seconds); supply a value here to override. Must be a positive integer; values ≤ 0 are rejected. Cross-platform note: Capacitor's plugin layer normalizes seconds across all three SDKs. The Android SDK's underlying setter takes milliseconds and the iOS SDK takes a TimeInterval; the bridges convert. |
+| Prop                          | Type                 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`apiKey`**                  | <code>string</code>  | Braze SDK API key (public).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **`endpoint`**                | <code>string</code>  | Braze SDK endpoint, e.g. `sdk.iad-03.braze.com`. Must be HTTPS in production. For mock-server testing, set {@link <a href="#brazeinitializeoptions">BrazeInitializeOptions.allowInsecureEndpoint</a>}.                                                                                                                                                                                                                                                                                                     |
+| **`enableLogging`**           | <code>boolean</code> | Enable verbose SDK logging. Defaults to `false`. Never enable in production builds — Braze SDK logs include event payloads which may contain PII. See `SECURITY.md` §8.                                                                                                                                                                                                                                                                                                                                    |
+| **`enableSdkAuthentication`** | <code>boolean</code> | Enable SDK Authentication (signed JWT validation). **Strongly recommended for production.** Without it, anyone with the public SDK API key can spoof events for arbitrary user IDs. See `SECURITY.md` §2 for the full design.                                                                                                                                                                                                                                                                              |
+| **`allowInsecureEndpoint`**   | <code>boolean</code> | Allow non-HTTPS `endpoint`. Defaults to `false` and should remain so in production. Only set `true` for local mock-server testing per `SECURITY.md` §4.                                                                                                                                                                                                                                                                                                                                                    |
+| **`sessionTimeoutInSeconds`** | <code>number</code>  | Session timeout in seconds. After this much inactivity, the SDK opens a new session on the next event. Braze's default across all three SDKs is 30 minutes (1800 seconds); supply a value here to override. Must be a positive integer; values ≤ 0 are rejected. Cross-platform note: the plugin contract uses seconds across all three platforms. iOS's underlying setter takes a `TimeInterval` (a `Double` of seconds); the iOS bridge casts. Android and Web take seconds directly with no conversion. |
 
 
 #### BrazeChangeUserOptions
