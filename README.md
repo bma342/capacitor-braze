@@ -4,8 +4,15 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Capacitor 6+](https://img.shields.io/badge/Capacitor-6%2B-blue.svg)](https://capacitorjs.com/)
+[![Unofficial](https://img.shields.io/badge/Unofficial-Personal%20Project-orange.svg)](#disclaimer)
 
-A community-maintained plugin that exposes the Braze customer engagement SDKs to Capacitor apps with a single TypeScript API across iOS, Android, and Web. Not affiliated with or endorsed by Braze, Inc.
+> ### Disclaimer
+>
+> **This is an independent, personal open-source project by [Bryce Aspinwall](https://github.com/bma342). It is NOT made by, affiliated with, endorsed by, or supported by Braze, Inc.** "Braze" is a trademark of Braze, Inc.; the name appears here only to describe what this plugin wraps. For first-party SDKs and official support, go to [braze.com](https://www.braze.com/) or the [`braze-inc`](https://github.com/braze-inc) GitHub organization.
+>
+> This plugin is a thin Capacitor bridge layer around Braze's own public SDKs (which do all the real work). It is MIT-licensed, built on the side as a portfolio + personal-use project, and offered as-is. Issues and PRs are welcome but support is best-effort.
+
+A community-maintained Capacitor plugin that exposes the Braze customer engagement SDKs to Capacitor apps with a single TypeScript API across iOS, Android, and Web.
 
 ## Why this exists
 
@@ -1172,6 +1179,82 @@ discriminator to narrow.
 |---|---|---|
 | [`example/`](./example/) | Developer testbed — every plugin method has a button | Vite + vanilla TS |
 | [`demo/`](./demo/) | Fork-as-starter Capacitor + Braze reference app (restaurant ordering + e-commerce, mock backend) | Vite 6 + React 19 + Tailwind 4 + TanStack Router + Capacitor 6 |
+
+## Local development & testing
+
+Everything below runs on your machine with no Braze trial account required. The trial only matters for the final Layer 4 smoke ([`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md)).
+
+### One-time setup
+
+```bash
+git clone https://github.com/bma342/capacitor-braze
+cd capacitor-braze
+npm install
+npm run build                         # type-check + rollup + docgen
+```
+
+### Fast loops (every PR)
+
+```bash
+npm test                              # 53 vitest behavioral tests vs. Fastify mock; ~2.4s
+npm run lint                          # eslint + prettier --check + swiftlint
+npm run fmt                           # auto-fix everything lint complains about
+```
+
+The 53 vitest tests are the highest-signal local check. They boot a Fastify mock Braze server in-process, run the Web SDK through it under jsdom, and capture every outbound HTTP request to assert wire format. If you change the web bridge, this is the gate.
+
+### Example app (manual smoke of each method)
+
+```bash
+cd example
+npm install
+npm run dev                           # http://localhost:5173, one button per method
+```
+
+Open the page, click any plugin method button, watch the log panel for the result + any captured network call against the in-tree mock server.
+
+### Demo app (realistic flows)
+
+```bash
+cd demo
+npm install
+npm run dev                           # http://localhost:5173, restaurant + e-commerce flows
+```
+
+For the native projects:
+
+```bash
+cd demo
+npm run build && npx cap sync
+npx cap open ios                      # Xcode opens; ⌘R to run on simulator
+npx cap open android                  # Android Studio opens; Run to launch on emulator
+```
+
+### Native compile gates (matches CI)
+
+The plugin's iOS Swift bridge and Android Kotlin bridge are compile-gated against the real Braze SDKs on every PR via the `verify-ios` and `verify-android` jobs in `.github/workflows/test.yml`. To reproduce locally:
+
+```bash
+# iOS: requires Xcode 16+ and CocoaPods. Compiles against BrazeKit 14.1.0.
+cd demo/ios/App
+pod install
+xcodebuild -workspace App.xcworkspace -scheme App -sdk iphonesimulator \
+  -destination 'platform=iOS Simulator,name=iPhone 16' \
+  CODE_SIGNING_ALLOWED=NO build
+
+# Android: requires JDK 17 and Android SDK 35. Compiles against com.braze:android-sdk-ui 42.2.0.
+cd demo/android
+./gradlew assembleDebug --no-daemon
+```
+
+These don't run the plugin's behavior; they prove the bridge code still compiles when Braze changes its SDK shape (which is what bit us in Phase O before this gate existed).
+
+### What is NOT yet locally testable
+
+| Surface | Why | When |
+|---|---|---|
+| iOS/Android native behavior (wire format, error paths) | Native test harnesses ([C11](./docs/mdcs/C11-NATIVE-TEST-HARNESSES.md)) designed but not yet implemented; gated on trial-smoke ground truth | Post-trial-smoke, before 0.2.0 |
+| Real Braze backend acceptance | Requires a Braze trial account; covered by [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) | One-time gate before tagging 0.1.0 |
 
 ## Documentation
 

@@ -1,8 +1,10 @@
 # Braze SDK Surface — Full Catalog & Plugin Coverage
 
-> Comprehensive map of every Braze SDK capability across Android, iOS, and Web, with the plugin's coverage roadmap. This document is the authoritative inventory; [`PLAN.md`](./PLAN.md) is the strategic plan, [`SECURITY.md`](./SECURITY.md) is the security model.
+> Comprehensive map of every Braze SDK capability across Android, iOS, and Web, with this plugin's coverage roadmap. This document is the authoritative inventory; [`PLAN.md`](./PLAN.md) is the strategic plan, [`SECURITY.md`](./SECURITY.md) is the security model.
+>
+> **Unofficial plugin.** This is an independent, community-maintained Capacitor wrapper around Braze's first-party SDKs. NOT affiliated with or endorsed by Braze, Inc. See the [README disclaimer](./README.md#disclaimer).
 
-**Last updated:** 2026-05-19
+**Last updated:** 2026-05-20
 **Native SDK versions tracked:**
 - `com.braze:android-sdk-ui` — **v42.2.0** (released 2026-04-29)
 - `BrazeKit` / `BrazeUI` — **v14.1.0**

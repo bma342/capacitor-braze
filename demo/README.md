@@ -2,7 +2,9 @@
 
 A **working Capacitor app** that you can fork as the starting point for a Capacitor + Braze integration. Mock backend, real plugin wiring, both restaurant-ordering and e-commerce flows.
 
-This is **not** an Aromo derivative — it's a fresh, MIT-licensed reference that ships alongside the plugin source. Goal: a developer can clone this repo, run two commands, see the plugin working end-to-end against their own Braze trial account, and copy the wiring patterns into their real app.
+> **Unofficial.** This demo and the [`capacitor-braze`](../) plugin it consumes are an independent, community-maintained personal project by [Bryce Aspinwall](https://github.com/bma342). NOT affiliated with, endorsed by, or supported by Braze, Inc. See the [parent README disclaimer](../README.md#disclaimer). For first-party SDKs and official support, go to [braze.com](https://www.braze.com/).
+
+This is **not** an Aromo derivative; it's a fresh, MIT-licensed reference that ships alongside the plugin source. Goal: a developer can clone this repo, run two commands, see the plugin working end-to-end against their own Braze trial account, and copy the wiring patterns into their real app.
 
 ## What's different from `../example/`
 

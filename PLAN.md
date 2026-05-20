@@ -1,13 +1,14 @@
 # capacitor-braze — Plan
 
-> An open-source Capacitor 6+ plugin wrapping the Braze native SDKs (Android, iOS, Web). The plugin Capacitor users have been asking for since 2020.
+> An independent, MIT-licensed Capacitor 6+ plugin wrapping the Braze native SDKs (Android, iOS, Web). A personal open-source project by Bryce Aspinwall. **Not affiliated with, endorsed by, or supported by Braze, Inc.** "Braze" is a trademark of Braze, Inc.; the name appears here only to describe what this plugin wraps. For first-party SDKs and official support, see [braze.com](https://www.braze.com/) or the [`braze-inc`](https://github.com/braze-inc) GitHub organization.
 
 **Status:** Planning → scaffold next
 **License:** MIT
-**npm:** `capacitor-braze` (unscoped — slot confirmed available)
+**npm:** `capacitor-braze` (unscoped, slot confirmed available)
 **Lighthouse customer:** Aromo customer app (Capacitor + Next.js)
 **Owner:** Bryce Aspinwall (`bma342`)
-**Last updated:** 2026-05-19
+**Affiliation with Braze, Inc.:** None. Community-maintained, offered as-is.
+**Last updated:** 2026-05-20
 
 **Companion docs:**
 - [`SDK_SURFACE.md`](./SDK_SURFACE.md) — complete Braze SDK capability catalog + plugin coverage roadmap

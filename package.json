@@ -1,7 +1,7 @@
 {
   "name": "capacitor-braze",
   "version": "0.0.12",
-  "description": "Capacitor 6+ plugin wrapping the official Braze SDKs for Android, iOS, and Web.",
+  "description": "Unofficial, community-maintained Capacitor 6+ plugin wrapping the official Braze SDKs for Android, iOS, and Web. Not affiliated with or endorsed by Braze, Inc.",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
@@ -50,6 +50,8 @@
     "build": "npm run clean && tsc && rollup -c rollup.config.mjs && npm run docgen",
     "clean": "rimraf ./dist",
     "watch": "tsc --watch",
+    "test": "cd test/web && npm test",
+    "test:watch": "cd test/web && npm run test:watch",
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {

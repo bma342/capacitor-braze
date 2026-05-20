@@ -1,8 +1,10 @@
 # Security Model — capacitor-braze
 
 > The plugin's complete security posture. Read alongside [`PLAN.md`](./PLAN.md) (strategy) and [`SDK_SURFACE.md`](./SDK_SURFACE.md) (capability catalog). Every plugin design decision with security implications is documented here.
+>
+> **Unofficial plugin.** This is an independent, community-maintained Capacitor wrapper. NOT affiliated with or endorsed by Braze, Inc. For Braze's own security disclosures and SDK-level guarantees, see [braze.com/security](https://www.braze.com/security). This document covers only the plugin-layer security posture; the underlying Braze SDKs are responsible for everything they document themselves.
 
-**Last updated:** 2026-05-19
+**Last updated:** 2026-05-20
 **Disclosure:** see [§14](#14-vulnerability-disclosure-policy) below.
 
 ---

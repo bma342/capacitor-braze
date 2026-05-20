@@ -4,6 +4,10 @@ A minimal Capacitor app that exercises every method exposed by the parent
 `capacitor-braze` plugin. Use this to smoke-test changes locally and to validate
 the plugin against a real Braze account.
 
+> **Unofficial.** This example and the parent plugin are an independent,
+> community-maintained personal project. NOT affiliated with or endorsed by
+> Braze, Inc. See the [parent README disclaimer](../README.md#disclaimer).
+
 ## What it does
 
 A single web page renders a UI for every plugin method (`initialize`,
