@@ -41,9 +41,16 @@ Plus 17 serializer unit tests (`serializers.test.ts`) covering `serializeFeature
 
 These are coverage holes a maintainer should know about. They are filed here so they aren't "discovered" again on every audit.
 
-### Gaps blocked on mock-server enhancement
+### Gaps blocked on initialize-time scripting (in addition to mock-server enhancement, partly done)
 
-The current Fastify mock returns `{message: "success"}` for every request. To assert against populated server state, the mock needs to return the Web SDK's actual envelope shapes for feature-flag refresh + content-card refresh responses. That work hasn't been done.
+**Update 2026-05-20:** the mock-server now has `respondTo({pathPattern, body})` to script per-path responses. **But** a spike against `refreshFeatureFlags` revealed a second layer: the Web SDK gates the FF refresh fetch on server-config delivered in the **first** data POST response during `initialize()`. The shared-plugin `beforeAll` pattern most test files use initializes once before any test can script that initial response. Closing the populated-cache gap therefore needs **both**:
+
+1. `respondTo()` on the mock-server (✅ done; ships in mock-server 0.0.2)
+2. A per-test plugin lifecycle helper (or pre-init script registration) that lets a test stage the initial `/api/v3/data/` response with a `config: { feature_flags: { enabled: true }, ... }` block BEFORE plugin.initialize() fires the first session POST.
+
+Step 2 is the remaining work (~2-3 hrs). Until then, the mock-server `respondTo()` primitive is sitting unused for FF/CC populated tests but is genuine infrastructure that future work builds on.
+
+The current Fastify mock still returns `{message: "success"}` by default for unscripted requests; scripts take precedence when registered.
 
 | Method | What's untested today | Why it matters |
 |---|---|---|
@@ -78,7 +85,7 @@ The 0.1.0 release notes will reference this doc so adopters know exactly what is
 
 ## Next moves to close gaps
 
-1. **Mock-server enhancement** (~half day): add optional handlers that return realistic feature-flag + content-card refresh responses. Unblocks 7 of the populated-cache tests above.
+1. **Pre-init script + per-test lifecycle helper** (~2-3 hrs, partly unblocks): wraps `freshMockServer + new BrazeWeb + initialize` into a helper where the initial `/api/v3/data/` response is pre-scripted with a server-config block (`feature_flags: {enabled: true}`, `content_cards: {enabled: true}`, etc.). Then the existing `respondTo()` primitive on the mock-server (✅ already landed) unblocks 7+ populated-cache tests for FF + CC.
 2. **SDK event injection helper** (~half day): a small test helper that drives the underlying `@braze/web-sdk` subscription system from inside vitest, so listener lifecycle becomes assertable. Unblocks listener tests.
 3. **C11 native harness implementation** (post-trial-smoke, ~1-2 days): described in the MDC.
 

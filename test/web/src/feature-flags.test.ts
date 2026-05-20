@@ -81,4 +81,15 @@ describe('feature flags (web bridge → @braze/web-sdk → mock)', () => {
   it('logFeatureFlagImpression rejects empty id', async () => {
     await expect(plugin.logFeatureFlagImpression({ id: '' })).rejects.toThrow(/id.*required/i);
   });
+
+  // Populated-cache tests (refresh → getFeatureFlag returns real flag DTO end-to-end)
+  // are deferred. The MockServer.respondTo() API is wired and works, but the SDK
+  // gates refreshFeatureFlags on server-config that is delivered in the FIRST data
+  // POST response during initialize(). The shared-plugin `beforeAll` pattern this
+  // file uses initializes the plugin once before any test can script that initial
+  // response. Closing this requires either per-test plugin lifecycle (significant
+  // restructure) or a small helper that boots `freshMockServer + initialize` with
+  // a config-bearing script in place before init fires. Tracked in
+  // docs/TEST-COVERAGE-AUDIT.md; the spike that proved respondTo() works is on
+  // record in the mock-server commit message.
 });
