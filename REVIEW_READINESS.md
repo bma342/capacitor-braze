@@ -432,11 +432,13 @@ Honest walk through every checkbox above, with verifiable state. Sections 1-5 se
 
 Items that MUST clear before `v0.1.0` ships to npm:
 
-1. **Layer 4 manual smoke against the Braze trial.** Walk through [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) — every method against the dashboard, on all three platforms, with wire-format captures. Catches anything the mock didn't model. ~2-3 hrs.
-2. **`PrivacyInfo.xcprivacy` manifest** for iOS. App Store gate as of May 2024.
-3. **`SDK_SURFACE.md §1` coverage table audit.** Done in Phase Q — verify the "Currently shipped" block stays accurate when new methods land.
-4. **README quick-start fresh-`cap-init` validation.** 5-minute sanity check on a clean repo (separate from the in-tree demo).
-5. **Repo settings hygiene:** signed-commits, no-force-push-on-main, npm 2FA enabled. One-time GitHub config.
+1. **Layer 4 manual smoke against the Braze trial.** Walk through [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) every method against the dashboard, on all three platforms, with wire-format captures. Catches anything the mock didn't model. ~2-3 hrs. ☐ Pending trial run.
+2. **`PrivacyInfo.xcprivacy` manifest** for iOS. App Store gate as of May 2024. ✅ Resource-bundles wiring in podspec verified on fresh `cap-init` 2026-05-20.
+3. **`SDK_SURFACE.md §1` coverage table audit.** ✅ Done in Phase Q.
+4. **README quick-start fresh-`cap-init` validation.** ✅ Validated 2026-05-20; surfaced an iOS Podfile-edit requirement that was documented in C10 but missing from the quick-start. README now inlines the two Podfile edits.
+5. **Repo settings hygiene.** ⚠ Partial:
+   - ✅ Branch protection on `main` applied via `gh` CLI: 8 required status checks (strict), no force pushes, no deletions, conversation resolution required, admin bypass allowed for solo hotfixes.
+   - ☐ Signed commits (locally + on `main` rule re-enabled), npm 2FA. Step-by-step in [`docs/REPO-HYGIENE.md`](./docs/REPO-HYGIENE.md); user-personal actions that can't be done via `gh` CLI alone.
 
 Items planned post-0.1.0 (not blockers):
 
