@@ -73,7 +73,7 @@
   },
   "peerDependencies": {
     "@braze/web-sdk": "^6.0.0",
-    "@capacitor/core": "^6.0.0"
+    "@capacitor/core": "^6.0.0 || ^7.0.0"
   },
   "peerDependenciesMeta": {
     "@braze/web-sdk": {
