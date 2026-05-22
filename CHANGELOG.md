@@ -6,10 +6,70 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-05-22 — Audit cleanup + first credible npm tag
+
+This is the first release the project's own audit ([`findings/SUMMARY.md`](./findings/SUMMARY.md)) judges credible to publish. 17 phases of cleanup close the BLOCKER + MAJOR findings across contract integrity, cross-platform translation, native code quality, security, CI/tooling, and documentation. The plugin is now consumable from npm as `npm install capacitor-braze` (Capacitor 6 or 7), with iOS in-app message rendering wired out of the box, SDK Authentication enforced client-side, and `inAppMessageReceived` / `sdkAuthError` listener events on every platform.
+
 ### Pinned native SDK versions
 - `com.braze:android-sdk-ui` **42.2.0**
 - `BrazeKit` / `BrazeUI` **14.1.0**
 - `@braze/web-sdk` peer dep `^6.0.0`
+
+### Capacitor compat
+- Peer dependency: `@capacitor/core` `^6.0.0 || ^7.0.0`
+- Podspec dependency: `Capacitor` `>= 6.0, < 8.0`
+
+### Added
+
+- **`inAppMessageReceived` listener event** across all three platforms. Cross-platform DTO is a 5-variant tagged union (`slideup` / `modal` / `full` / `html` / `control`) that collapses BrazeKit iOS's 7-case enum and Braze Android's 5-case MessageType onto a single contract. Full button + click-action + extras serialization. Listener fires on every IAM trigger immediately before the SDK's presenter displays the message; the plugin always returns `DISPLAY_NOW` / `.now` to preserve out-of-the-box rendering. Closes L4-S11.
+- **`sdkAuthError` listener event** across all three platforms. Fires when Braze rejects an authenticated request; consumer pushes a fresh signature via `setSdkAuthenticationSignature`. Closes L5-04 / SECURITY.md §2 promise.
+- **iOS in-app message rendering out of the box.** `import BrazeUI` + `braze.inAppMessagePresenter = BrazeInAppMessageUI()` in `initialize`, dispatched to the main actor for Swift 6 strict-concurrency compliance.
+- **Android in-app message rendering lifecycle wiring.** `BrazeInAppMessageManager.getInstance().registerInAppMessageManager(activity)` in `handleOnResume` + the matching unregister in `handleOnPause`. IAMs now render automatically against the Capacitor host Activity.
+- **URL parsing + cluster sanity check at `initialize`** on all three platforms. Malformed endpoints reject before the SDK ever sees them; web additionally warns on unknown cluster patterns. Closes L5-03 / SECURITY.md §4 promise.
+- **gitleaks + Snyk CI steps** in the `audit` job. Snyk is gated on `SNYK_TOKEN`. Closes L5-05 (partial).
+- **Required signed-commit branch protection on `main`.** Closes L5-05 (signed commits).
+- **`prepare` script** so `npm install bma342/capacitor-braze` git-URL installs build `dist/*` on the consumer side.
+- **Native test harnesses.** Android Robolectric/JUnit contract tests under `android/src/test/`, run via `./gradlew :capacitor-braze:testDebugUnitTest` in CI. iOS XCTest contract tests under `ios/PluginTests/`. Closes L6-01.
+- **Layer 4 smoke scripts.** `npm run smoke:web` / `:ios` / `:android` env-validating wrappers around the demo app + Xcode-/Android-Studio-open prereqs. Closes L6-02 to the extent it can be closed without trial credentials.
+- **MDC glossary + 8-file-lockstep walkthrough + Tips for AI assistants** sections in `CLAUDE.md`.
+- **SwiftLint check in CI** (`verify-ios` job, `--strict`).
+- **Dependabot watches `/demo` and `/test/mock-server`** in addition to plugin + example.
+
+### Fixed
+
+- **L1-01 (BLOCKER): `getDeviceId` JSDoc lie.** Contract claimed init-independence; all three bridges actually require `initialize`. JSDoc rewritten.
+- **L1-02 (MAJOR): `enableSDK` / `isDisabled` JSDoc.** Documents the iOS BrazeKit 14.x asymmetry.
+- **L2-01 (BLOCKER): iOS `serializeFeatureFlag` shape.** Now walks BrazeKit's typed accessors and emits the C02 tagged-union `{ type, value }` shape.
+- **L2-02 (BLOCKER): iOS + Android `serializeContentCard` discriminator.** Pattern-matches the SDK's enum cases (iOS) / class hierarchy (Android) to emit the 4-string contract discriminator.
+- **L2-05 (MAJOR): web content-card classification** via `instanceof` instead of the field-presence heuristic.
+- **L2-07 + L4-K04 + L5-08: cross-platform error message parity.** Per-field DOB errors byte-identical across platforms; `Month.entries`; explicit `sessionTimeoutInSeconds <= 0` rejection.
+- **L4-K01 / L4-S01 / L4-T01 / L5-01: SDK Authentication enforcement.** All three bridges reject signature-less `changeUser` calls when SDK Auth was enabled at init. Closes SECURITY.md §2 defense-in-depth.
+- **L4-K02 (MAJOR): Android `setCustomUserAttribute` Long truncation.** Uses the SDK's `Long` overload directly.
+- **L4-S02 (MAJOR): iOS `setCustomUserAttribute` dispatch order.** `getDouble`-first; only dispatches to Int when the value is truly integer.
+- **L4-S03 + L4-S04: iOS init re-entrance + closure lifetime.**
+- **L2-03 + L2-04 + L2-06: integer-vs-float JSDoc claim removed; null/undefined rejection cross-platform.**
+- **L4-T02 + L4-P03: Capacitor 7 forward-compat ranges.**
+- **L5-02: SECURITY.md §5 push handoff design** rewritten to match what the plugin actually does.
+- **L5-07: SECURITY.md disclosure placeholder** replaced with GitHub Security Advisories pointer.
+- **L4-T03: `noUncheckedIndexedAccess` enabled** in main tsconfig (zero new errors surfaced).
+- **L4-T06: web subscription flag reset on `wipeData`.**
+- **L4-T09 + L10-01: ESLint coverage on `test/web/`** + `_options` warning suppression.
+- **L9-MAJOR-1: stale CLAUDE.md SDK pins + wrong podspec filename.**
+
+### Changed
+
+- **CLAUDE.md** refresh for AI ingestion: MDC glossary table, 8-file-lockstep walkthrough, Tips section with grep-this-first patterns + common gotchas + BrazeKit xcframework download trick.
+- **SECURITY.md §2 + §4 + §5 + §13:** doc-to-reality reconciliation per the audit's L5 findings.
+- **CapacitorBraze.podspec:** bounded `Capacitor` dependency range.
+- **android/build.gradle:** dropped the legacy `appboy.github.io/appboy-android-sdk/sdk` Maven URL (L4-K05).
+
+### Deferred (post-`0.1.0`)
+
+- Full Layer 4 smoke captures — wrappers ship; captures land when the maintainer provisions a Braze trial and walks the playbook.
+- C11 native test harness coverage expansion beyond the contract surface this PR covers.
+- iOS XCTest target wiring inside the demo's Xcode workspace (the test files live in `ios/PluginTests/` ready to add as a Unit Testing Bundle target — one-time maintainer setup).
+
+## [0.0.12] earlier `[Unreleased]` items, now rolled into `0.1.0`
 
 ### Fixed — `PrivacyInfo.xcprivacy` now actually ships (Phase S, App Store gate)
 
