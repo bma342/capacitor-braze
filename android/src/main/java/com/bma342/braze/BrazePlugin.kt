@@ -348,12 +348,18 @@ class BrazePlugin : Plugin() {
             BrazeLogger.enableVerboseLogging()
         }
 
-        if (call.hasOption("sessionTimeoutInSeconds")) {
+        val sessionTimeoutInSeconds = call.getInt("sessionTimeoutInSeconds")
+        if (sessionTimeoutInSeconds != null) {
             // L5-08: reject sessionTimeoutInSeconds <= 0 explicitly rather
             // than silently dropping. Web's TS validation already rejects;
             // matching the natives keeps C04 validation parity.
-            val sessionTimeoutInSeconds = call.getInt("sessionTimeoutInSeconds")
-            if (sessionTimeoutInSeconds == null || sessionTimeoutInSeconds <= 0) {
+            //
+            // `getInt` returns null for both absent-key and non-integer
+            // values, which collapses absent-key and null-key into
+            // "treat as default" — that matches the contract. Matches
+            // the iOS bridge's Phase 6 cleanup that dropped hasOption()
+            // in favor of the typed accessor's nullable return.
+            if (sessionTimeoutInSeconds <= 0) {
                 call.reject("Braze.initialize: `sessionTimeoutInSeconds` must be a positive integer.")
                 return
             }

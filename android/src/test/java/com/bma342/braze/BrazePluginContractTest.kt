@@ -98,11 +98,12 @@ class BrazePluginContractTest {
     @Test
     fun `initialize rejects malformed endpoint with parseable-URL error`() {
         // L5-03: structurally invalid URL fails the URL parsing step
-        // before reaching the SDK. https://::::: is a parseable URI
-        // scheme but invalid authority — java.net.URI throws.
+        // before reaching the SDK. The space character is illegal in
+        // a URI authority component per RFC 3986 — java.net.URI
+        // throws URISyntaxException on the parse.
         val data = JSObject()
             .put("apiKey", "test-key")
-            .put("endpoint", "https://:::::")
+            .put("endpoint", "https://invalid host.example.com")
         val call = mockPluginCall(data)
         plugin.initialize(call)
         val captor = ArgumentCaptor.forClass(String::class.java)
@@ -161,7 +162,11 @@ class BrazePluginContractTest {
         // object with these accessors at runtime.
         whenever(call.getString(any<String>())).thenAnswer { invocation ->
             val key = invocation.getArgument<String>(0)
-            data.optString(key, null)
+            // JSONObject.optString(name) returns "" for absent keys, but
+            // the plugin's validation code distinguishes null (absent)
+            // from "" (present but empty). Use `has` to keep the
+            // distinction.
+            if (data.has(key)) data.optString(key) else null
         }
         whenever(call.getInt(any<String>())).thenAnswer { invocation ->
             val key = invocation.getArgument<String>(0)
