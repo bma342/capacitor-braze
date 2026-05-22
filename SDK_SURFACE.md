@@ -106,11 +106,11 @@ In-app messages (all of v0.1's IAM row), push permission request, push action bu
 | `changeUser(userId)` | ✅ | ✅ | ✅ | **v0.1** |
 | `changeUser(userId, sdkAuthSignature)` (JWT) | ✅ | ✅ | ✅ | **v0.1** |
 | `getUserId()` | ✅ | ✅ | ✅ | **v0.1** |
-| Add user alias (`addAlias`) | ✅ | ✅ | ✅ | **v0.2** |
-| Set custom attribute (string/number/bool/array) | ✅ | ✅ | ✅ | **v0.1** |
+| Add user alias (`addAlias`) | ✅ | ✅ | ✅ | **v0.1** |
+| Set custom attribute (string/number/bool) | ✅ | ✅ | ✅ | **v0.1** (array support v0.5) |
 | `setEmail`, `setPhoneNumber`, `setFirstName`, `setLastName` | ✅ | ✅ | ✅ | **v0.1** |
-| `setCountry`, `setHomeCity`, `setLanguage`, `setGender`, `setDateOfBirth` | ✅ | ✅ | ✅ | **v0.2** |
-| Subscription group: `addToSubscriptionGroup` / `removeFromSubscriptionGroup` | ✅ | ✅ | ✅ | **v0.2** |
+| `setCountry`, `setHomeCity`, `setLanguage`, `setGender`, `setDateOfBirth` | ✅ | ✅ | ✅ | **v0.1** |
+| Subscription group: `addToSubscriptionGroup` / `removeFromSubscriptionGroup` | ✅ | ✅ | ✅ | **v0.1** |
 | Email/push subscription state (`setEmailNotificationSubscriptionType`) | ✅ | ✅ | ✅ | **v0.2** |
 | User attributes array operations (add/remove) | ✅ | ✅ | ✅ | **v0.5** |
 
@@ -122,7 +122,7 @@ In-app messages (all of v0.1's IAM row), push permission request, push action bu
 | `logPurchase(productId, currency, price, quantity?, properties?)` | ✅ | ✅ | ✅ | **v0.1** |
 | `requestImmediateDataFlush()` | ✅ | ✅ | ✅ | **v0.1** |
 | Session open/close explicit | ✅ | ✅ | ✅ | **v0.5** |
-| Session timeout config | ✅ | ✅ | ✅ | **v0.2** (via init options) |
+| Session timeout config | ✅ | ✅ | ✅ | **v0.1** (`sessionTimeoutInSeconds` init option) |
 
 ### Push notifications
 
@@ -168,11 +168,11 @@ In-app messages (all of v0.1's IAM row), push permission request, push action bu
 
 | Capability | Android | iOS | Web | Plugin |
 |---|---|---|---|---|
-| `getFeatureFlag(flagId)` | ✅ | ✅ | ✅ | **v0.2** |
-| Typed property accessors (bool/number/string/json) | ✅ | ✅ | ✅ | **v0.2** |
-| Subscribe to updates | ✅ | ✅ | ✅ | **v0.2** |
-| Refresh on demand | ✅ | ✅ | ✅ | **v0.2** |
-| Log impression | ✅ | ✅ | ✅ | **v0.2** |
+| `getFeatureFlag(flagId)` | ✅ | ✅ | ✅ | **v0.1** |
+| Typed property accessors (string/number/boolean/image/datetime/jsonobject) | ✅ | ✅ | ✅ | **v0.1** (per-platform-native dispatch, C02 tagged-union DTO) |
+| Subscribe to updates (`featureFlagsUpdated` listener) | ✅ | ✅ | ✅ | **v0.1** |
+| Refresh on demand (`refreshFeatureFlags`) | ✅ | ✅ | ✅ | **v0.1** |
+| Log impression (`logFeatureFlagImpression`) | ✅ | ✅ | ✅ | **v0.1** |
 
 ### Banners (web SDK only)
 
