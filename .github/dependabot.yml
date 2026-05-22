@@ -6,6 +6,12 @@
 # - GitHub Actions: weekly, pinned by SHA where possible (supply-chain hygiene).
 # - The plugin's *Braze SDK* version pins are NOT auto-bumped — those follow
 #   the policy in SDK_SURFACE.md §4 (manual per Braze SDK release notes).
+# - `@capacitor/*` major bumps are ignored across all ecosystems. The plugin
+#   supports Capacitor 6 + 7 per its peer dep range; bumping the example/demo
+#   apps to Capacitor 8 would force a JDK 21 baseline (Capacitor 8 raised the
+#   AGP/JDK minimum) and break the plugin's own podspec range. Capacitor
+#   majors land via a deliberate maintainer-driven migration, not via
+#   Dependabot.
 
 version: 2
 updates:
@@ -16,6 +22,9 @@ updates:
       interval: 'weekly'
       day: 'monday'
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: '@capacitor/*'
+        update-types: ['version-update:semver-major']
     groups:
       dev-deps:
         applies-to: version-updates
@@ -29,6 +38,9 @@ updates:
       interval: 'weekly'
       day: 'monday'
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: '@capacitor/*'
+        update-types: ['version-update:semver-major']
     groups:
       example-deps:
         applies-to: version-updates
@@ -42,6 +54,9 @@ updates:
       interval: 'weekly'
       day: 'monday'
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: '@capacitor/*'
+        update-types: ['version-update:semver-major']
     groups:
       demo-deps:
         applies-to: version-updates
