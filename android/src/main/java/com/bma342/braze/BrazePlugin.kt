@@ -169,6 +169,18 @@ class BrazePlugin : Plugin() {
             )
             return
         }
+        // L5-03: URL parsing client-side. SECURITY.md §4 promises malformed
+        // URLs reject before they reach the SDK; this delivers on that.
+        // Bare-host shorthand (`sdk.us-01.braze.com` with no scheme) is
+        // accepted by Braze's docs, so we prefix a dummy scheme before
+        // parsing to preserve that ergonomic path.
+        val parseTarget = if (endpoint.contains("://")) endpoint else "https://$endpoint"
+        try {
+            java.net.URI(parseTarget)
+        } catch (_: java.net.URISyntaxException) {
+            call.reject("Braze.initialize: `endpoint` is malformed (must be a parseable URL or bare hostname).")
+            return
+        }
 
         val enableLogging = call.getBoolean("enableLogging", false) ?: false
         val enableSdkAuthentication = call.getBoolean("enableSdkAuthentication", false) ?: false

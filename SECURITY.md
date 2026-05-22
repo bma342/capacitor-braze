@@ -181,16 +181,17 @@ Push tokens (APNs, FCM) are **not secret** but routing them to the wrong endpoin
 - Leak the device's token to an analytics destination it shouldn't reach.
 - Cause duplicate notifications (Braze and another provider both send).
 
-### Plugin design: single-owner push
+### Plugin design: consumer always owns the token handoff
 
-Only one system can own push registration at a time. Plugin enforces this via the `enableAutomaticPushHandling` flag:
+The plugin does NOT register for push notifications on the consumer's behalf. The consumer's app is expected to use a push-pipeline plugin it already owns — typically `@capacitor/push-notifications` — to request permission, receive the platform push token, and forward it to Braze via `Braze.registerPushToken({ token })`.
 
-| Mode | Who owns registration | When to use |
-|---|---|---|
-| `enableAutomaticPushHandling: true` (default) | Braze SDK | Greenfield apps; Braze is the only push provider. |
-| `enableAutomaticPushHandling: false` | Consumer (typically `@capacitor/push-notifications`) | Apps with existing push pipeline, or routing tokens to multiple destinations. |
+| Platform | Plugin behavior |
+|---|---|
+| iOS | `registerPushToken(token)` hex-decodes the APNs string to `Data` and hands it to `braze.notifications.register(deviceToken:)`. |
+| Android | `registerPushToken(token)` assigns the FCM string to `Braze.getInstance(context).registeredPushToken`. |
+| Web | `registerPushToken` rejects — Web Push has no token to register. |
 
-In `false` mode, consumer calls `Braze.registerPushToken({ token })` manually after receiving the token from their primary push pipeline. The plugin does not retain or re-emit the token.
+There is no `enableAutomaticPushHandling` flag — the plugin is intentionally always in "consumer owns it" mode, because the auto-handoff path requires platform-specific manifest entries and delegate methods that a Capacitor host app already wires up via its primary push plugin.
 
 ### What the plugin does NOT do
 
@@ -381,21 +382,17 @@ await Braze.wipeData();
 
 ## 14. Vulnerability disclosure policy
 
-Plugin's `SECURITY.md` file (in the public repo) contains:
+**Reporting a vulnerability:** open a private security advisory at <https://github.com/bma342/capacitor-braze/security/advisories/new>. GitHub's private vulnerability reporting is enabled on the repository, so the maintainer is notified without any public disclosure.
 
-```
-## Reporting a vulnerability
+**Do not** open a public issue or pull request for security findings — those are visible to the world the moment they land. The advisory channel keeps the disclosure private until a patch ships, with the option to publish a CVE alongside the fix when the advisory is closed.
 
-Email: security@<future-domain>
-PGP key: <fingerprint>
+**Response targets** (pre-1.0, best-effort):
+- Acknowledge within 72 hours.
+- Triage and assess severity within 7 days.
+- Patch confirmed critical vulnerabilities within 14 days of triage.
+- Publish a CVE for any fix that affects consumer apps via the GitHub Security Advisory.
 
-We respond within 72 hours, fix critical issues within 7 days,
-and publish CVEs for confirmed vulnerabilities.
-
-Please do not open public GitHub issues for security reports.
-```
-
-For pre-1.0, until a dedicated email is set up: report via GitHub Security Advisories (private vulnerability reporting enabled on the repo).
+A dedicated `security@` email and PGP key are planned post-1.0 once the project earns the maintenance bandwidth.
 
 Bug bounty: not offered pre-1.0. Considered for 1.0 if the plugin's adoption justifies it.
 

@@ -45,6 +45,25 @@ describe('input validation (web bridge)', () => {
         }),
       ).rejects.toThrow(/sessionTimeoutInSeconds.*positive/);
     });
+
+    // L5-03: URL parsing client-side. Malformed endpoints reject before the
+    // SDK ever sees them, delivering on the SECURITY.md §4 claim.
+    it('rejects a malformed endpoint with a clear message', async () => {
+      const plugin = new BrazeWeb();
+      // `:::::` is a structurally invalid URL — new URL() throws regardless
+      // of scheme prefix.
+      await expect(plugin.initialize({ apiKey: 'k', endpoint: 'https://:::::' })).rejects.toThrow(
+        /endpoint.*malformed/,
+      );
+    });
+
+    it('accepts a bare-host endpoint (no scheme)', async () => {
+      // Braze's docs allow `sdk.us-01.braze.com` without scheme. The
+      // bridge prefixes https:// before parsing so the bare form parses
+      // cleanly and the cluster-pattern check passes silently.
+      const plugin = new BrazeWeb();
+      await expect(plugin.initialize({ apiKey: 'k', endpoint: 'sdk.us-01.braze.com' })).resolves.not.toThrow();
+    });
   });
 
   describe('setDateOfBirth', () => {

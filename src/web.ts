@@ -784,12 +784,46 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       throw new Error('Braze.initialize: `endpoint` is required (string).');
     }
 
-    const isInsecure = options.endpoint.startsWith('http://');
     const allowInsecure = options.allowInsecureEndpoint === true;
+    const isInsecure = options.endpoint.startsWith('http://');
     if (isInsecure && !allowInsecure) {
       throw new Error(
         'Braze.initialize: `endpoint` must use HTTPS. Set `allowInsecureEndpoint: true` ' +
           'only for local mock-server testing. See SECURITY.md §4.',
+      );
+    }
+    // L5-03: URL parsing client-side. SECURITY.md §4 promises malformed
+    // URLs reject before they reach the SDK; this delivers on that.
+    // Local mock-server URLs (http://localhost:nnnn) and bare-host
+    // shorthand (`sdk.us-01.braze.com` without scheme — which Braze's
+    // own examples accept) both parse fine once we prefix with a
+    // dummy scheme.
+    const parseTarget = options.endpoint.includes('://') ? options.endpoint : `https://${options.endpoint}`;
+    try {
+      // eslint-disable-next-line no-new
+      new URL(parseTarget);
+    } catch {
+      throw new Error('Braze.initialize: `endpoint` is malformed (must be a parseable URL or bare hostname).');
+    }
+    // L5-03: cluster sanity check. Warn (don't reject) when the endpoint
+    // isn't a recognised Braze cluster host so consumers wiring a typo
+    // get a console signal. The regex matches every documented Braze
+    // cluster naming pattern (sdk.<region>-NN.braze.{com,eu}); allow
+    // localhost / 127.0.0.1 / .test / .local for dev paths.
+    const host =
+      parseTarget
+        .replace(/^https?:\/\//, '')
+        .split('/')[0]
+        ?.toLowerCase() ?? '';
+    const isKnownBraze = /^sdk\.[a-z]+-\d+\.braze\.(com|eu)$/.test(host);
+    const isDevHost = /^(localhost|127\.0\.0\.1|.+\.(test|local))(:\d+)?$/.test(host);
+    if (!isKnownBraze && !isDevHost) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `Braze.initialize: \`endpoint\` "${options.endpoint}" doesn't match the documented ` +
+          'Braze cluster pattern (`sdk.<region>-NN.braze.com|eu`). The SDK will still attempt to ' +
+          'connect, but verify the host matches what your Braze dashboard shows under Settings → ' +
+          'Manage Settings → API Settings.',
       );
     }
     if (options.sessionTimeoutInSeconds !== undefined) {

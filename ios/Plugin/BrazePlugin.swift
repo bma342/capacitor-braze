@@ -106,6 +106,16 @@ public class BrazePlugin: CAPPlugin {
                         "Set `allowInsecureEndpoint: true` only for local mock-server testing.")
             return
         }
+        // L5-03: URL parsing client-side. SECURITY.md §4 promises malformed
+        // URLs reject before they reach the SDK; this delivers on that.
+        // Bare-host shorthand (`sdk.us-01.braze.com` with no scheme) is
+        // accepted by Braze's docs, so we prefix a dummy scheme before
+        // parsing to preserve that ergonomic path.
+        let parseTarget = endpoint.contains("://") ? endpoint : "https://\(endpoint)"
+        guard URL(string: parseTarget) != nil else {
+            call.reject("Braze.initialize: `endpoint` is malformed (must be a parseable URL or bare hostname).")
+            return
+        }
 
         let enableLogging = call.getBool("enableLogging", false)
         let enableSdkAuthentication = call.getBool("enableSdkAuthentication", false)

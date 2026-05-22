@@ -35,7 +35,28 @@ updates:
         patterns:
           - '*'
 
-  # GitHub Actions versions
+  # Demo app deps (React, TanStack, Tailwind, Capacitor)
+  - package-ecosystem: 'npm'
+    directory: '/demo'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5
+    groups:
+      demo-deps:
+        applies-to: version-updates
+        patterns:
+          - '*'
+
+  # Mock-server Gradle deps (Ktor, JUnit)
+  - package-ecosystem: 'gradle'
+    directory: '/test/mock-server'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5
+
+  # GitHub Actions versions (per SECURITY.md §13: SHA-pinned via Dependabot)
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
