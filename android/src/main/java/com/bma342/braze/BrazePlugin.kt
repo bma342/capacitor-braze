@@ -8,9 +8,14 @@ import com.braze.events.ContentCardsUpdatedEvent
 import com.braze.events.FeatureFlagsUpdatedEvent
 import com.braze.events.IEventSubscriber
 import com.braze.models.FeatureFlag
+import com.braze.models.cards.CaptionedImageCard
 import com.braze.models.cards.Card
+import com.braze.models.cards.ImageOnlyCard
+import com.braze.models.cards.ShortNewsCard
+import com.braze.models.cards.TextAnnouncementCard
 import com.braze.models.outgoing.BrazeProperties
 import com.braze.support.BrazeLogger
+import com.braze.ui.inappmessage.BrazeInAppMessageManager
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -91,6 +96,38 @@ class BrazePlugin : Plugin() {
      */
     private var contentCardsSubscriber: IEventSubscriber<ContentCardsUpdatedEvent>? = null
 
+    /**
+     * Whether `initialize` was called with `enableSdkAuthentication: true`.
+     * When true, `changeUser` rejects calls that don't carry an
+     * `sdkAuthSignature` (see `SECURITY.md` §2). Persisted as plugin
+     * state because the underlying `BrazeConfig` is not readable
+     * post-`configure`.
+     */
+    private var sdkAuthenticationEnabled: Boolean = false
+
+    // -------------------------------------------------------------------------
+    // In-app message lifecycle
+    //
+    // L4-S11 / Phase 3: Braze Android renders IAMs via a singleton
+    // [BrazeInAppMessageManager] that must be registered against the
+    // currently-foregrounded Activity in onResume and unregistered in
+    // onPause. Without this wiring, BrazeKit fetches IAM campaigns but
+    // never displays them. Capacitor exposes Plugin.handleOnResume() /
+    // handleOnPause() as lifecycle hooks; we forward those to the IAM
+    // manager. The bridge Activity (bridge.activity) is the host for
+    // all in-app message display.
+    // -------------------------------------------------------------------------
+
+    override fun handleOnResume() {
+        super.handleOnResume()
+        BrazeInAppMessageManager.getInstance().registerInAppMessageManager(bridge.activity)
+    }
+
+    override fun handleOnPause() {
+        super.handleOnPause()
+        BrazeInAppMessageManager.getInstance().unregisterInAppMessageManager(bridge.activity)
+    }
+
     // -------------------------------------------------------------------------
     // Bridge sanity check
     // -------------------------------------------------------------------------
@@ -132,6 +169,18 @@ class BrazePlugin : Plugin() {
             )
             return
         }
+        // L5-03: URL parsing client-side. SECURITY.md §4 promises malformed
+        // URLs reject before they reach the SDK; this delivers on that.
+        // Bare-host shorthand (`sdk.us-01.braze.com` with no scheme) is
+        // accepted by Braze's docs, so we prefix a dummy scheme before
+        // parsing to preserve that ergonomic path.
+        val parseTarget = if (endpoint.contains("://")) endpoint else "https://$endpoint"
+        try {
+            java.net.URI(parseTarget)
+        } catch (_: java.net.URISyntaxException) {
+            call.reject("Braze.initialize: `endpoint` is malformed (must be a parseable URL or bare hostname).")
+            return
+        }
 
         val enableLogging = call.getBoolean("enableLogging", false) ?: false
         val enableSdkAuthentication = call.getBoolean("enableSdkAuthentication", false) ?: false
@@ -149,8 +198,15 @@ class BrazePlugin : Plugin() {
             BrazeLogger.enableVerboseLogging()
         }
 
-        val sessionTimeoutInSeconds = call.getInt("sessionTimeoutInSeconds")
-        if (sessionTimeoutInSeconds != null && sessionTimeoutInSeconds > 0) {
+        if (call.hasOption("sessionTimeoutInSeconds")) {
+            // L5-08: reject sessionTimeoutInSeconds <= 0 explicitly rather
+            // than silently dropping. Web's TS validation already rejects;
+            // matching the natives keeps C04 validation parity.
+            val sessionTimeoutInSeconds = call.getInt("sessionTimeoutInSeconds")
+            if (sessionTimeoutInSeconds == null || sessionTimeoutInSeconds <= 0) {
+                call.reject("Braze.initialize: `sessionTimeoutInSeconds` must be a positive integer.")
+                return
+            }
             // Android SDK's setter takes seconds (Int); we accept seconds
             // at the plugin boundary per C03 so cross-platform parity is
             // maintained without a unit conversion.
@@ -159,6 +215,7 @@ class BrazePlugin : Plugin() {
 
         Braze.configure(context, builder.build())
         initialized = true
+        sdkAuthenticationEnabled = enableSdkAuthentication
 
         // Wire the persistent feature-flag update subscription. Drop any
         // previous subscriber first so re-init doesn't double-fire events
@@ -199,6 +256,12 @@ class BrazePlugin : Plugin() {
             return
         }
         val sdkAuthSignature = call.getString("sdkAuthSignature")
+        if (sdkAuthenticationEnabled && sdkAuthSignature.isNullOrEmpty()) {
+            call.reject(
+                "Braze.changeUser: `sdkAuthSignature` is required (string) when SDK Authentication is enabled. See SECURITY.md §2.",
+            )
+            return
+        }
         if (sdkAuthSignature != null) {
             Braze.getInstance(context).changeUser(userId, sdkAuthSignature)
         } else {
@@ -317,13 +380,23 @@ class BrazePlugin : Plugin() {
             is String -> user.setCustomUserAttribute(key, value)
             is Boolean -> user.setCustomUserAttribute(key, value)
             is Int -> user.setCustomUserAttribute(key, value)
-            is Long -> user.setCustomUserAttribute(key, value.toInt())
+            // L4-K02: preserve Long precision. JS Numbers up to
+            // MAX_SAFE_INTEGER (2^53 ≈ 9.0e15) can safely arrive as Long
+            // when the underlying JSON parser detects an integer larger
+            // than Int.MAX_VALUE. The Braze Android SDK exposes a
+            // setCustomUserAttribute(String, Long) overload at 42.x; the
+            // previous `.toInt()` silently truncated to 32 bits, mangling
+            // any value larger than ~2.1 billion. Use the Long overload
+            // directly.
+            is Long -> user.setCustomUserAttribute(key, value)
             is Double -> user.setCustomUserAttribute(key, value)
             is Float -> user.setCustomUserAttribute(key, value.toDouble())
             else -> {
+                // C04 explicit rejection rather than silent drop on unsupported
+                // types (e.g. arrays, nested objects, null). Bypasses the TS
+                // type guard for consumers using `any`-typed properties.
                 call.reject(
-                    "Braze.setCustomUserAttribute: `value` must be string, number, " +
-                        "or boolean. Got: ${value?.javaClass?.simpleName ?: "null"}",
+                    "Braze.setCustomUserAttribute: `value` must be string, number, or boolean.",
                 )
                 return
             }
@@ -414,23 +487,26 @@ class BrazePlugin : Plugin() {
     @PluginMethod
     fun setDateOfBirth(call: PluginCall) {
         val user = requireUser(call) ?: return
+        // L2-07: per-field error messages, byte-identical to the web bridge.
         val year = call.getInt("year")
+        if (year == null || year < 1900 || year > 2100) {
+            call.reject("Braze.setDateOfBirth: `year` must be an integer between 1900 and 2100.")
+            return
+        }
         val month = call.getInt("month")
+        if (month == null || month < 1 || month > 12) {
+            call.reject("Braze.setDateOfBirth: `month` must be an integer between 1 and 12.")
+            return
+        }
         val day = call.getInt("day")
-        if (year == null || month == null || day == null) {
-            call.reject("Braze.setDateOfBirth: `year`, `month`, and `day` are required (integers).")
+        if (day == null || day < 1 || day > 31) {
+            call.reject("Braze.setDateOfBirth: `day` must be an integer between 1 and 31.")
             return
         }
-        if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
-            call.reject(
-                "Braze.setDateOfBirth: out of range. " +
-                    "Expected year 1900-2100, month 1-12, day 1-31.",
-            )
-            return
-        }
-        // Month enum is ordered JANUARY..DECEMBER; values()[month-1] maps
-        // the 1-indexed TS month to the matching enum case.
-        val monthEnum = Month.values()[month - 1]
+        // K04: Month.entries is the cached array form on Kotlin 1.9+ (we're
+        // on Kotlin 2.2). One-time allocation, matches what we want for a
+        // hot-ish per-call lookup.
+        val monthEnum = Month.entries[month - 1]
         user.setDateOfBirth(year, monthEnum, day)
         call.resolve()
     }
@@ -729,6 +805,7 @@ class BrazePlugin : Plugin() {
         teardownFeatureFlagsSubscription()
         teardownContentCardsSubscription()
         initialized = false
+        sdkAuthenticationEnabled = false
         call.resolve()
     }
 
@@ -887,20 +964,128 @@ class BrazePlugin : Plugin() {
     }
 
     /**
-     * Serializes a single Card via the SDK's own Codable encoder
-     * (`forJsonPut()` returns the JSONObject that Braze itself uses for
-     * persistence). Mirrors the iOS bridge's `card.json()` approach so
-     * native wire-format is symmetric across iOS / Android.
+     * Serializes a single [Card] to the plugin's portable DTO. The
+     * `type` discriminator is the C02 four-string union
+     * (`classic` / `captionedImage` / `imageOnly` / `control`); Braze
+     * Android's five concrete subclasses collapse to those four:
      *
-     * Returns null only if the JSON roundtrip fails (effectively never
-     * for valid SDK-produced cards). The caller filters out nulls.
+     *   - [ControlCard][card.isControl]       -> 'control'
+     *   - [CaptionedImageCard]                -> 'captionedImage'
+     *   - [ImageOnlyCard]                     -> 'imageOnly'
+     *   - [ShortNewsCard]                     -> 'classic' (small image)
+     *   - [TextAnnouncementCard]              -> 'classic' (no image)
+     *
+     * Per L2-02: switching on the subclass (vs. `card.forJsonPut()`
+     * passthrough) makes the wire format match the contract on every
+     * platform, so consumers can narrow on `card.type` and trust the
+     * narrowed type. Returns null only for unknown future subclasses.
+     *
+     * Field mapping:
+     *   - `linkText`  ← `card.domain` (visible URL/link text)
+     *   - `url`       ← `card.url` (the SDK's resolved click URL)
+     *   - `aspectRatio` ← `card.aspectRatio` as Double (null for unset)
+     *   - `dismissed` ← `card.isDismissed`
+     *   - `dismissible` ← `card.isDismissibleByUser`
+     *   - `clicked`   ← always `false` (the Android SDK does not
+     *      expose a card-level "clicked" boolean; iOS does. This is
+     *      a documented cross-platform asymmetry; consumers should
+     *      not rely on `clicked` to round-trip through Android.)
+     *   - `updated`   ← `card.created` × 1000 (epoch ms) or null
+     *   - `expiresAt` ← `card.expiresAt` × 1000 (epoch ms) or null
+     *      (the SDK uses -1 to mean "never expires")
      */
     private fun serializeContentCard(card: Card): JSObject? {
-        return try {
-            JSObject(card.forJsonPut().toString())
-        } catch (t: Throwable) {
-            null
+        val dto = JSObject()
+        dto.put("id", card.id)
+        dto.put("viewed", card.viewed)
+        dto.put("pinned", card.isPinned)
+        dto.put("extras", extrasToJSObject(card.extras))
+        dto.put("updated", epochSecondsToMillis(card.created))
+        dto.put("expiresAt", expiresAtSecondsToMillis(card.expiresAt))
+
+        if (card.isControl) {
+            dto.put("type", "control")
+            return dto
         }
+
+        val clickUrl: Any = card.url ?: JSObject.NULL
+        dto.put("clicked", false)
+        dto.put("dismissed", card.isDismissed)
+        dto.put("dismissible", card.isDismissibleByUser)
+
+        when (card) {
+            is CaptionedImageCard -> {
+                dto.put("type", "captionedImage")
+                dto.put("title", card.title ?: "")
+                dto.put("description", card.description ?: "")
+                dto.put("imageUrl", card.imageUrl ?: "")
+                dto.put("url", clickUrl)
+                dto.put("aspectRatio", aspectRatioOrNull(card.aspectRatio))
+                dto.put("linkText", card.domain ?: JSObject.NULL)
+                dto.put("altImageText", card.altImageText ?: JSObject.NULL)
+            }
+            is ImageOnlyCard -> {
+                dto.put("type", "imageOnly")
+                dto.put("imageUrl", card.imageUrl ?: "")
+                dto.put("url", clickUrl)
+                dto.put("aspectRatio", aspectRatioOrNull(card.aspectRatio))
+                dto.put("altImageText", card.altImageText ?: JSObject.NULL)
+            }
+            is ShortNewsCard -> {
+                dto.put("type", "classic")
+                dto.put("title", card.title ?: "")
+                dto.put("description", card.description ?: "")
+                dto.put("imageUrl", card.imageUrl ?: "")
+                dto.put("url", clickUrl)
+                dto.put("linkText", card.domain ?: JSObject.NULL)
+                dto.put("altImageText", card.altImageText ?: JSObject.NULL)
+            }
+            is TextAnnouncementCard -> {
+                dto.put("type", "classic")
+                dto.put("title", card.title ?: "")
+                dto.put("description", card.description ?: "")
+                dto.put("url", clickUrl)
+                dto.put("linkText", card.domain ?: JSObject.NULL)
+            }
+            else -> return null
+        }
+        return dto
+    }
+
+    private fun extrasToJSObject(extras: Map<String, String>): JSObject {
+        val result = JSObject()
+        for ((key, value) in extras) {
+            result.put(key, value)
+        }
+        return result
+    }
+
+    /**
+     * Maps an SDK epoch-seconds timestamp to epoch ms. The Braze
+     * Android SDK uses 0 for "unset" on `created`. Negative or zero
+     * surface as JSON null.
+     */
+    private fun epochSecondsToMillis(seconds: Long): Any {
+        return if (seconds > 0) seconds * 1000L else JSObject.NULL
+    }
+
+    /**
+     * Maps an SDK `expiresAt` epoch-seconds timestamp to epoch ms.
+     * The SDK uses -1 to mean "never expires"; we surface that as
+     * JSON null because the contract treats expiry as optional.
+     */
+    private fun expiresAtSecondsToMillis(seconds: Long): Any {
+        return if (seconds > 0) seconds * 1000L else JSObject.NULL
+    }
+
+    /**
+     * Maps the SDK's `aspectRatio` Float to a non-negative Double, or
+     * JSON null when the value is unset (Braze surfaces unset as 0
+     * for cards that don't carry the field). Defensive against NaN
+     * for forward compatibility.
+     */
+    private fun aspectRatioOrNull(value: Float): Any {
+        return if (value > 0f && !value.isNaN()) value.toDouble() else JSObject.NULL
     }
 
     /**

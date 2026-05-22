@@ -1,3 +1,4 @@
+import { CaptionedImage, ClassicCard, ControlCard, ImageOnly } from '@braze/web-sdk';
 import { describe, expect, it } from 'vitest';
 
 import { BrazeWeb } from '../../../src/web';
@@ -7,14 +8,18 @@ import { BrazeWeb } from '../../../src/web';
  *   - serializeFeatureFlag    (drives the addListener('featureFlagsUpdated') payload)
  *   - serializeContentCards   (used by getContentCards + addListener('contentCardsUpdated'))
  *   - serializeContentCard    (per-card adaptor)
- *   - detectContentCardType   (variant-discrimination heuristic)
+ *   - classifyContentCard     (instanceof-based variant discriminator)
  *
  * These functions are declared `private` on the BrazeWeb class but
- * carry no `this` dependency — pure functions of their input. The
- * tests cast through `any` to call them directly with synthetic
- * SDK-shaped objects. This is the right trade-off: a refactor to
- * extract them as module-level exports would be churn for no
- * runtime benefit, and the tests pin the contract regardless.
+ * carry no `this` dependency for the feature-flag and getter-shape
+ * paths — pure functions of their input. The tests cast through
+ * `any` to call them directly.
+ *
+ * For content-card classification the tests construct real
+ * `@braze/web-sdk` Card instances. That mirrors what the SDK does
+ * in production — its wire-format parser instantiates the right
+ * subclass — and lets the plugin's `instanceof` discrimination run
+ * against the same objects it will see at runtime.
  *
  * Why not test these through the full SDK round-trip in the other
  * test files? The listener pathway requires the SDK to fire its
@@ -33,7 +38,7 @@ type Serializers = {
   serializeFeatureFlag(raw: unknown): unknown;
   serializeContentCards(raw: unknown): unknown;
   serializeContentCard(card: unknown): unknown;
-  detectContentCardType(card: unknown): string | null;
+  classifyContentCard(card: unknown, braze: unknown): string | null;
 };
 
 function getSerializers(): Serializers {
@@ -141,117 +146,169 @@ describe('serializeContentCards', () => {
   });
 });
 
-describe('detectContentCardType', () => {
-  it('returns captionedImage when title + description + imageUrl all present', () => {
+describe('classifyContentCard (instanceof-driven)', () => {
+  // The braze parameter mirrors what `BrazeWeb.braze` holds after
+  // `initialize` — a reference to the SDK module exports.
+  const brazeModule = { ControlCard, CaptionedImage, ImageOnly, ClassicCard };
+
+  it('returns control for a real ControlCard instance', () => {
     const sut = getSerializers();
-    expect(
-      sut.detectContentCardType({
-        title: 't',
-        description: 'd',
-        imageUrl: 'https://x',
-      }),
-    ).toBe('captionedImage');
+    const card = new ControlCard('card-control');
+    expect(sut.classifyContentCard(card, brazeModule)).toBe('control');
   });
 
-  it('returns imageOnly when imageUrl present and no title', () => {
+  it('returns captionedImage for a real CaptionedImage instance, even when title is sparse', () => {
     const sut = getSerializers();
-    expect(sut.detectContentCardType({ imageUrl: 'https://x' })).toBe('imageOnly');
+    // Sparse: SDK builds a CaptionedImage from the wire format when
+    // `tp: 'captioned_image'`, regardless of which optional fields
+    // (title, description) ended up populated. The legacy field-
+    // presence heuristic mis-classified this as imageOnly; instanceof
+    // gets it right.
+    const sparse = new CaptionedImage('card-ci-sparse', false, undefined, 'https://img');
+    expect(sut.classifyContentCard(sparse, brazeModule)).toBe('captionedImage');
   });
 
-  it('returns classic when title + description present and no image', () => {
+  it('returns imageOnly for a real ImageOnly instance', () => {
     const sut = getSerializers();
-    expect(sut.detectContentCardType({ title: 't', description: 'd' })).toBe('classic');
+    const card = new ImageOnly('card-io', false, 'https://img');
+    expect(sut.classifyContentCard(card, brazeModule)).toBe('imageOnly');
   });
 
-  it('returns null when no signal fields present', () => {
+  it('returns classic for a real ClassicCard instance (even with imageUrl)', () => {
     const sut = getSerializers();
-    expect(sut.detectContentCardType({})).toBeNull();
+    // ClassicCard supports an optional small image; instanceof correctly
+    // classifies it as classic, where the heuristic would have voted
+    // captionedImage.
+    const withImage = new ClassicCard('card-classic-with-img', false, 'T', 'https://img', 'D');
+    expect(sut.classifyContentCard(withImage, brazeModule)).toBe('classic');
+  });
+
+  it('returns null for an unrecognised subclass', () => {
+    const sut = getSerializers();
+    const stranger = Object.assign(Object.create(null), {
+      id: 'stranger',
+      isControl: false,
+      viewed: false,
+      pinned: false,
+      extras: {},
+      updated: null,
+      expiresAt: null,
+    });
+    expect(sut.classifyContentCard(stranger, brazeModule)).toBeNull();
+  });
+
+  it('falls back to field-shape heuristic when the SDK module is null (unit-test path)', () => {
+    const sut = getSerializers();
+    expect(sut.classifyContentCard({ title: 't', description: 'd', imageUrl: 'https://x' }, null)).toBe(
+      'captionedImage',
+    );
+    expect(sut.classifyContentCard({ imageUrl: 'https://x' }, null)).toBe('imageOnly');
+    expect(sut.classifyContentCard({ title: 't', description: 'd' }, null)).toBe('classic');
+    expect(sut.classifyContentCard({ isControl: true }, null)).toBe('control');
+    expect(sut.classifyContentCard({}, null)).toBeNull();
   });
 });
 
-describe('serializeContentCard (each variant)', () => {
-  const baseCardShape = {
-    id: 'card-1',
-    viewed: false,
-    pinned: true,
-    extras: { campaign: 'spring' },
-    updated: new Date('2026-05-19T12:00:00Z'),
-    expiresAt: new Date('2026-06-19T12:00:00Z'),
-    clicked: false,
-    dismissed: false,
-    dismissible: true,
-  };
+describe('serializeContentCard (each variant — real SDK instances)', () => {
+  const updated = new Date('2026-05-19T12:00:00Z');
+  const expiresAt = new Date('2026-06-19T12:00:00Z');
+  const extras = { campaign: 'spring' };
 
-  it('classic — has title and description, no imageUrl', () => {
+  it('classic — ClassicCard instance', () => {
     const sut = getSerializers();
-    const out = sut.serializeContentCard({
-      ...baseCardShape,
-      title: 'Hello',
-      description: 'World',
-      url: 'https://example.com',
-      linkText: 'Tap',
-      language: 'en',
-      isControl: false,
-    }) as Record<string, unknown>;
+    const card = new ClassicCard(
+      'card-1',
+      false,
+      'Hello',
+      undefined,
+      'World',
+      updated,
+      expiresAt,
+      'https://example.com',
+      'Tap',
+      undefined,
+      extras,
+      true,
+      true,
+      false,
+      'en',
+    );
+    const out = sut.serializeContentCard(card) as Record<string, unknown>;
     expect(out.type).toBe('classic');
     expect(out.title).toBe('Hello');
     expect(out.description).toBe('World');
     expect(out.url).toBe('https://example.com');
     expect(out.id).toBe('card-1');
     expect(out.pinned).toBe(true);
-    expect(out.extras).toEqual({ campaign: 'spring' });
-    expect(out.updated).toBe(baseCardShape.updated.getTime());
+    expect(out.extras).toEqual(extras);
+    expect(out.updated).toBe(updated.getTime());
   });
 
-  it('captionedImage — has title, description, imageUrl', () => {
+  it('captionedImage — CaptionedImage instance', () => {
     const sut = getSerializers();
-    const out = sut.serializeContentCard({
-      ...baseCardShape,
-      title: 'T',
-      description: 'D',
-      imageUrl: 'https://img',
-      aspectRatio: 1.5,
-      isControl: false,
-    }) as Record<string, unknown>;
+    const card = new CaptionedImage(
+      'card-ci',
+      false,
+      'T',
+      'https://img',
+      'D',
+      updated,
+      expiresAt,
+      undefined,
+      undefined,
+      1.5,
+      extras,
+      true,
+      true,
+      false,
+    );
+    const out = sut.serializeContentCard(card) as Record<string, unknown>;
     expect(out.type).toBe('captionedImage');
     expect(out.imageUrl).toBe('https://img');
     expect(out.aspectRatio).toBe(1.5);
   });
 
-  it('imageOnly — has imageUrl but no title', () => {
+  it('imageOnly — ImageOnly instance', () => {
     const sut = getSerializers();
-    const out = sut.serializeContentCard({
-      ...baseCardShape,
-      imageUrl: 'https://img-only',
-      aspectRatio: null,
-      isControl: false,
-    }) as Record<string, unknown>;
+    const card = new ImageOnly(
+      'card-io',
+      false,
+      'https://img-only',
+      updated,
+      expiresAt,
+      undefined,
+      undefined,
+      extras,
+      true,
+      true,
+      false,
+    );
+    const out = sut.serializeContentCard(card) as Record<string, unknown>;
     expect(out.type).toBe('imageOnly');
     expect(out.imageUrl).toBe('https://img-only');
     expect(out.aspectRatio).toBeNull();
   });
 
-  it('control — isControl flag short-circuits type detection', () => {
+  it('control — ControlCard instance', () => {
     const sut = getSerializers();
-    const out = sut.serializeContentCard({
-      ...baseCardShape,
-      // Has fields that would normally classify as captionedImage,
-      // but isControl wins.
-      title: 'should-not-matter',
-      description: 'should-not-matter',
-      imageUrl: 'https://x',
-      isControl: true,
-    }) as Record<string, unknown>;
+    const card = new ControlCard('card-ctrl', false, updated, expiresAt, extras, true);
+    const out = sut.serializeContentCard(card) as Record<string, unknown>;
     expect(out.type).toBe('control');
+    expect(out.id).toBe('card-ctrl');
+    expect(out.pinned).toBe(true);
   });
 
   it('returns null for an unclassifiable card', () => {
     const sut = getSerializers();
-    const out = sut.serializeContentCard({
-      ...baseCardShape,
+    const stranger = Object.assign(Object.create(null), {
+      id: 'stranger',
       isControl: false,
-      // No title, no imageUrl, no description signal.
+      viewed: false,
+      pinned: false,
+      extras: {},
+      updated: null,
+      expiresAt: null,
     });
-    expect(out).toBeNull();
+    expect(sut.serializeContentCard(stranger)).toBeNull();
   });
 });

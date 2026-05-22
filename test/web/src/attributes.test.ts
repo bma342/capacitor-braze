@@ -1,6 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-
 import type { MockServer } from 'capacitor-braze-mock-server';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { BrazeWeb } from '../../../src/web';
 
@@ -155,5 +154,38 @@ describe('user attributes (web bridge → @braze/web-sdk → mock)', () => {
   it('setGender rejects an unknown value', async () => {
     // @ts-expect-error — testing runtime rejection for invalid input
     await expect(plugin.setGender({ gender: 'nonexistent' })).rejects.toThrow(/unknown gender/);
+  });
+
+  // L2-04 / L2-06: the web bridge must reject the same set of value types
+  // the native bridges reject (null, undefined, array, object). The TS
+  // union narrows away null/undefined/object but a consumer using
+  // `any`-typed properties can sneak them through; cross-platform parity
+  // requires all three bridges agree.
+  describe('setCustomUserAttribute value-type validation', () => {
+    const cases: { label: string; value: unknown }[] = [
+      { label: 'null', value: null },
+      { label: 'undefined', value: undefined },
+      { label: 'array', value: [1, 2, 3] },
+      { label: 'object', value: { nested: 'no' } },
+    ];
+    for (const { label, value } of cases) {
+      it(`rejects ${label} value`, async () => {
+        await expect(
+          plugin.setCustomUserAttribute({ key: `bad_value_${label}_test`, value: value as never }),
+        ).rejects.toThrow(/value.*must be string, number, or boolean/);
+      });
+    }
+
+    it('accepts a boolean value', async () => {
+      await expect(plugin.setCustomUserAttribute({ key: 'attr_bool', value: true })).resolves.not.toThrow();
+    });
+
+    it('accepts an integer value', async () => {
+      await expect(plugin.setCustomUserAttribute({ key: 'attr_int', value: 42 })).resolves.not.toThrow();
+    });
+
+    it('accepts a fractional value', async () => {
+      await expect(plugin.setCustomUserAttribute({ key: 'attr_dbl', value: 42.5 })).resolves.not.toThrow();
+    });
   });
 });

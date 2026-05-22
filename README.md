@@ -381,8 +381,11 @@ Returns the Braze SDK device identifier for the current install. Useful
 for debugging and for sending the device ID to your backend for targeted
 server-side messaging.
 
-Init-independent: safe to call before {@link BrazePlugin.initialize}; the
-device ID is generated on first SDK use and persists across sessions.
+Requires {@link BrazePlugin.initialize} to have been called. The accessor
+is instance-bound on iOS (`braze.deviceId`) and Android
+(`Braze.getInstance(context).deviceId`); only Web exposes a true static.
+To keep the contract uniform across platforms (see C03 / C07) the plugin
+gates this method behind the init guard on all three.
 
 **Returns:** <code>Promise&lt;<a href="#brazegetdeviceidresult">BrazeGetDeviceIdResult</a>&gt;</code>
 
@@ -738,7 +741,11 @@ enableSDK() => Promise<void>
 Re-enables the Braze SDK after a {@link BrazePlugin.disableSDK} call.
 No-op if the SDK was not previously disabled.
 
-Init-independent: safe to call before {@link BrazePlugin.initialize}.
+Init-independent on Web and Android (both expose a class-level
+`Braze.enableSdk` static). On iOS, BrazeKit 14.x removed the class-level
+form — re-enabling requires an initialized `Braze` instance, so this
+method rejects with the standard init-required error if called pre-init
+on iOS. See `docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md`.
 
 --------------------
 
@@ -751,7 +758,10 @@ isDisabled() => Promise<BrazeIsDisabledResult>
 
 Returns whether the SDK is currently disabled.
 
-Init-independent: safe to call before {@link BrazePlugin.initialize}.
+Init-independent on Web and Android. On iOS BrazeKit 14.x there is no
+class-level `isDisabled` static; this method returns `{ disabled: false }`
+pre-init on iOS (uninitialized != disabled, by convention) and reads
+`!braze.enabled` post-init. See `docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md`.
 
 **Returns:** <code>Promise&lt;<a href="#brazeisdisabledresult">BrazeIsDisabledResult</a>&gt;</code>
 
@@ -1128,10 +1138,18 @@ included on every update, not a delta.
 Value types accepted by {@link BrazePlugin.setCustomUserAttribute} in v0.1.
 Date and array support land in a later version per `SDK_SURFACE.md` §2.
 
-Note: numeric values may surface in the Braze dashboard as floats. To
-preserve integer vs. float distinction, send `{ value: 42 }` (no decimal)
-for integers and `{ value: 42.0 }` (or any value with decimal) for floats —
-the native bridge dispatches each type to the appropriate Braze SDK overload.
+Note: JavaScript has a single `number` type, so the plugin cannot
+distinguish integer-typed `42` from float-typed `42.0` at the bridge
+boundary — they JSON-serialize identically. The native bridges
+dispatch to whichever SDK overload preserves the value's runtime
+shape: a fractional value (e.g. `42.5`) lands on the Double overload,
+a whole-number value lands on the Int / Long overload. Braze's
+dashboard treats both the same way for analytics aggregation, so
+this normally doesn't matter for consumer code.
+
+`null` and `undefined` are not accepted — the plugin rejects them
+on all three platforms (use a wipe / clear flow if you need to
+remove an attribute).
 
 <code>string | number | boolean</code>
 

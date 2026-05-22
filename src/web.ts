@@ -93,6 +93,14 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    */
   private contentCardsSubscribed = false;
 
+  /**
+   * Whether {@link BrazeWeb.initialize} was called with
+   * `enableSdkAuthentication: true`. When this is `true`,
+   * {@link BrazeWeb.changeUser} rejects calls that don't carry an
+   * `sdkAuthSignature` — see `SECURITY.md` §2 for the rationale.
+   */
+  private sdkAuthenticationEnabled = false;
+
   // ---------------------------------------------------------------------------
   // Bridge sanity check
   // ---------------------------------------------------------------------------
@@ -119,6 +127,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     });
     braze.openSession();
     this.initialized = true;
+    this.sdkAuthenticationEnabled = options.enableSdkAuthentication === true;
 
     // Wire the persistent native feature-flag subscription once. The Web SDK
     // doesn't expose an unsubscribe handle, so subscribing twice would queue
@@ -146,6 +155,11 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     const braze = this.requireInitialized();
     if (!options.userId || typeof options.userId !== 'string') {
       throw new Error('Braze.changeUser: `userId` is required (string).');
+    }
+    if (this.sdkAuthenticationEnabled && (!options.sdkAuthSignature || typeof options.sdkAuthSignature !== 'string')) {
+      throw new Error(
+        'Braze.changeUser: `sdkAuthSignature` is required (string) when SDK Authentication is enabled. See SECURITY.md §2.',
+      );
     }
     braze.changeUser(options.userId, options.sdkAuthSignature);
   }
@@ -211,6 +225,15 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     const user = this.requireUser();
     if (!options.key || typeof options.key !== 'string') {
       throw new Error('Braze.setCustomUserAttribute: `key` is required (string).');
+    }
+    // L2-04 + L2-06: enforce the same value-type contract the native bridges
+    // enforce. A consumer using `any`-typed properties could otherwise sneak
+    // a null / undefined / array / object past the TS narrow and the Web SDK
+    // would silently forward it. Cross-platform parity requires all three
+    // bridges agree on what is rejected.
+    const valueType = typeof options.value;
+    if (valueType !== 'string' && valueType !== 'number' && valueType !== 'boolean') {
+      throw new Error('Braze.setCustomUserAttribute: `value` must be string, number, or boolean.');
     }
     user.setCustomUserAttribute(options.key, options.value);
   }
@@ -398,8 +421,18 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     const braze = await this.loadSdk();
     braze.wipeData();
     // Wiping clears the device ID; consider plugin re-init invalid until
-    // explicit `initialize` is called again.
+    // explicit `initialize` is called again. Also reset:
+    //   - the SDK Auth flag so a subsequent `initialize({ enableSdk... })`
+    //     doesn't carry the previous run's enforcement;
+    //   - the subscription-wired flags (L4-T06) so a subsequent initialize
+    //     re-wires `subscribeToFeatureFlagsUpdates` / `…ContentCards…`. The
+    //     Web SDK doesn't expose unsubscribe handles, so without resetting
+    //     these flags the next initialize would skip subscription setup
+    //     and listeners would silently go dead.
     this.initialized = false;
+    this.sdkAuthenticationEnabled = false;
+    this.featureFlagsSubscribed = false;
+    this.contentCardsSubscribed = false;
   }
 
   async disableSDK(): Promise<void> {
@@ -583,11 +616,15 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    * Returns `null` for cards we can't classify (future SDK card types);
    * the caller filters them out so the DTO stays a strict union.
    *
-   * Card-type detection uses runtime field presence rather than
-   * `instanceof` because the Web SDK exports `Card` subclasses as
-   * distinct classes whose private state isn't reliable to introspect.
-   * The fields chosen are non-overlapping enough to discriminate the
-   * four variants.
+   * Card-type discrimination uses `instanceof` against the Web SDK's
+   * concrete `Card` subclasses (`ControlCard`, `CaptionedImage`,
+   * `ImageOnly`, `ClassicCard`). This is the authoritative source of
+   * truth — the SDK itself instantiates these classes from the wire
+   * format (`tp: 'banner_image' → ImageOnly`, etc.) — so the plugin's
+   * `type` discriminator stays in lockstep with the SDK's classification
+   * even when fields are sparse (e.g. a `CaptionedImage` with no title,
+   * which used to be misclassified as `imageOnly` by the legacy
+   * field-presence heuristic).
    */
   private serializeContentCard(card: BrazeWebSdkModule.Card): BrazeContentCard | null {
     const base = {
@@ -599,30 +636,15 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       expiresAt: card.expiresAt ? card.expiresAt.getTime() : null,
     };
 
-    if (card.isControl) {
+    const braze = this.braze;
+    const type = this.classifyContentCard(card, braze);
+    if (type === null) return null;
+
+    if (type === 'control') {
       return { ...base, type: 'control' };
     }
 
-    const type: BrazeContentCardType | null = this.detectContentCardType(card);
-    if (!type || type === 'control') {
-      return null;
-    }
-    // Cards that aren't ControlCard share these fields; we type-cast
-    // through `Card` because the public Card type doesn't enumerate the
-    // subclass fields, but the runtime objects always carry them.
-    const c = card as BrazeWebSdkModule.Card & {
-      title?: string;
-      description?: string;
-      imageUrl?: string;
-      url?: string;
-      linkText?: string;
-      aspectRatio?: number | null;
-      clicked?: boolean;
-      dismissed?: boolean;
-      dismissible?: boolean;
-      language?: string;
-      altImageText?: string;
-    };
+    const c = card as BrazeWebSdkModule.CaptionedImage | BrazeWebSdkModule.ImageOnly | BrazeWebSdkModule.ClassicCard;
     const sharedNonControl = {
       clicked: c.clicked ?? false,
       dismissed: c.dismissed ?? false,
@@ -631,68 +653,77 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       altImageText: c.altImageText,
     };
 
-    switch (type) {
-      case 'imageOnly':
-        return {
-          ...base,
-          type: 'imageOnly',
-          imageUrl: c.imageUrl ?? '',
-          url: c.url,
-          aspectRatio: c.aspectRatio ?? null,
-          ...sharedNonControl,
-        };
-      case 'captionedImage':
-        return {
-          ...base,
-          type: 'captionedImage',
-          title: c.title ?? '',
-          description: c.description ?? '',
-          imageUrl: c.imageUrl ?? '',
-          url: c.url,
-          linkText: c.linkText,
-          aspectRatio: c.aspectRatio ?? null,
-          ...sharedNonControl,
-        };
-      case 'classic':
-        return {
-          ...base,
-          type: 'classic',
-          title: c.title ?? '',
-          description: c.description ?? '',
-          imageUrl: c.imageUrl,
-          url: c.url,
-          linkText: c.linkText,
-          ...sharedNonControl,
-        };
+    if (type === 'imageOnly') {
+      const io = c as BrazeWebSdkModule.ImageOnly;
+      return {
+        ...base,
+        type: 'imageOnly',
+        imageUrl: io.imageUrl ?? '',
+        url: io.url,
+        aspectRatio: io.aspectRatio ?? null,
+        ...sharedNonControl,
+      };
     }
+    if (type === 'captionedImage') {
+      const ci = c as BrazeWebSdkModule.CaptionedImage;
+      return {
+        ...base,
+        type: 'captionedImage',
+        title: ci.title ?? '',
+        description: ci.description ?? '',
+        imageUrl: ci.imageUrl ?? '',
+        url: ci.url,
+        linkText: ci.linkText,
+        aspectRatio: ci.aspectRatio ?? null,
+        ...sharedNonControl,
+      };
+    }
+    // type === 'classic'
+    const cc = c as BrazeWebSdkModule.ClassicCard;
+    return {
+      ...base,
+      type: 'classic',
+      title: cc.title ?? '',
+      description: cc.description ?? '',
+      imageUrl: cc.imageUrl,
+      url: cc.url,
+      linkText: cc.linkText,
+      ...sharedNonControl,
+    };
   }
 
   /**
-   * Best-effort runtime type discrimination for content cards. The Web
-   * SDK doesn't expose a card-type field, so we detect by which subclass
-   * fields are present:
+   * Resolves a runtime card to its plugin-canonical type discriminator.
    *
-   *   - has `title` AND `imageUrl` AND `description` → `captionedImage`
-   *   - has `imageUrl` but no `title` → `imageOnly`
-   *   - has `title` and `description` but image is optional → `classic`
+   * Primary path: `instanceof` against the loaded SDK module's concrete
+   * Card subclasses — authoritative because the SDK itself instantiates
+   * those classes from the wire format.
    *
-   * Order matters: check the most-specific shape first.
+   * Fallback path: when the SDK module hasn't been loaded yet (only
+   * happens in unit tests that exercise the serializer without going
+   * through `initialize()`), classify by `isControl` flag plus the
+   * shape of the field set. The fallback intentionally classifies
+   * sparsely-populated cards differently than the SDK would; integration
+   * tests catch that drift, and unit tests that care construct real
+   * Card instances rather than plain objects.
    */
-  private detectContentCardType(card: BrazeWebSdkModule.Card): BrazeContentCardType | null {
+  private classifyContentCard(card: BrazeWebSdkModule.Card, braze: BrazeWebSdk | null): BrazeContentCardType | null {
+    if (braze !== null) {
+      if (card instanceof braze.ControlCard) return 'control';
+      if (card instanceof braze.CaptionedImage) return 'captionedImage';
+      if (card instanceof braze.ImageOnly) return 'imageOnly';
+      if (card instanceof braze.ClassicCard) return 'classic';
+      return null;
+    }
+    if (card.isControl) return 'control';
     const c = card as BrazeWebSdkModule.Card & {
       title?: string;
       description?: string;
       imageUrl?: string;
     };
-    if (c.title && c.description && c.imageUrl) {
-      return 'captionedImage';
-    }
-    if (!c.title && c.imageUrl) {
-      return 'imageOnly';
-    }
-    if (c.title && c.description) {
-      return 'classic';
-    }
+    if (c.title && c.description && c.imageUrl) return 'captionedImage';
+    if (!c.title && c.imageUrl) return 'imageOnly';
+    if (c.title && c.description) return 'classic';
     return null;
   }
 
@@ -753,12 +784,46 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       throw new Error('Braze.initialize: `endpoint` is required (string).');
     }
 
-    const isInsecure = options.endpoint.startsWith('http://');
     const allowInsecure = options.allowInsecureEndpoint === true;
+    const isInsecure = options.endpoint.startsWith('http://');
     if (isInsecure && !allowInsecure) {
       throw new Error(
         'Braze.initialize: `endpoint` must use HTTPS. Set `allowInsecureEndpoint: true` ' +
           'only for local mock-server testing. See SECURITY.md §4.',
+      );
+    }
+    // L5-03: URL parsing client-side. SECURITY.md §4 promises malformed
+    // URLs reject before they reach the SDK; this delivers on that.
+    // Local mock-server URLs (http://localhost:nnnn) and bare-host
+    // shorthand (`sdk.us-01.braze.com` without scheme — which Braze's
+    // own examples accept) both parse fine once we prefix with a
+    // dummy scheme.
+    const parseTarget = options.endpoint.includes('://') ? options.endpoint : `https://${options.endpoint}`;
+    try {
+      // eslint-disable-next-line no-new
+      new URL(parseTarget);
+    } catch {
+      throw new Error('Braze.initialize: `endpoint` is malformed (must be a parseable URL or bare hostname).');
+    }
+    // L5-03: cluster sanity check. Warn (don't reject) when the endpoint
+    // isn't a recognised Braze cluster host so consumers wiring a typo
+    // get a console signal. The regex matches every documented Braze
+    // cluster naming pattern (sdk.<region>-NN.braze.{com,eu}); allow
+    // localhost / 127.0.0.1 / .test / .local for dev paths.
+    const host =
+      parseTarget
+        .replace(/^https?:\/\//, '')
+        .split('/')[0]
+        ?.toLowerCase() ?? '';
+    const isKnownBraze = /^sdk\.[a-z]+-\d+\.braze\.(com|eu)$/.test(host);
+    const isDevHost = /^(localhost|127\.0\.0\.1|.+\.(test|local))(:\d+)?$/.test(host);
+    if (!isKnownBraze && !isDevHost) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `Braze.initialize: \`endpoint\` "${options.endpoint}" doesn't match the documented ` +
+          'Braze cluster pattern (`sdk.<region>-NN.braze.com|eu`). The SDK will still attempt to ' +
+          'connect, but verify the host matches what your Braze dashboard shows under Settings → ' +
+          'Manage Settings → API Settings.',
       );
     }
     if (options.sessionTimeoutInSeconds !== undefined) {

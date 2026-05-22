@@ -19,7 +19,10 @@ Pod::Spec.new do |s|
   }
   s.ios.deployment_target = '15.0'
   s.swift_version = '5.9'
-  s.dependency 'Capacitor'
+  # L4-P03: bounded Capacitor range so future major breaking changes
+  # don't silently absorb consumers' Pod installs without a plugin bump.
+  # Matches the package.json peer-dep allowance for Capacitor 6 or 7.
+  s.dependency 'Capacitor', '>= 6.0', '< 8.0'
   # Braze native SDK pins — see SDK_SURFACE.md §4 (pinning policy).
   s.dependency 'BrazeKit', '14.1.0'
   s.dependency 'BrazeUI', '14.1.0'

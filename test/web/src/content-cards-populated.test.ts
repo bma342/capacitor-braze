@@ -1,6 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
 import type { MockServer } from 'capacitor-braze-mock-server';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { BrazeWeb } from '../../../src/web';
 
@@ -36,13 +35,18 @@ import { freshPluginWithConfig } from './test-utils';
  *   Type values:
  *     captioned_image, text_announcement, short_news, banner_image, control
  *
- *   The plugin's serializer maps these to BrazeContentCard DTOs whose type
- *   discriminator follows the Web SDK shape (per C02):
- *     - captionedImage when title + description + imageUrl all present
- *     - imageOnly when imageUrl present, no title
- *     - classic when title + description present, no imageUrl
- *     - controlCard for type='control'
- *     - textAnnouncement and other types fall through to the same heuristics
+ *   The plugin's serializer maps the SDK's runtime Card subclass to the
+ *   DTO's `type` discriminator (per C02), via `instanceof` against the
+ *   loaded SDK module:
+ *     - captioned_image / classic_image  → CaptionedImage → 'captionedImage'
+ *     - banner_image                     → ImageOnly      → 'imageOnly'
+ *     - text_announcement / short_news   → ClassicCard    → 'classic'
+ *     - control                          → ControlCard    → 'control'
+ *
+ *   The classification is authoritative — the SDK itself decides the
+ *   subclass from `tp` — so sparse cards (e.g. a CaptionedImage with no
+ *   title) classify correctly even though a field-presence heuristic
+ *   would not.
  */
 describe('content cards (populated cache via refresh end-to-end)', () => {
   let mock: MockServer;
@@ -80,10 +84,10 @@ describe('content cards (populated cache via refresh end-to-end)', () => {
             p: false,
             db: true,
           },
-          // Image-only: has imageUrl, no title
+          // Image-only: banner_image → ImageOnly subclass
           {
             id: 'card_image_only_1',
-            tp: 'captioned_image',
+            tp: 'banner_image',
             i: 'https://cdn.example/banner.png',
             u: 'https://example.com/banner',
             ca: now,
