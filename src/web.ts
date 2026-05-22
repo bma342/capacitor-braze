@@ -226,6 +226,15 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     if (!options.key || typeof options.key !== 'string') {
       throw new Error('Braze.setCustomUserAttribute: `key` is required (string).');
     }
+    // L2-04 + L2-06: enforce the same value-type contract the native bridges
+    // enforce. A consumer using `any`-typed properties could otherwise sneak
+    // a null / undefined / array / object past the TS narrow and the Web SDK
+    // would silently forward it. Cross-platform parity requires all three
+    // bridges agree on what is rejected.
+    const valueType = typeof options.value;
+    if (valueType !== 'string' && valueType !== 'number' && valueType !== 'boolean') {
+      throw new Error('Braze.setCustomUserAttribute: `value` must be string, number, or boolean.');
+    }
     user.setCustomUserAttribute(options.key, options.value);
   }
 

@@ -252,7 +252,11 @@ public class BrazePlugin: CAPPlugin {
     /// Dispatches `setCustomAttribute(key:value:)` to the appropriate Braze
     /// SDK overload based on the inferred type of `value`. Order matters:
     /// `getBool` first (so JSON booleans aren't misread as ints), then string,
-    /// then int (most specific number), then double.
+    /// then numeric. For numerics, we check `getDouble` first so the bridge
+    /// can detect a fractional component before falling back to the Int
+    /// overload (per L4-S02). The previous order `getInt` → `getDouble`
+    /// silently truncated 42.5 to 42 because Capacitor's `getInt` returns
+    /// the rounded value for any numeric NSNumber.
     @objc func setCustomUserAttribute(_ call: CAPPluginCall) {
         guard let braze = Self.requireInitialized(call) else { return }
         guard let key = call.getString("key"), !key.isEmpty else {
@@ -264,10 +268,19 @@ public class BrazePlugin: CAPPlugin {
             braze.user.setCustomAttribute(key: key, value: boolValue)
         } else if let stringValue = call.getString("value") {
             braze.user.setCustomAttribute(key: key, value: stringValue)
-        } else if let intValue = call.getInt("value") {
-            braze.user.setCustomAttribute(key: key, value: intValue)
         } else if let doubleValue = call.getDouble("value") {
-            braze.user.setCustomAttribute(key: key, value: doubleValue)
+            // L4-S02 fix. If the int form of the value losslessly
+            // round-trips through Double, the value is an integer
+            // (no fractional component) and we dispatch to the Int
+            // overload to match Android's type narrowing (Android
+            // org.json parses 42 as Integer, not Double). Otherwise
+            // the value is genuinely fractional and we preserve it
+            // by dispatching to Double.
+            if let intValue = call.getInt("value"), Double(intValue) == doubleValue {
+                braze.user.setCustomAttribute(key: key, value: intValue)
+            } else {
+                braze.user.setCustomAttribute(key: key, value: doubleValue)
+            }
         } else {
             call.reject("Braze.setCustomUserAttribute: `value` must be string, number, or boolean.")
             return

@@ -337,13 +337,23 @@ class BrazePlugin : Plugin() {
             is String -> user.setCustomUserAttribute(key, value)
             is Boolean -> user.setCustomUserAttribute(key, value)
             is Int -> user.setCustomUserAttribute(key, value)
-            is Long -> user.setCustomUserAttribute(key, value.toInt())
+            // L4-K02: preserve Long precision. JS Numbers up to
+            // MAX_SAFE_INTEGER (2^53 ≈ 9.0e15) can safely arrive as Long
+            // when the underlying JSON parser detects an integer larger
+            // than Int.MAX_VALUE. The Braze Android SDK exposes a
+            // setCustomUserAttribute(String, Long) overload at 42.x; the
+            // previous `.toInt()` silently truncated to 32 bits, mangling
+            // any value larger than ~2.1 billion. Use the Long overload
+            // directly.
+            is Long -> user.setCustomUserAttribute(key, value)
             is Double -> user.setCustomUserAttribute(key, value)
             is Float -> user.setCustomUserAttribute(key, value.toDouble())
             else -> {
+                // C04 explicit rejection rather than silent drop on unsupported
+                // types (e.g. arrays, nested objects, null). Bypasses the TS
+                // type guard for consumers using `any`-typed properties.
                 call.reject(
-                    "Braze.setCustomUserAttribute: `value` must be string, number, " +
-                        "or boolean. Got: ${value?.javaClass?.simpleName ?: "null"}",
+                    "Braze.setCustomUserAttribute: `value` must be string, number, or boolean.",
                 )
                 return
             }

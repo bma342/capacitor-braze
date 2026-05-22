@@ -1138,10 +1138,18 @@ included on every update, not a delta.
 Value types accepted by {@link BrazePlugin.setCustomUserAttribute} in v0.1.
 Date and array support land in a later version per `SDK_SURFACE.md` §2.
 
-Note: numeric values may surface in the Braze dashboard as floats. To
-preserve integer vs. float distinction, send `{ value: 42 }` (no decimal)
-for integers and `{ value: 42.0 }` (or any value with decimal) for floats —
-the native bridge dispatches each type to the appropriate Braze SDK overload.
+Note: JavaScript has a single `number` type, so the plugin cannot
+distinguish integer-typed `42` from float-typed `42.0` at the bridge
+boundary — they JSON-serialize identically. The native bridges
+dispatch to whichever SDK overload preserves the value's runtime
+shape: a fractional value (e.g. `42.5`) lands on the Double overload,
+a whole-number value lands on the Int / Long overload. Braze's
+dashboard treats both the same way for analytics aggregation, so
+this normally doesn't matter for consumer code.
+
+`null` and `undefined` are not accepted — the plugin rejects them
+on all three platforms (use a wipe / clear flow if you need to
+remove an attribute).
 
 <code>string | number | boolean</code>
 
