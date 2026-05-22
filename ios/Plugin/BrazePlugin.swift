@@ -119,6 +119,17 @@ public class BrazePlugin: CAPPlugin {
             configuration.sessionTimeout = TimeInterval(sessionTimeout)
         }
 
+        // L4-S03 re-entrance fix: if initialize is being called a second
+        // time without an intervening wipeData, tear down the previous
+        // subscriptions and drop the prior Braze instance BEFORE creating
+        // a new one. Otherwise the previous Cancellable would race against
+        // the new one during deinit, briefly fanning notifyListeners()
+        // through two parallel subscriptions tied to two different SDK
+        // instances. Mirrors Android's teardownXxxSubscription pattern.
+        featureFlagsSubscription = nil
+        contentCardsSubscription = nil
+        BrazePlugin.braze = nil
+
         let braze = Braze(configuration: configuration)
         BrazePlugin.braze = braze
         BrazePlugin.sdkAuthenticationEnabled = enableSdkAuthentication
@@ -134,9 +145,15 @@ public class BrazePlugin: CAPPlugin {
 
         contentCardsSubscription = braze.contentCards.subscribeToUpdates { [weak self] cards in
             guard let self = self else { return }
-            // Capture the manager's lastUpdate at notification time —
-            // BrazeKit updates it right before firing the subscription.
-            let payload = Self.serializeContentCards(cards, lastUpdate: braze.contentCards.lastUpdate)
+            // L4-S04 lifetime fix: read lastUpdate off the static accessor
+            // rather than capturing the local `braze` strongly. If wipeData
+            // dropped BrazePlugin.braze between the SDK firing the closure
+            // and us reading lastUpdate, we want a nil — not a stale value
+            // from a now-disowned instance. BrazeKit updates lastUpdate
+            // right before firing the subscription, so reading it via the
+            // static accessor is the deterministic, lifetime-symmetric
+            // path.
+            let payload = Self.serializeContentCards(cards, lastUpdate: BrazePlugin.braze?.contentCards.lastUpdate)
             self.notifyListeners("contentCardsUpdated", data: payload)
         }
 
