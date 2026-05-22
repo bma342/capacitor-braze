@@ -123,11 +123,17 @@ public class BrazePlugin: CAPPlugin {
         let configuration = Braze.Configuration(apiKey: apiKey, endpoint: endpoint)
         configuration.logger.level = enableLogging ? .debug : .info
         configuration.api.sdkAuthentication = enableSdkAuthentication
-        if call.hasOption("sessionTimeoutInSeconds") {
+        if let sessionTimeout = call.getInt("sessionTimeoutInSeconds") {
             // L5-08: reject sessionTimeoutInSeconds <= 0 explicitly rather
             // than silently dropping. Web's TS validation already rejects;
             // matching the natives keeps C04 validation parity.
-            guard let sessionTimeout = call.getInt("sessionTimeoutInSeconds"), sessionTimeout > 0 else {
+            //
+            // `hasOption` was deprecated in BrazeKit-era Capacitor (the
+            // deprecation message: "Use typed accessors to check the value
+            // instead"); `getInt` returns nil for both missing and
+            // non-integer values, which collapses absent-key and null-key
+            // into "treat as default" — that matches the contract.
+            guard sessionTimeout > 0 else {
                 call.reject("Braze.initialize: `sessionTimeoutInSeconds` must be a positive integer.")
                 return
             }
@@ -159,7 +165,17 @@ public class BrazePlugin: CAPPlugin {
         // display + dismiss lifecycle; consumer apps that want to
         // customize can override after init by assigning a different
         // BrazeInAppMessagePresenter implementation (planned for v0.2).
-        braze.inAppMessagePresenter = BrazeInAppMessageUI()
+        //
+        // `BrazeInAppMessageUI` is `@MainActor`-isolated, so we hop to
+        // the main actor for the assignment. Capacitor invokes plugin
+        // methods on the main thread in practice, but the `@objc func`
+        // entry point is nonisolated as far as Swift's strict-concurrency
+        // checker is concerned. The presenter only needs to be set
+        // before the first IAM campaign fires, which is well after
+        // `initialize` returns, so the async hop is safe.
+        DispatchQueue.main.async {
+            braze.inAppMessagePresenter = BrazeInAppMessageUI()
+        }
 
         // Wire the persistent feature-flag update subscription. Retaining the
         // returned cancellable keeps the subscription alive; releasing it (in
