@@ -228,6 +228,12 @@ jobs:
           npm ci
           npm run build
 
+      - name: SwiftLint
+        # L7-01: enforce iOS code style in CI. SwiftLint is already a
+        # devDependency (via @ionic/swiftlint-config) and `npm run swiftlint`
+        # is wired in package.json; macos-latest ships swiftlint pre-installed.
+        run: npm run swiftlint -- lint --strict
+
       - name: Install demo deps + build web assets
         working-directory: demo
         run: |

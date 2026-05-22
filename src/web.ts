@@ -421,11 +421,18 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     const braze = await this.loadSdk();
     braze.wipeData();
     // Wiping clears the device ID; consider plugin re-init invalid until
-    // explicit `initialize` is called again. Also reset the SDK Auth flag
-    // so a subsequent `initialize({ enableSdkAuthentication: false })`
-    // doesn't carry the previous run's enforcement.
+    // explicit `initialize` is called again. Also reset:
+    //   - the SDK Auth flag so a subsequent `initialize({ enableSdk... })`
+    //     doesn't carry the previous run's enforcement;
+    //   - the subscription-wired flags (L4-T06) so a subsequent initialize
+    //     re-wires `subscribeToFeatureFlagsUpdates` / `…ContentCards…`. The
+    //     Web SDK doesn't expose unsubscribe handles, so without resetting
+    //     these flags the next initialize would skip subscription setup
+    //     and listeners would silently go dead.
     this.initialized = false;
     this.sdkAuthenticationEnabled = false;
+    this.featureFlagsSubscribed = false;
+    this.contentCardsSubscribed = false;
   }
 
   async disableSDK(): Promise<void> {

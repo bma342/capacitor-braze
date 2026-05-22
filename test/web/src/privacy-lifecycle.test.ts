@@ -1,6 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-
 import type { MockServer } from 'capacitor-braze-mock-server';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { BrazeWeb } from '../../../src/web';
 
