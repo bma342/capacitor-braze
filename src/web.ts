@@ -93,6 +93,14 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    */
   private contentCardsSubscribed = false;
 
+  /**
+   * Whether {@link BrazeWeb.initialize} was called with
+   * `enableSdkAuthentication: true`. When this is `true`,
+   * {@link BrazeWeb.changeUser} rejects calls that don't carry an
+   * `sdkAuthSignature` — see `SECURITY.md` §2 for the rationale.
+   */
+  private sdkAuthenticationEnabled = false;
+
   // ---------------------------------------------------------------------------
   // Bridge sanity check
   // ---------------------------------------------------------------------------
@@ -119,6 +127,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     });
     braze.openSession();
     this.initialized = true;
+    this.sdkAuthenticationEnabled = options.enableSdkAuthentication === true;
 
     // Wire the persistent native feature-flag subscription once. The Web SDK
     // doesn't expose an unsubscribe handle, so subscribing twice would queue
@@ -146,6 +155,11 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     const braze = this.requireInitialized();
     if (!options.userId || typeof options.userId !== 'string') {
       throw new Error('Braze.changeUser: `userId` is required (string).');
+    }
+    if (this.sdkAuthenticationEnabled && (!options.sdkAuthSignature || typeof options.sdkAuthSignature !== 'string')) {
+      throw new Error(
+        'Braze.changeUser: `sdkAuthSignature` is required (string) when SDK Authentication is enabled. See SECURITY.md §2.',
+      );
     }
     braze.changeUser(options.userId, options.sdkAuthSignature);
   }
@@ -398,8 +412,11 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     const braze = await this.loadSdk();
     braze.wipeData();
     // Wiping clears the device ID; consider plugin re-init invalid until
-    // explicit `initialize` is called again.
+    // explicit `initialize` is called again. Also reset the SDK Auth flag
+    // so a subsequent `initialize({ enableSdkAuthentication: false })`
+    // doesn't carry the previous run's enforcement.
     this.initialized = false;
+    this.sdkAuthenticationEnabled = false;
   }
 
   async disableSDK(): Promise<void> {

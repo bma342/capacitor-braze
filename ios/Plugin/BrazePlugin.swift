@@ -70,6 +70,13 @@ public class BrazePlugin: CAPPlugin {
     /// `wipeData`.
     private var contentCardsSubscription: Braze.Cancellable?
 
+    /// Whether `initialize` was called with `enableSdkAuthentication: true`.
+    /// When true, `changeUser` rejects calls that don't carry an
+    /// `sdkAuthSignature` (see `SECURITY.md` §2). Persisted as plugin
+    /// state because the underlying BrazeKit `Configuration` is not
+    /// readable post-init.
+    private static var sdkAuthenticationEnabled: Bool = false
+
     // MARK: - Bridge sanity check
 
     @objc func echo(_ call: CAPPluginCall) {
@@ -114,6 +121,7 @@ public class BrazePlugin: CAPPlugin {
 
         let braze = Braze(configuration: configuration)
         BrazePlugin.braze = braze
+        BrazePlugin.sdkAuthenticationEnabled = enableSdkAuthentication
 
         // Wire the persistent feature-flag update subscription. Retaining the
         // returned cancellable keeps the subscription alive; releasing it (in
@@ -144,6 +152,10 @@ public class BrazePlugin: CAPPlugin {
             return
         }
         let sdkAuthSignature = call.getString("sdkAuthSignature")
+        if BrazePlugin.sdkAuthenticationEnabled && (sdkAuthSignature == nil || sdkAuthSignature?.isEmpty == true) {
+            call.reject("Braze.changeUser: `sdkAuthSignature` is required (string) when SDK Authentication is enabled. See SECURITY.md §2.")
+            return
+        }
         braze.changeUser(userId: userId, sdkAuthSignature: sdkAuthSignature)
         call.resolve()
     }
@@ -807,6 +819,7 @@ public class BrazePlugin: CAPPlugin {
         featureFlagsSubscription = nil
         contentCardsSubscription = nil
         BrazePlugin.braze = nil
+        BrazePlugin.sdkAuthenticationEnabled = false
         call.resolve()
     }
 

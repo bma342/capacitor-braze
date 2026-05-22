@@ -95,6 +95,15 @@ class BrazePlugin : Plugin() {
      */
     private var contentCardsSubscriber: IEventSubscriber<ContentCardsUpdatedEvent>? = null
 
+    /**
+     * Whether `initialize` was called with `enableSdkAuthentication: true`.
+     * When true, `changeUser` rejects calls that don't carry an
+     * `sdkAuthSignature` (see `SECURITY.md` §2). Persisted as plugin
+     * state because the underlying `BrazeConfig` is not readable
+     * post-`configure`.
+     */
+    private var sdkAuthenticationEnabled: Boolean = false
+
     // -------------------------------------------------------------------------
     // Bridge sanity check
     // -------------------------------------------------------------------------
@@ -163,6 +172,7 @@ class BrazePlugin : Plugin() {
 
         Braze.configure(context, builder.build())
         initialized = true
+        sdkAuthenticationEnabled = enableSdkAuthentication
 
         // Wire the persistent feature-flag update subscription. Drop any
         // previous subscriber first so re-init doesn't double-fire events
@@ -203,6 +213,12 @@ class BrazePlugin : Plugin() {
             return
         }
         val sdkAuthSignature = call.getString("sdkAuthSignature")
+        if (sdkAuthenticationEnabled && sdkAuthSignature.isNullOrEmpty()) {
+            call.reject(
+                "Braze.changeUser: `sdkAuthSignature` is required (string) when SDK Authentication is enabled. See SECURITY.md §2.",
+            )
+            return
+        }
         if (sdkAuthSignature != null) {
             Braze.getInstance(context).changeUser(userId, sdkAuthSignature)
         } else {
@@ -733,6 +749,7 @@ class BrazePlugin : Plugin() {
         teardownFeatureFlagsSubscription()
         teardownContentCardsSubscription()
         initialized = false
+        sdkAuthenticationEnabled = false
         call.resolve()
     }
 
