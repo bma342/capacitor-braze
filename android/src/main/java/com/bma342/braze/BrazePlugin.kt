@@ -8,7 +8,11 @@ import com.braze.events.ContentCardsUpdatedEvent
 import com.braze.events.FeatureFlagsUpdatedEvent
 import com.braze.events.IEventSubscriber
 import com.braze.models.FeatureFlag
+import com.braze.models.cards.CaptionedImageCard
 import com.braze.models.cards.Card
+import com.braze.models.cards.ImageOnlyCard
+import com.braze.models.cards.ShortNewsCard
+import com.braze.models.cards.TextAnnouncementCard
 import com.braze.models.outgoing.BrazeProperties
 import com.braze.support.BrazeLogger
 import com.getcapacitor.JSArray
@@ -887,20 +891,128 @@ class BrazePlugin : Plugin() {
     }
 
     /**
-     * Serializes a single Card via the SDK's own Codable encoder
-     * (`forJsonPut()` returns the JSONObject that Braze itself uses for
-     * persistence). Mirrors the iOS bridge's `card.json()` approach so
-     * native wire-format is symmetric across iOS / Android.
+     * Serializes a single [Card] to the plugin's portable DTO. The
+     * `type` discriminator is the C02 four-string union
+     * (`classic` / `captionedImage` / `imageOnly` / `control`); Braze
+     * Android's five concrete subclasses collapse to those four:
      *
-     * Returns null only if the JSON roundtrip fails (effectively never
-     * for valid SDK-produced cards). The caller filters out nulls.
+     *   - [ControlCard][card.isControl]       -> 'control'
+     *   - [CaptionedImageCard]                -> 'captionedImage'
+     *   - [ImageOnlyCard]                     -> 'imageOnly'
+     *   - [ShortNewsCard]                     -> 'classic' (small image)
+     *   - [TextAnnouncementCard]              -> 'classic' (no image)
+     *
+     * Per L2-02: switching on the subclass (vs. `card.forJsonPut()`
+     * passthrough) makes the wire format match the contract on every
+     * platform, so consumers can narrow on `card.type` and trust the
+     * narrowed type. Returns null only for unknown future subclasses.
+     *
+     * Field mapping:
+     *   - `linkText`  ← `card.domain` (visible URL/link text)
+     *   - `url`       ← `card.url` (the SDK's resolved click URL)
+     *   - `aspectRatio` ← `card.aspectRatio` as Double (null for unset)
+     *   - `dismissed` ← `card.isDismissed`
+     *   - `dismissible` ← `card.isDismissibleByUser`
+     *   - `clicked`   ← always `false` (the Android SDK does not
+     *      expose a card-level "clicked" boolean; iOS does. This is
+     *      a documented cross-platform asymmetry; consumers should
+     *      not rely on `clicked` to round-trip through Android.)
+     *   - `updated`   ← `card.created` × 1000 (epoch ms) or null
+     *   - `expiresAt` ← `card.expiresAt` × 1000 (epoch ms) or null
+     *      (the SDK uses -1 to mean "never expires")
      */
     private fun serializeContentCard(card: Card): JSObject? {
-        return try {
-            JSObject(card.forJsonPut().toString())
-        } catch (t: Throwable) {
-            null
+        val dto = JSObject()
+        dto.put("id", card.id)
+        dto.put("viewed", card.viewed)
+        dto.put("pinned", card.isPinned)
+        dto.put("extras", extrasToJSObject(card.extras))
+        dto.put("updated", epochSecondsToMillis(card.created))
+        dto.put("expiresAt", expiresAtSecondsToMillis(card.expiresAt))
+
+        if (card.isControl) {
+            dto.put("type", "control")
+            return dto
         }
+
+        val clickUrl: Any = card.url ?: JSObject.NULL
+        dto.put("clicked", false)
+        dto.put("dismissed", card.isDismissed)
+        dto.put("dismissible", card.isDismissibleByUser)
+
+        when (card) {
+            is CaptionedImageCard -> {
+                dto.put("type", "captionedImage")
+                dto.put("title", card.title ?: "")
+                dto.put("description", card.description ?: "")
+                dto.put("imageUrl", card.imageUrl ?: "")
+                dto.put("url", clickUrl)
+                dto.put("aspectRatio", aspectRatioOrNull(card.aspectRatio))
+                dto.put("linkText", card.domain ?: JSObject.NULL)
+                dto.put("altImageText", card.altImageText ?: JSObject.NULL)
+            }
+            is ImageOnlyCard -> {
+                dto.put("type", "imageOnly")
+                dto.put("imageUrl", card.imageUrl ?: "")
+                dto.put("url", clickUrl)
+                dto.put("aspectRatio", aspectRatioOrNull(card.aspectRatio))
+                dto.put("altImageText", card.altImageText ?: JSObject.NULL)
+            }
+            is ShortNewsCard -> {
+                dto.put("type", "classic")
+                dto.put("title", card.title ?: "")
+                dto.put("description", card.description ?: "")
+                dto.put("imageUrl", card.imageUrl ?: "")
+                dto.put("url", clickUrl)
+                dto.put("linkText", card.domain ?: JSObject.NULL)
+                dto.put("altImageText", card.altImageText ?: JSObject.NULL)
+            }
+            is TextAnnouncementCard -> {
+                dto.put("type", "classic")
+                dto.put("title", card.title ?: "")
+                dto.put("description", card.description ?: "")
+                dto.put("url", clickUrl)
+                dto.put("linkText", card.domain ?: JSObject.NULL)
+            }
+            else -> return null
+        }
+        return dto
+    }
+
+    private fun extrasToJSObject(extras: Map<String, String>): JSObject {
+        val result = JSObject()
+        for ((key, value) in extras) {
+            result.put(key, value)
+        }
+        return result
+    }
+
+    /**
+     * Maps an SDK epoch-seconds timestamp to epoch ms. The Braze
+     * Android SDK uses 0 for "unset" on `created`. Negative or zero
+     * surface as JSON null.
+     */
+    private fun epochSecondsToMillis(seconds: Long): Any {
+        return if (seconds > 0) seconds * 1000L else JSObject.NULL
+    }
+
+    /**
+     * Maps an SDK `expiresAt` epoch-seconds timestamp to epoch ms.
+     * The SDK uses -1 to mean "never expires"; we surface that as
+     * JSON null because the contract treats expiry as optional.
+     */
+    private fun expiresAtSecondsToMillis(seconds: Long): Any {
+        return if (seconds > 0) seconds * 1000L else JSObject.NULL
+    }
+
+    /**
+     * Maps the SDK's `aspectRatio` Float to a non-negative Double, or
+     * JSON null when the value is unset (Braze surfaces unset as 0
+     * for cards that don't carry the field). Defensive against NaN
+     * for forward compatibility.
+     */
+    private fun aspectRatioOrNull(value: Float): Any {
+        return if (value > 0f && !value.isNaN()) value.toDouble() else JSObject.NULL
     }
 
     /**

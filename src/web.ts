@@ -583,11 +583,15 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    * Returns `null` for cards we can't classify (future SDK card types);
    * the caller filters them out so the DTO stays a strict union.
    *
-   * Card-type detection uses runtime field presence rather than
-   * `instanceof` because the Web SDK exports `Card` subclasses as
-   * distinct classes whose private state isn't reliable to introspect.
-   * The fields chosen are non-overlapping enough to discriminate the
-   * four variants.
+   * Card-type discrimination uses `instanceof` against the Web SDK's
+   * concrete `Card` subclasses (`ControlCard`, `CaptionedImage`,
+   * `ImageOnly`, `ClassicCard`). This is the authoritative source of
+   * truth — the SDK itself instantiates these classes from the wire
+   * format (`tp: 'banner_image' → ImageOnly`, etc.) — so the plugin's
+   * `type` discriminator stays in lockstep with the SDK's classification
+   * even when fields are sparse (e.g. a `CaptionedImage` with no title,
+   * which used to be misclassified as `imageOnly` by the legacy
+   * field-presence heuristic).
    */
   private serializeContentCard(card: BrazeWebSdkModule.Card): BrazeContentCard | null {
     const base = {
@@ -599,30 +603,15 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       expiresAt: card.expiresAt ? card.expiresAt.getTime() : null,
     };
 
-    if (card.isControl) {
+    const braze = this.braze;
+    const type = this.classifyContentCard(card, braze);
+    if (type === null) return null;
+
+    if (type === 'control') {
       return { ...base, type: 'control' };
     }
 
-    const type: BrazeContentCardType | null = this.detectContentCardType(card);
-    if (!type || type === 'control') {
-      return null;
-    }
-    // Cards that aren't ControlCard share these fields; we type-cast
-    // through `Card` because the public Card type doesn't enumerate the
-    // subclass fields, but the runtime objects always carry them.
-    const c = card as BrazeWebSdkModule.Card & {
-      title?: string;
-      description?: string;
-      imageUrl?: string;
-      url?: string;
-      linkText?: string;
-      aspectRatio?: number | null;
-      clicked?: boolean;
-      dismissed?: boolean;
-      dismissible?: boolean;
-      language?: string;
-      altImageText?: string;
-    };
+    const c = card as BrazeWebSdkModule.CaptionedImage | BrazeWebSdkModule.ImageOnly | BrazeWebSdkModule.ClassicCard;
     const sharedNonControl = {
       clicked: c.clicked ?? false,
       dismissed: c.dismissed ?? false,
@@ -631,68 +620,80 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       altImageText: c.altImageText,
     };
 
-    switch (type) {
-      case 'imageOnly':
-        return {
-          ...base,
-          type: 'imageOnly',
-          imageUrl: c.imageUrl ?? '',
-          url: c.url,
-          aspectRatio: c.aspectRatio ?? null,
-          ...sharedNonControl,
-        };
-      case 'captionedImage':
-        return {
-          ...base,
-          type: 'captionedImage',
-          title: c.title ?? '',
-          description: c.description ?? '',
-          imageUrl: c.imageUrl ?? '',
-          url: c.url,
-          linkText: c.linkText,
-          aspectRatio: c.aspectRatio ?? null,
-          ...sharedNonControl,
-        };
-      case 'classic':
-        return {
-          ...base,
-          type: 'classic',
-          title: c.title ?? '',
-          description: c.description ?? '',
-          imageUrl: c.imageUrl,
-          url: c.url,
-          linkText: c.linkText,
-          ...sharedNonControl,
-        };
+    if (type === 'imageOnly') {
+      const io = c as BrazeWebSdkModule.ImageOnly;
+      return {
+        ...base,
+        type: 'imageOnly',
+        imageUrl: io.imageUrl ?? '',
+        url: io.url,
+        aspectRatio: io.aspectRatio ?? null,
+        ...sharedNonControl,
+      };
     }
+    if (type === 'captionedImage') {
+      const ci = c as BrazeWebSdkModule.CaptionedImage;
+      return {
+        ...base,
+        type: 'captionedImage',
+        title: ci.title ?? '',
+        description: ci.description ?? '',
+        imageUrl: ci.imageUrl ?? '',
+        url: ci.url,
+        linkText: ci.linkText,
+        aspectRatio: ci.aspectRatio ?? null,
+        ...sharedNonControl,
+      };
+    }
+    // type === 'classic'
+    const cc = c as BrazeWebSdkModule.ClassicCard;
+    return {
+      ...base,
+      type: 'classic',
+      title: cc.title ?? '',
+      description: cc.description ?? '',
+      imageUrl: cc.imageUrl,
+      url: cc.url,
+      linkText: cc.linkText,
+      ...sharedNonControl,
+    };
   }
 
   /**
-   * Best-effort runtime type discrimination for content cards. The Web
-   * SDK doesn't expose a card-type field, so we detect by which subclass
-   * fields are present:
+   * Resolves a runtime card to its plugin-canonical type discriminator.
    *
-   *   - has `title` AND `imageUrl` AND `description` → `captionedImage`
-   *   - has `imageUrl` but no `title` → `imageOnly`
-   *   - has `title` and `description` but image is optional → `classic`
+   * Primary path: `instanceof` against the loaded SDK module's concrete
+   * Card subclasses — authoritative because the SDK itself instantiates
+   * those classes from the wire format.
    *
-   * Order matters: check the most-specific shape first.
+   * Fallback path: when the SDK module hasn't been loaded yet (only
+   * happens in unit tests that exercise the serializer without going
+   * through `initialize()`), classify by `isControl` flag plus the
+   * shape of the field set. The fallback intentionally classifies
+   * sparsely-populated cards differently than the SDK would; integration
+   * tests catch that drift, and unit tests that care construct real
+   * Card instances rather than plain objects.
    */
-  private detectContentCardType(card: BrazeWebSdkModule.Card): BrazeContentCardType | null {
+  private classifyContentCard(
+    card: BrazeWebSdkModule.Card,
+    braze: BrazeWebSdk | null,
+  ): BrazeContentCardType | null {
+    if (braze !== null) {
+      if (card instanceof braze.ControlCard) return 'control';
+      if (card instanceof braze.CaptionedImage) return 'captionedImage';
+      if (card instanceof braze.ImageOnly) return 'imageOnly';
+      if (card instanceof braze.ClassicCard) return 'classic';
+      return null;
+    }
+    if (card.isControl) return 'control';
     const c = card as BrazeWebSdkModule.Card & {
       title?: string;
       description?: string;
       imageUrl?: string;
     };
-    if (c.title && c.description && c.imageUrl) {
-      return 'captionedImage';
-    }
-    if (!c.title && c.imageUrl) {
-      return 'imageOnly';
-    }
-    if (c.title && c.description) {
-      return 'classic';
-    }
+    if (c.title && c.description && c.imageUrl) return 'captionedImage';
+    if (!c.title && c.imageUrl) return 'imageOnly';
+    if (c.title && c.description) return 'classic';
     return null;
   }
 

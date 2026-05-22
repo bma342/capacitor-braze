@@ -464,30 +464,49 @@ public class BrazePlugin: CAPPlugin {
         call.resolve()
     }
 
-    /// Serializes a `Braze.FeatureFlag` to a wire-format dict by going
-    /// through BrazeKit's own `Codable` conformance: `flag.json()`
-    /// returns the SDK's canonical JSON for the flag, which we re-parse
-    /// into `[String: Any]` for the Capacitor bridge.
+    /// Serializes a `Braze.FeatureFlag` to the C02 tagged-union wire
+    /// format. Each property entry is `{ "type": "<one-of>", "value": <native> }`
+    /// where `<one-of>` is one of the six tags declared by
+    /// `BrazeFeatureFlagPropertyValue` in `src/definitions.ts`:
     ///
-    /// Trade-off: the wire-format produced this way is *iOS BrazeKit's*
-    /// canonical shape, not necessarily byte-identical to the Web SDK
-    /// shape that C02 nominates as canonical. The actual `properties`
-    /// dict is `[String: Any]` on BrazeKit with no nested type-tagged
-    /// structure exposed publicly — there is no `Property` enum to
-    /// pattern-match, only typed accessors (`stringProperty(key:)`
-    /// etc.) keyed by string. Until cross-platform wire-format
-    /// reconciliation lands (planned), iOS consumers may see a
-    /// flatter `properties: Record<string, unknown>` shape than the
-    /// Web SDK's `{ type, value }` tagged entries.
+    ///     string | number | boolean | image | datetime | jsonobject
+    ///
+    /// Wire shape is reconciled with the Web SDK so a consumer reading
+    /// `flag.properties[key].type` gets the same tag on all three
+    /// platforms (per C02 / L2-01).
+    ///
+    /// Implementation: enumerate `flag.properties.keys` and probe the
+    /// typed accessors in priority order. BrazeKit's accessors return
+    /// nil unless the underlying property is of the requested type, so
+    /// the first non-nil hit names the type. Image is checked before
+    /// string and timestamp is checked before number because both
+    /// tagged types are stored on top of the looser type under the
+    /// hood — order keeps us conservative against accidental
+    /// reinterpretation.
     private static func serializeFeatureFlag(_ flag: Braze.FeatureFlag) -> [String: Any] {
-        if let data = flag.json(),
-           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            return dict
+        var properties: [String: Any] = [:]
+        for key in flag.properties.keys {
+            if let value = flag.imageProperty(key: key) {
+                properties[key] = ["type": "image", "value": value]
+            } else if let value = flag.stringProperty(key: key) {
+                properties[key] = ["type": "string", "value": value]
+            } else if let value = flag.timestampProperty(key: key) {
+                properties[key] = ["type": "datetime", "value": value]
+            } else if let value = flag.boolProperty(key: key) {
+                properties[key] = ["type": "boolean", "value": value]
+            } else if let value = flag.numberProperty(key: key) {
+                properties[key] = ["type": "number", "value": value]
+            } else if let value = flag.jsonProperty(key: key) {
+                properties[key] = ["type": "jsonobject", "value": value]
+            }
+            // Else: an unknown property type the bridge can't classify.
+            // Drop silently rather than emit a degenerate entry; the
+            // contract documents the union as closed at six tags.
         }
         return [
             "id": flag.id,
             "enabled": flag.enabled,
-            "properties": [String: Any](),
+            "properties": properties,
         ]
     }
 
@@ -504,10 +523,13 @@ public class BrazePlugin: CAPPlugin {
     // and `card.logImpression(using:)`. We resolve cardId → card via
     // the cached list before forwarding.
     //
-    // Wire-format note: each card's serialization uses BrazeKit's own
-    // `card.json()` Codable encoder. The resulting shape is iOS-canonical
-    // and may differ from the Web SDK shape that C02 designates as
-    // plugin-canonical; cross-platform reconciliation is a follow-up.
+    // Wire-format note: each card's serialization pattern-matches the
+    // BrazeKit `Braze.ContentCard` enum cases and emits the plugin's
+    // C02 four-string discriminator (`classic` | `captionedImage` |
+    // `imageOnly` | `control`). BrazeKit's `ClassicImage` collapses
+    // into the contract's `classic` variant because the plugin contract
+    // treats the small-image variant as optional `imageUrl` on the
+    // classic card — same shape the Web SDK uses. (Per L2-02 fix.)
 
     @objc func getContentCards(_ call: CAPPluginCall) {
         guard let braze = Self.requireInitialized(call) else { return }
@@ -575,15 +597,126 @@ public class BrazePlugin: CAPPlugin {
         ]
     }
 
-    /// Serializes a `Braze.ContentCard` enum case via its Codable
-    /// `json()` extension. Returns nil if encoding fails — the caller
-    /// drops those entries via compactMap.
+    /// Serializes a `Braze.ContentCard` enum case to the plugin's
+    /// portable DTO. Pattern-matches the enum case to populate the
+    /// C02 `type` discriminator and the variant-specific fields.
+    ///
+    /// Field mapping vs the TS contract:
+    ///   - `linkText` ← BrazeKit `card.domain` (the human-readable URL
+    ///      text shown under classic/captioned cards in BrazeUI)
+    ///   - `url`      ← `data.clickAction.url?.absoluteString` (only
+    ///      emitted when the click action is a URL action; processed
+    ///      `.url(URL, useWebView)` cases lose the `useWebView` flag
+    ///      because the contract has no shape for it)
+    ///   - `imageUrl` ← `card.image.absoluteString` (variants that
+    ///      carry an image only)
+    ///   - `aspectRatio` ← `card.imageAspectRatio` (variants that
+    ///      carry one; null otherwise)
+    ///   - `altImageText` ← BrazeKit `card.imageAltText`
+    ///   - `updated`   ← `data.createdAt` as epoch ms (BrazeKit doesn't
+    ///      track a separate "last modified" timestamp; `createdAt` is
+    ///      the closest analog and matches what the Web SDK exposes
+    ///      via its `updated` field).
+    ///   - `expiresAt` ← `data.expiresAt` as epoch ms, with the SDK's
+    ///      -1 sentinel surfacing as JSON null.
+    ///
+    /// Never returns nil — every BrazeKit case maps to a contract
+    /// variant. Kept optional in the signature so the call site can
+    /// stay symmetric with the Android bridge.
     private static func serializeContentCard(_ card: Braze.ContentCard) -> [String: Any]? {
-        guard let data = card.json(),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
+        let data = card.data
+        var dto: [String: Any] = [
+            "id": data.id,
+            "viewed": data.viewed,
+            "pinned": data.pinned,
+            "extras": Self.coerceExtras(data.extras),
+            "updated": Self.epochMillis(fromSeconds: data.createdAt),
+            "expiresAt": Self.expiresAtEpochMillis(seconds: data.expiresAt),
+        ]
+        let clickUrl: Any = data.clickAction?.url?.absoluteString ?? NSNull()
+        let nonControl: [String: Any] = [
+            "clicked": data.clicked,
+            "dismissed": data.removed,
+            "dismissible": data.dismissible,
+        ]
+        switch card {
+        case .control:
+            dto["type"] = "control"
+        case .classic(let c):
+            dto["type"] = "classic"
+            dto["title"] = c.title
+            dto["description"] = c.description
+            dto["url"] = clickUrl
+            dto["linkText"] = c.domain ?? NSNull()
+            dto["language"] = c.language ?? NSNull()
+            dto.merge(nonControl) { _, new in new }
+        case .classicImage(let c):
+            // BrazeKit ClassicImage → contract 'classic' with optional imageUrl.
+            dto["type"] = "classic"
+            dto["title"] = c.title
+            dto["description"] = c.description
+            dto["imageUrl"] = c.image.absoluteString
+            dto["url"] = clickUrl
+            dto["linkText"] = c.domain ?? NSNull()
+            dto["language"] = c.language ?? NSNull()
+            dto["altImageText"] = c.imageAltText ?? NSNull()
+            dto.merge(nonControl) { _, new in new }
+        case .imageOnly(let c):
+            dto["type"] = "imageOnly"
+            dto["imageUrl"] = c.image.absoluteString
+            dto["url"] = clickUrl
+            dto["aspectRatio"] = c.imageAspectRatio ?? NSNull()
+            dto["language"] = c.language ?? NSNull()
+            dto["altImageText"] = c.imageAltText ?? NSNull()
+            dto.merge(nonControl) { _, new in new }
+        case .captionedImage(let c):
+            dto["type"] = "captionedImage"
+            dto["title"] = c.title
+            dto["description"] = c.description
+            dto["imageUrl"] = c.image.absoluteString
+            dto["url"] = clickUrl
+            dto["linkText"] = c.domain ?? NSNull()
+            dto["aspectRatio"] = c.imageAspectRatio ?? NSNull()
+            dto["language"] = c.language ?? NSNull()
+            dto["altImageText"] = c.imageAltText ?? NSNull()
+            dto.merge(nonControl) { _, new in new }
         }
-        return dict
+        return dto
+    }
+
+    /// Converts BrazeKit's `[String: Any]` extras dict to the
+    /// `Record<string, string>` shape declared by the TS contract.
+    /// Non-string values are stringified via `String(describing:)`;
+    /// the only risk is for SDK-internal types whose description
+    /// is verbose, but Braze dashboard extras are configured as
+    /// string-typed metadata so non-string values are expected to
+    /// be rare in practice.
+    private static func coerceExtras(_ extras: [String: Any]) -> [String: String] {
+        var result: [String: String] = [:]
+        for (key, value) in extras {
+            if let s = value as? String {
+                result[key] = s
+            } else {
+                result[key] = String(describing: value)
+            }
+        }
+        return result
+    }
+
+    /// Converts a Foundation.TimeInterval (epoch seconds) to epoch
+    /// milliseconds as the wire format expects, or `NSNull()` if
+    /// the input is the BrazeKit "never set" sentinel (0).
+    private static func epochMillis(fromSeconds seconds: TimeInterval) -> Any {
+        if seconds <= 0 { return NSNull() }
+        return Int(seconds * 1000)
+    }
+
+    /// Same as `epochMillis(fromSeconds:)` but treats the BrazeKit
+    /// "never expires" sentinel (-1 specifically) as NSNull. A 0
+    /// expiresAt also means unset and is treated as null.
+    private static func expiresAtEpochMillis(seconds: TimeInterval) -> Any {
+        if seconds < 0 || seconds == 0 { return NSNull() }
+        return Int(seconds * 1000)
     }
 
     // MARK: - Push token registration

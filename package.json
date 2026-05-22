@@ -52,6 +52,7 @@
     "watch": "tsc --watch",
     "test": "cd test/web && npm test",
     "test:watch": "cd test/web && npm run test:watch",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {

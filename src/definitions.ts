@@ -701,8 +701,11 @@ export interface BrazePlugin {
    * for debugging and for sending the device ID to your backend for targeted
    * server-side messaging.
    *
-   * Init-independent: safe to call before {@link BrazePlugin.initialize}; the
-   * device ID is generated on first SDK use and persists across sessions.
+   * Requires {@link BrazePlugin.initialize} to have been called. The accessor
+   * is instance-bound on iOS (`braze.deviceId`) and Android
+   * (`Braze.getInstance(context).deviceId`); only Web exposes a true static.
+   * To keep the contract uniform across platforms (see C03 / C07) the plugin
+   * gates this method behind the init guard on all three.
    *
    * @example
    * const { deviceId } = await Braze.getDeviceId();
@@ -1011,7 +1014,11 @@ export interface BrazePlugin {
    * Re-enables the Braze SDK after a {@link BrazePlugin.disableSDK} call.
    * No-op if the SDK was not previously disabled.
    *
-   * Init-independent: safe to call before {@link BrazePlugin.initialize}.
+   * Init-independent on Web and Android (both expose a class-level
+   * `Braze.enableSdk` static). On iOS, BrazeKit 14.x removed the class-level
+   * form — re-enabling requires an initialized `Braze` instance, so this
+   * method rejects with the standard init-required error if called pre-init
+   * on iOS. See `docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md`.
    *
    * @example
    * // User restores consent
@@ -1022,7 +1029,10 @@ export interface BrazePlugin {
   /**
    * Returns whether the SDK is currently disabled.
    *
-   * Init-independent: safe to call before {@link BrazePlugin.initialize}.
+   * Init-independent on Web and Android. On iOS BrazeKit 14.x there is no
+   * class-level `isDisabled` static; this method returns `{ disabled: false }`
+   * pre-init on iOS (uninitialized != disabled, by convention) and reads
+   * `!braze.enabled` post-init. See `docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md`.
    *
    * @example
    * const { disabled } = await Braze.isDisabled();
