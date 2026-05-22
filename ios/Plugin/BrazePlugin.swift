@@ -71,6 +71,23 @@ public class BrazePlugin: CAPPlugin {
     /// `wipeData`.
     private var contentCardsSubscription: Braze.Cancellable?
 
+    /// Retained reference to the in-app message UI presenter so we can
+    /// keep its delegate (`iamDelegate`) alive — BrazeUI holds the
+    /// delegate weakly, and the only other strong reference to the
+    /// presenter is on `BrazeKit.Braze`, which itself is unowned.
+    /// Released in `wipeData` alongside the other init artifacts.
+    private var inAppMessagePresenter: BrazeInAppMessageUI?
+
+    /// Bridges `BrazeInAppMessageUIDelegate.displayChoiceForMessage` to
+    /// the plugin's `inAppMessageReceived` listener. Retained at the
+    /// plugin level because BrazeUI's `delegate` property is `weak`.
+    private var iamDelegate: BrazeIAMDelegate?
+
+    /// Bridges `BrazeDelegate.sdkAuthenticationFailedWithError` to the
+    /// plugin's `sdkAuthError` listener event. Retained at the plugin
+    /// level because Braze's `delegate` property is `weak`.
+    private var brazeDelegate: BrazeKitDelegate?
+
     /// Whether `initialize` was called with `enableSdkAuthentication: true`.
     /// When true, `changeUser` rejects calls that don't carry an
     /// `sdkAuthSignature` (see `SECURITY.md` §2). Persisted as plugin
@@ -152,29 +169,49 @@ public class BrazePlugin: CAPPlugin {
         // instances. Mirrors Android's teardownXxxSubscription pattern.
         featureFlagsSubscription = nil
         contentCardsSubscription = nil
+        inAppMessagePresenter = nil
+        iamDelegate = nil
+        brazeDelegate = nil
         BrazePlugin.braze = nil
 
         let braze = Braze(configuration: configuration)
         BrazePlugin.braze = braze
         BrazePlugin.sdkAuthenticationEnabled = enableSdkAuthentication
 
-        // L4-S11: wire BrazeUI's in-app message presenter so IAMs render
-        // out of the box on iOS. Without this, BrazeKit fetches campaigns
-        // but never displays them — the audit caught this as 2 MB of
-        // linked binary doing nothing. The presenter handles the entire
-        // display + dismiss lifecycle; consumer apps that want to
-        // customize can override after init by assigning a different
-        // BrazeInAppMessagePresenter implementation (planned for v0.2).
+        // L4-S11 + Phase 3b: wire BrazeUI's in-app message presenter
+        // so IAMs render out of the box on iOS, AND attach a delegate
+        // that intercepts the displayChoiceForMessage hook to emit the
+        // `inAppMessageReceived` listener event. The delegate always
+        // returns `.now` so default-display behavior is preserved;
+        // consumer code reads the listener payload for analytics or
+        // control-variant handling.
         //
-        // `BrazeInAppMessageUI` is `@MainActor`-isolated, so we hop to
-        // the main actor for the assignment. Capacitor invokes plugin
-        // methods on the main thread in practice, but the `@objc func`
-        // entry point is nonisolated as far as Swift's strict-concurrency
-        // checker is concerned. The presenter only needs to be set
-        // before the first IAM campaign fires, which is well after
-        // `initialize` returns, so the async hop is safe.
+        // `BrazeInAppMessageUI` (and the delegate's @MainActor methods)
+        // require the main actor for construction. Capacitor invokes
+        // plugin methods on the main thread in practice, but the
+        // `@objc func` entry point is nonisolated as far as Swift's
+        // strict-concurrency checker is concerned — so we hop to the
+        // main actor for the assignment. The presenter only needs to be
+        // set before the first IAM campaign fires, which is well after
+        // `initialize` returns to the consumer.
+        let pluginRef = self
         DispatchQueue.main.async {
-            braze.inAppMessagePresenter = BrazeInAppMessageUI()
+            let presenter = BrazeInAppMessageUI()
+            let iamDelegate = BrazeIAMDelegate()
+            iamDelegate.plugin = pluginRef
+            presenter.delegate = iamDelegate
+            braze.inAppMessagePresenter = presenter
+
+            // Phase 13: wire BrazeDelegate for sdkAuthError listener
+            // emission. The braze instance holds delegate weakly so
+            // we retain it on the plugin.
+            let brazeDelegate = BrazeKitDelegate()
+            brazeDelegate.plugin = pluginRef
+            braze.delegate = brazeDelegate
+
+            pluginRef.inAppMessagePresenter = presenter
+            pluginRef.iamDelegate = iamDelegate
+            pluginRef.brazeDelegate = brazeDelegate
         }
 
         // Wire the persistent feature-flag update subscription. Retaining the
@@ -896,6 +933,9 @@ public class BrazePlugin: CAPPlugin {
         }
         featureFlagsSubscription = nil
         contentCardsSubscription = nil
+        inAppMessagePresenter = nil
+        iamDelegate = nil
+        brazeDelegate = nil
         BrazePlugin.braze = nil
         BrazePlugin.sdkAuthenticationEnabled = false
         call.resolve()

@@ -51,12 +51,19 @@ android {
     kotlinOptions {
         jvmTarget = '17'
     }
+    testOptions {
+        // Phase 15 / C11: enable Robolectric for the JVM unit-test tier.
+        // includeAndroidResources lets Robolectric synthesize a working
+        // Android context for tests that touch the BrazePlugin lifecycle.
+        unitTests {
+            includeAndroidResources = true
+        }
+    }
 }
 
 repositories {
     google()
     mavenCentral()
-    maven { url "https://appboy.github.io/appboy-android-sdk/sdk" }
 }
 
 dependencies {
@@ -66,6 +73,14 @@ dependencies {
     // Braze native SDK pins — see SDK_SURFACE.md §4 (pinning policy).
     implementation 'com.braze:android-sdk-ui:42.2.0'
     testImplementation "junit:junit:$junitVersion"
+    // Phase 15 / C11 native-harness deps. Robolectric runs the JVM
+    // test tier against a synthesized Android context so the plugin's
+    // validation surface + lifecycle helpers can be exercised without
+    // an instrumented device.
+    testImplementation 'org.robolectric:robolectric:4.13'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+    testImplementation 'org.mockito.kotlin:mockito-kotlin:5.4.0'
+    testImplementation 'com.google.truth:truth:1.4.4'
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
 }

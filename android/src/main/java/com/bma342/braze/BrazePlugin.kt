@@ -4,6 +4,7 @@ import com.braze.Braze
 import com.braze.configuration.BrazeConfig
 import com.braze.enums.Gender
 import com.braze.enums.Month
+import com.braze.events.BrazeSdkAuthenticationErrorEvent
 import com.braze.events.ContentCardsUpdatedEvent
 import com.braze.events.FeatureFlagsUpdatedEvent
 import com.braze.events.IEventSubscriber
@@ -14,8 +15,16 @@ import com.braze.models.cards.ImageOnlyCard
 import com.braze.models.cards.ShortNewsCard
 import com.braze.models.cards.TextAnnouncementCard
 import com.braze.models.outgoing.BrazeProperties
+import com.braze.enums.inappmessage.ClickAction
+import com.braze.enums.inappmessage.MessageType
+import com.braze.models.inappmessage.IInAppMessage
+import com.braze.models.inappmessage.IInAppMessageImmersive
+import com.braze.models.inappmessage.IInAppMessageWithImage
+import com.braze.models.inappmessage.MessageButton
 import com.braze.support.BrazeLogger
 import com.braze.ui.inappmessage.BrazeInAppMessageManager
+import com.braze.ui.inappmessage.InAppMessageOperation
+import com.braze.ui.inappmessage.listeners.IInAppMessageManagerListener
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -97,6 +106,13 @@ class BrazePlugin : Plugin() {
     private var contentCardsSubscriber: IEventSubscriber<ContentCardsUpdatedEvent>? = null
 
     /**
+     * Mirror of [featureFlagsSubscriber] for SDK Authentication failure
+     * events (Phase 13 / L5-04). Created in `initialize`, removed by
+     * identity in `wipeData`.
+     */
+    private var sdkAuthErrorSubscriber: IEventSubscriber<BrazeSdkAuthenticationErrorEvent>? = null
+
+    /**
      * Whether `initialize` was called with `enableSdkAuthentication: true`.
      * When true, `changeUser` rejects calls that don't carry an
      * `sdkAuthSignature` (see `SECURITY.md` §2). Persisted as plugin
@@ -120,12 +136,146 @@ class BrazePlugin : Plugin() {
 
     override fun handleOnResume() {
         super.handleOnResume()
-        BrazeInAppMessageManager.getInstance().registerInAppMessageManager(bridge.activity)
+        val manager = BrazeInAppMessageManager.getInstance()
+        manager.registerInAppMessageManager(bridge.activity)
+        // Phase 3b: wire the custom listener that emits
+        // 'inAppMessageReceived' events. We set it on every resume so a
+        // process restart doesn't lose the wiring (BrazeInAppMessageManager
+        // is a process-wide singleton; its listener is held across
+        // Activity transitions but a Process death clears it).
+        val listener = inAppMessageListener
+        manager.setCustomInAppMessageManagerListener(listener)
+        // Control-variant in-app messages dispatch through a separate
+        // listener slot; wire the same impl so consumers receive
+        // 'inAppMessageReceived' for control campaigns too. Control
+        // messages have isControl=true on the IInAppMessage; the
+        // serializer maps them to the 'control' type discriminator.
+        manager.setCustomControlInAppMessageManagerListener(listener)
     }
 
     override fun handleOnPause() {
         super.handleOnPause()
         BrazeInAppMessageManager.getInstance().unregisterInAppMessageManager(bridge.activity)
+    }
+
+    /**
+     * Custom listener wired to [BrazeInAppMessageManager] so consumer JS
+     * receives an `inAppMessageReceived` event for every IAM trigger.
+     * Always returns [InAppMessageOperation.DISPLAY_NOW] to preserve
+     * out-of-the-box display behavior; listener implementations on the
+     * JS side cannot block display (Phase 3b scope), but they can react.
+     */
+    private val inAppMessageListener: IInAppMessageManagerListener by lazy {
+        object : IInAppMessageManagerListener {
+            override fun beforeInAppMessageDisplayed(inAppMessage: IInAppMessage): InAppMessageOperation {
+                val payload = JSObject()
+                payload.put("message", serializeInAppMessage(inAppMessage))
+                notifyListeners("inAppMessageReceived", payload)
+                return InAppMessageOperation.DISPLAY_NOW
+            }
+        }
+    }
+
+    /**
+     * Serializes an [IInAppMessage] to the plugin's portable DTO. The
+     * `type` discriminator collapses the SDK's five `MessageType` cases
+     * onto the contract's five canonical variants (SLIDEUP→slideup,
+     * MODAL→modal, FULL→full, HTML or HTML_FULL→html, plus
+     * `isControl`→control taking precedence regardless of MessageType).
+     */
+    private fun serializeInAppMessage(message: IInAppMessage): JSObject {
+        val dto = JSObject()
+        // Android's IInAppMessage doesn't expose a trigger / analytics id
+        // the way iOS BrazeKit and Web do; the SDK tracks impression
+        // attribution internally via the SDK's own bookkeeping. Surface
+        // `null` so the cross-platform contract slot stays populated for
+        // forward compat.
+        dto.put("id", JSObject.NULL)
+        dto.put("clickAction", serializeClickAction(message.clickAction, message.uri?.toString(), message.openUriInWebView))
+        dto.put("extras", extrasToJSObject(message.extras))
+
+        if (message.isControl) {
+            dto.put("type", "control")
+            return dto
+        }
+
+        // `remoteImageUrl` is on the IInAppMessageWithImage sibling
+        // interface, not the base IInAppMessage. Cast once, use across
+        // variants — modals/fulls/slideups can all carry an image.
+        val withImage = message as? IInAppMessageWithImage
+        val imageUrl: String? = withImage?.remoteImageUrl
+
+        when (message.messageType) {
+            MessageType.SLIDEUP -> {
+                dto.put("type", "slideup")
+                dto.put("message", message.message ?: "")
+                if (!imageUrl.isNullOrBlank()) dto.put("imageUrl", imageUrl)
+                // Android's SLIDEUP doesn't carry imageAltText/language on
+                // the base IInAppMessage; immersive-only fields stay absent.
+                // slideFrom is fixed by SDK (no enum exposed at plugin layer).
+                dto.put("slideFrom", "bottom")
+            }
+            MessageType.MODAL -> {
+                dto.put("type", "modal")
+                val immersive = message as? IInAppMessageImmersive
+                dto.put("header", immersive?.header ?: "")
+                dto.put("message", message.message ?: "")
+                if (!imageUrl.isNullOrBlank()) dto.put("imageUrl", imageUrl)
+                dto.put("buttons", serializeButtons(immersive?.messageButtons ?: emptyList()))
+            }
+            MessageType.FULL -> {
+                dto.put("type", "full")
+                val immersive = message as? IInAppMessageImmersive
+                dto.put("header", immersive?.header ?: "")
+                dto.put("message", message.message ?: "")
+                if (!imageUrl.isNullOrBlank()) dto.put("imageUrl", imageUrl)
+                dto.put("buttons", serializeButtons(immersive?.messageButtons ?: emptyList()))
+            }
+            MessageType.HTML, MessageType.HTML_FULL -> {
+                dto.put("type", "html")
+                dto.put("message", message.message ?: "")
+            }
+            else -> {
+                // Future MessageType values fall back to slideup with an
+                // empty message — non-disruptive default; consumers can
+                // detect and ignore.
+                dto.put("type", "slideup")
+                dto.put("message", message.message ?: "")
+                dto.put("slideFrom", "bottom")
+            }
+        }
+        return dto
+    }
+
+    private fun serializeClickAction(action: ClickAction, uri: String?, useWebView: Boolean): JSObject {
+        val obj = JSObject()
+        // Braze Android's ClickAction enum is just NONE / URI as of
+        // 42.x — no NEWSFEED variant (iOS dropped it too). Map URI →
+        // contract `url`, everything else → `none`.
+        if (action == ClickAction.URI) {
+            obj.put("type", "url")
+            obj.put("uri", uri ?: "")
+            obj.put("useWebView", useWebView)
+        } else {
+            obj.put("type", "none")
+        }
+        return obj
+    }
+
+    private fun serializeButtons(buttons: List<MessageButton>): JSArray {
+        val array = JSArray()
+        for (b in buttons) {
+            val obj = JSObject()
+            obj.put("id", b.id)
+            obj.put("text", b.text ?: "")
+            // Note: MessageButton's "open in webview" accessor is
+            // `openUriInWebview` (lowercase 'w' in 'webview') —
+            // different from IInAppMessage's `openUriInWebView`
+            // (capital 'W'). Braze SDK convention.
+            obj.put("clickAction", serializeClickAction(b.clickAction, b.uri?.toString(), b.openUriInWebview))
+            array.put(obj)
+        }
+        return array
     }
 
     // -------------------------------------------------------------------------
@@ -198,12 +348,18 @@ class BrazePlugin : Plugin() {
             BrazeLogger.enableVerboseLogging()
         }
 
-        if (call.hasOption("sessionTimeoutInSeconds")) {
+        val sessionTimeoutInSeconds = call.getInt("sessionTimeoutInSeconds")
+        if (sessionTimeoutInSeconds != null) {
             // L5-08: reject sessionTimeoutInSeconds <= 0 explicitly rather
             // than silently dropping. Web's TS validation already rejects;
             // matching the natives keeps C04 validation parity.
-            val sessionTimeoutInSeconds = call.getInt("sessionTimeoutInSeconds")
-            if (sessionTimeoutInSeconds == null || sessionTimeoutInSeconds <= 0) {
+            //
+            // `getInt` returns null for both absent-key and non-integer
+            // values, which collapses absent-key and null-key into
+            // "treat as default" — that matches the contract. Matches
+            // the iOS bridge's Phase 6 cleanup that dropped hasOption()
+            // in favor of the typed accessor's nullable return.
+            if (sessionTimeoutInSeconds <= 0) {
                 call.reject("Braze.initialize: `sessionTimeoutInSeconds` must be a positive integer.")
                 return
             }
@@ -239,6 +395,25 @@ class BrazePlugin : Plugin() {
         }
         Braze.getInstance(context).subscribeToContentCardsUpdates(ccSubscriber)
         contentCardsSubscriber = ccSubscriber
+
+        // Phase 13 / L5-04: wire BrazeSdkAuthenticationErrorEvent
+        // subscriber so the consumer's JS listener for `sdkAuthError`
+        // fires when Braze rejects an authenticated request.
+        teardownSdkAuthErrorSubscription()
+        val authSubscriber = IEventSubscriber<BrazeSdkAuthenticationErrorEvent> { event ->
+            val payload = JSObject()
+            payload.put("userId", event.userId ?: "")
+            payload.put("errorCode", event.errorCode)
+            payload.put("errorReason", event.errorReason ?: "")
+            payload.put("signature", event.signature ?: JSObject.NULL)
+            // Android SDK doesn't expose an errorEventId field on the
+            // event. Cross-platform contract keeps the slot for forward
+            // compat; surface as null until/unless a future SDK exposes it.
+            payload.put("errorEventId", JSObject.NULL)
+            notifyListeners("sdkAuthError", payload)
+        }
+        Braze.getInstance(context).subscribeToSdkAuthenticationFailures(authSubscriber)
+        sdkAuthErrorSubscriber = authSubscriber
 
         call.resolve()
     }
@@ -804,6 +979,7 @@ class BrazePlugin : Plugin() {
         // than leaving zombie subscribers against the wiped SDK.
         teardownFeatureFlagsSubscription()
         teardownContentCardsSubscription()
+        teardownSdkAuthErrorSubscription()
         initialized = false
         sdkAuthenticationEnabled = false
         call.resolve()
@@ -900,6 +1076,21 @@ class BrazePlugin : Plugin() {
             )
         }
         contentCardsSubscriber = null
+    }
+
+    /**
+     * Mirror of [teardownFeatureFlagsSubscription] for SDK Authentication
+     * failure events. Removes the listener by identity so a re-init
+     * doesn't double-fire `sdkAuthError` notifications.
+     */
+    private fun teardownSdkAuthErrorSubscription() {
+        sdkAuthErrorSubscriber?.let { subscriber ->
+            Braze.getInstance(context).removeSingleSubscription(
+                subscriber,
+                BrazeSdkAuthenticationErrorEvent::class.java,
+            )
+        }
+        sdkAuthErrorSubscriber = null
     }
 
     /**

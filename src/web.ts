@@ -17,6 +17,9 @@ import type {
   BrazeGetFeatureFlagOptions,
   BrazeGetFeatureFlagResult,
   BrazeGetUserIdResult,
+  BrazeInAppMessage,
+  BrazeInAppMessageButton,
+  BrazeInAppMessageClickAction,
   BrazeInitializeOptions,
   BrazeIsDisabledResult,
   BrazeLogContentCardClickOptions,
@@ -94,6 +97,19 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   private contentCardsSubscribed = false;
 
   /**
+   * Mirror of {@link featureFlagsSubscribed} for in-app messages
+   * (Phase 3b). The Web SDK's `subscribeToInAppMessage` doesn't return
+   * an unsubscribe handle either; the boolean guards re-init.
+   */
+  private inAppMessageSubscribed = false;
+
+  /**
+   * Mirror of {@link featureFlagsSubscribed} for SDK Authentication
+   * failures (L5-04). Same rationale.
+   */
+  private sdkAuthErrorSubscribed = false;
+
+  /**
    * Whether {@link BrazeWeb.initialize} was called with
    * `enableSdkAuthentication: true`. When this is `true`,
    * {@link BrazeWeb.changeUser} rejects calls that don't carry an
@@ -144,6 +160,34 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
         this.notifyListeners('contentCardsUpdated', this.serializeContentCards(cards));
       });
       this.contentCardsSubscribed = true;
+    }
+    if (!this.inAppMessageSubscribed) {
+      braze.subscribeToInAppMessage((message) => {
+        this.notifyListeners('inAppMessageReceived', {
+          message: this.serializeInAppMessage(message, braze),
+        });
+        // The plugin's default policy is to let Braze's UI render the
+        // message after the listener fires. The Web SDK's
+        // subscribeToInAppMessage callback signature doesn't return a
+        // display decision — that's handled implicitly by whether the
+        // consumer calls `braze.showInAppMessage(message)` themselves.
+        // Mirror the SDK default by calling showInAppMessage here so
+        // out-of-the-box rendering works without consumer intervention.
+        braze.showInAppMessage(message);
+      });
+      this.inAppMessageSubscribed = true;
+    }
+    if (!this.sdkAuthErrorSubscribed) {
+      braze.subscribeToSdkAuthenticationFailures((error) => {
+        this.notifyListeners('sdkAuthError', {
+          userId: error.userId ?? '',
+          errorCode: error.errorCode,
+          errorReason: error.reason ?? '',
+          signature: error.signature ?? null,
+          errorEventId: null,
+        });
+      });
+      this.sdkAuthErrorSubscribed = true;
     }
   }
 
@@ -433,6 +477,8 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     this.sdkAuthenticationEnabled = false;
     this.featureFlagsSubscribed = false;
     this.contentCardsSubscribed = false;
+    this.inAppMessageSubscribed = false;
+    this.sdkAuthErrorSubscribed = false;
   }
 
   async disableSDK(): Promise<void> {
@@ -725,6 +771,125 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     if (!c.title && c.imageUrl) return 'imageOnly';
     if (c.title && c.description) return 'classic';
     return null;
+  }
+
+  /**
+   * Serializes the Web SDK's `InAppMessage` / `ControlMessage` to the
+   * plugin's portable 5-variant DTO. Variant discrimination uses
+   * `instanceof` against the loaded SDK module — same pattern as
+   * content-card classification (per L2-05). Field access casts the
+   * narrowed instance to a typed shape; the SDK's class hierarchy
+   * splits message fields across subclasses and we only read what
+   * each variant actually carries.
+   *
+   * @param message - The Web SDK's InAppMessage or ControlMessage.
+   * @param braze - The loaded SDK module, used for instanceof.
+   */
+  private serializeInAppMessage(
+    message: BrazeWebSdkModule.InAppMessage | BrazeWebSdkModule.ControlMessage,
+    braze: BrazeWebSdk,
+  ): BrazeInAppMessage {
+    const base = {
+      id: message.triggerId ?? null,
+      clickAction: this.serializeIamClickAction(message as BrazeWebSdkModule.InAppMessage),
+      extras: message.extras ?? {},
+    };
+    if (message instanceof braze.ControlMessage) {
+      return { ...base, type: 'control' };
+    }
+    if (message instanceof braze.HtmlMessage) {
+      return { ...base, type: 'html', message: message.message ?? '' };
+    }
+    if (message instanceof braze.SlideUpMessage) {
+      const slideup = message as BrazeWebSdkModule.SlideUpMessage & {
+        imageUrl?: string;
+        altImageText?: string;
+        language?: string;
+        slideFrom?: string;
+      };
+      return {
+        ...base,
+        type: 'slideup',
+        message: slideup.message ?? '',
+        slideFrom: slideup.slideFrom === 'TOP' ? 'top' : 'bottom',
+        ...(slideup.imageUrl ? { imageUrl: slideup.imageUrl } : {}),
+        ...(slideup.altImageText ? { imageAltText: slideup.altImageText } : {}),
+        ...(slideup.language ? { language: slideup.language } : {}),
+      };
+    }
+    if (message instanceof braze.ModalMessage) {
+      return this.serializeImmersiveIam(message as BrazeWebSdkModule.ModalMessage, 'modal', base, braze);
+    }
+    if (message instanceof braze.FullScreenMessage) {
+      return this.serializeImmersiveIam(message as BrazeWebSdkModule.FullScreenMessage, 'full', base, braze);
+    }
+    // Unknown subclass — surface as a slideup with empty fields so the
+    // contract stays a strict union. Consumers can detect via
+    // empty-message + no-image and ignore.
+    return { ...base, type: 'slideup', message: message.message ?? '', slideFrom: 'bottom' };
+  }
+
+  /**
+   * Shared serialization for ModalMessage / FullScreenMessage — both
+   * carry header, message, optional imageUrl, and a buttons array.
+   */
+  private serializeImmersiveIam(
+    message: BrazeWebSdkModule.ModalMessage | BrazeWebSdkModule.FullScreenMessage,
+    type: 'modal' | 'full',
+    base: {
+      id: string | null;
+      clickAction: BrazeInAppMessageClickAction;
+      extras: Record<string, string>;
+    },
+    braze: BrazeWebSdk,
+  ): BrazeInAppMessage {
+    const immersive = message as (BrazeWebSdkModule.ModalMessage | BrazeWebSdkModule.FullScreenMessage) & {
+      header?: string;
+      imageUrl?: string;
+      buttons?: BrazeWebSdkModule.InAppMessageButton[];
+      altImageText?: string;
+      language?: string;
+    };
+    const buttons: BrazeInAppMessageButton[] = (immersive.buttons ?? []).map((btn) => ({
+      id: btn.id ?? 0,
+      text: btn.text ?? '',
+      clickAction: this.serializeIamClickAction(btn as unknown as BrazeWebSdkModule.InAppMessage),
+    }));
+    // braze param is unused at runtime but kept for symmetry with the
+    // caller and to anchor the typing context.
+    void braze;
+    return {
+      ...base,
+      type,
+      header: immersive.header ?? '',
+      message: message.message ?? '',
+      buttons,
+      ...(immersive.imageUrl ? { imageUrl: immersive.imageUrl } : {}),
+      ...(immersive.altImageText ? { imageAltText: immersive.altImageText } : {}),
+      ...(immersive.language ? { language: immersive.language } : {}),
+    };
+  }
+
+  /**
+   * Normalizes the Web SDK's click-action representation onto the
+   * plugin's tagged union. The SDK exposes a string enum (`'URI'` or
+   * `'NONE'`) on each subclass (not on the base `InAppMessage`),
+   * with the actual URL on a sibling `uri` field. We accept an
+   * `unknown`-shaped object and probe defensively because both
+   * messages and buttons share the click-action surface but expose
+   * it on different concrete types.
+   */
+  private serializeIamClickAction(msg: unknown): BrazeInAppMessageClickAction {
+    if (typeof msg !== 'object' || msg === null) return { type: 'none' };
+    const m = msg as { clickAction?: string; uri?: string; openTarget?: string };
+    if (m.clickAction === 'URI' && typeof m.uri === 'string' && m.uri.length > 0) {
+      // Web SDK's openTarget is 'BLANK' (new tab/window) or 'NONE'
+      // (same tab). Map 'NONE' to useWebView=true so a Capacitor
+      // consumer that proxies to a WebView keeps the user in-app.
+      const useWebView = m.openTarget !== 'BLANK';
+      return { type: 'url', uri: m.uri, useWebView };
+    }
+    return { type: 'none' };
   }
 
   /**

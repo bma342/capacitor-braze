@@ -202,6 +202,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # L5-05: Snyk's broader vulnerability scan complements npm audit by
+      # catching deeper transitive issues + known CVEs in the runtime
+      # surface. Requires SNYK_TOKEN to be provisioned in repo secrets;
+      # without it the step skips with a warning rather than failing the
+      # job (so PRs from forks / first-time clones don't hard-error).
+      # See CONTRIBUTING.md for the SNYK_TOKEN setup procedure.
+      - name: Snyk vulnerability scan
+        if: env.SNYK_TOKEN != ''
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --all-projects
+
   # ------------------------------------------------------------------
   # Native verify jobs — compile the demo's Xcode + Gradle projects
   # against the real Braze SDKs. These catch the class of bug Phases
@@ -324,3 +339,11 @@ jobs:
       - name: Build Android demo (assembleDebug)
         working-directory: demo/android
         run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Run Android plugin unit tests (Robolectric/JUnit)
+        # Phase 15 / C11: JVM-tier contract tests covering validation
+        # strings, SDK Auth enforcement, and DTO classification. Lives
+        # under android/src/test/. The Gradle module is the
+        # `:capacitor-braze` library, exposed via the demo's settings.
+        working-directory: demo/android
+        run: ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon

@@ -465,6 +465,168 @@ export interface BrazeContentCardsUpdatedEvent {
 }
 
 // =============================================================================
+// In-app messages
+// =============================================================================
+
+/**
+ * Click action variants for an in-app message or button. A click action of
+ * `none` means no target; `url` means the SDK should open the given URI
+ * (the SDK's `useWebView` hint indicates whether the consumer app's
+ * embedded browser is preferred over the system browser).
+ */
+export type BrazeInAppMessageClickAction = { type: 'none' } | { type: 'url'; uri: string; useWebView: boolean };
+
+/**
+ * A single button on a modal / full in-app message. Up to two per message.
+ * Index 0 is conventionally the dismiss button; index 1 is the call-to-
+ * action. Consumers reading the wire format should treat the order as
+ * authoritative — the SDK doesn't expose dedicated `primary` / `secondary`
+ * roles.
+ */
+export interface BrazeInAppMessageButton {
+  /** Stable button identifier the SDK uses for click analytics. */
+  id: number;
+  /** Display text of the button. */
+  text: string;
+  /** Action to perform when the button is tapped. */
+  clickAction: BrazeInAppMessageClickAction;
+}
+
+/**
+ * The five canonical in-app message variants. Mirrors the Web SDK's
+ * `SlideUpMessage` / `ModalMessage` / `FullScreenMessage` / `HtmlMessage` /
+ * `ControlMessage` hierarchy. BrazeKit iOS's `ModalImage` / `FullImage`
+ * variants (image-only forms of modal / full) collapse into `modal` /
+ * `full` here with an empty `message` and a populated `imageUrl` —
+ * consumers narrow on the image presence, not on a separate type.
+ */
+export type BrazeInAppMessageType = 'slideup' | 'modal' | 'full' | 'html' | 'control';
+
+/** Fields present on every in-app message regardless of variant. */
+export interface BrazeInAppMessageBase {
+  type: BrazeInAppMessageType;
+  /** Braze-issued trigger / analytics id; null when the SDK didn't provide one. */
+  id: string | null;
+  /** Click action attached to the message body (variants may add per-button actions). */
+  clickAction: BrazeInAppMessageClickAction;
+  /** Custom key/value metadata configured in the Braze dashboard. */
+  extras: Record<string, string>;
+}
+
+/** Sliding banner; auto-dismisses by default. No buttons. */
+export interface BrazeSlideupInAppMessage extends BrazeInAppMessageBase {
+  type: 'slideup';
+  message: string;
+  imageUrl?: string;
+  imageAltText?: string;
+  language?: string;
+  /** Direction the banner slides from. */
+  slideFrom: 'top' | 'bottom';
+}
+
+/**
+ * Centered modal. `imageUrl` is optional; when present without `message`
+ * text, treat as an image-only modal.
+ */
+export interface BrazeModalInAppMessage extends BrazeInAppMessageBase {
+  type: 'modal';
+  header: string;
+  message: string;
+  imageUrl?: string;
+  imageAltText?: string;
+  language?: string;
+  buttons: BrazeInAppMessageButton[];
+}
+
+/**
+ * Full-screen message. `imageUrl` is optional; when present without
+ * `message` text, treat as an image-only full-screen.
+ */
+export interface BrazeFullInAppMessage extends BrazeInAppMessageBase {
+  type: 'full';
+  header: string;
+  message: string;
+  imageUrl?: string;
+  imageAltText?: string;
+  language?: string;
+  buttons: BrazeInAppMessageButton[];
+}
+
+/**
+ * Custom HTML rendered inside a WebView. `message` is the raw HTML; the
+ * Braze SDK already sandboxes the WebView (no JS bridge unless
+ * `allowUserSuppliedJavascript: true` was set at init — see SECURITY.md §6).
+ */
+export interface BrazeHtmlInAppMessage extends BrazeInAppMessageBase {
+  type: 'html';
+  message: string;
+}
+
+/**
+ * Control variant of an in-app message A/B test. Should be impression-
+ * logged but not visually displayed (Braze's default presenter handles
+ * this automatically).
+ */
+export interface BrazeControlInAppMessage extends BrazeInAppMessageBase {
+  type: 'control';
+}
+
+/**
+ * Tagged union over the five in-app message variants. Use the `type`
+ * discriminator to narrow.
+ *
+ * @example
+ * if (message.type === 'modal' && message.imageUrl) {
+ *   console.log(`Image modal: ${message.header}`);
+ * }
+ */
+export type BrazeInAppMessage =
+  | BrazeSlideupInAppMessage
+  | BrazeModalInAppMessage
+  | BrazeFullInAppMessage
+  | BrazeHtmlInAppMessage
+  | BrazeControlInAppMessage;
+
+/**
+ * Payload delivered to `'inAppMessageReceived'` listeners. Fires once
+ * per IAM trigger, immediately before the SDK's presenter would display
+ * the message. Listeners cannot block display — the plugin always
+ * returns `DISPLAY_NOW` to the SDK after notifying — but they can read
+ * the message contents for analytics, conditional UI changes, or
+ * custom presentation overrides.
+ */
+export interface BrazeInAppMessageReceivedEvent {
+  message: BrazeInAppMessage;
+}
+
+// =============================================================================
+// SDK Authentication errors
+// =============================================================================
+
+/**
+ * Payload delivered to `'sdkAuthError'` listeners. Fires when Braze's
+ * backend rejects an SDK Authentication signature (expired, signed with
+ * a rotated-out key, or signed for a different user). See
+ * [`SECURITY.md` §2](./SECURITY.md) for the full design.
+ *
+ * The standard response to an `sdkAuthError` event is for the consumer's
+ * app to fetch a fresh signature from their backend and push it back
+ * to the SDK via {@link BrazePlugin.setSdkAuthenticationSignature}.
+ */
+export interface BrazeSdkAuthErrorEvent {
+  /** External user id the failed request was authenticated for. */
+  userId: string;
+  /** Backend-supplied error code (Braze documents the value set). */
+  errorCode: number;
+  /** Human-readable description of why the signature was rejected. */
+  errorReason: string;
+  /** The signature that was rejected (truncate before logging). */
+  signature: string | null;
+  /** Unique error event id, useful for support correlation. */
+  errorEventId: string | null;
+}
+
+// =============================================================================
 // Push token registration
 // =============================================================================
 
@@ -961,6 +1123,51 @@ export interface BrazePlugin {
   addListener(
     eventName: 'contentCardsUpdated',
     listenerFunc: (event: BrazeContentCardsUpdatedEvent) => void,
+  ): Promise<PluginListenerHandle>;
+
+  /**
+   * Subscribes to in-app message trigger events. Fires once per IAM
+   * immediately before the SDK's default presenter would display it.
+   * The plugin always returns the SDK's `DISPLAY_NOW` choice after
+   * notifying — listener implementations cannot block display, but
+   * they can read the message for analytics, control variants in A/B
+   * tests, or react with custom presentation logic. Listener
+   * registration after `initialize` is required; listeners added
+   * before initialize is called are silently inert until the
+   * underlying native subscription is set up.
+   *
+   * @example
+   * const handle = await Braze.addListener(
+   *   'inAppMessageReceived',
+   *   ({ message }) => {
+   *     if (message.type === 'control') {
+   *       trackControlImpression(message.id);
+   *     }
+   *   },
+   * );
+   */
+  addListener(
+    eventName: 'inAppMessageReceived',
+    listenerFunc: (event: BrazeInAppMessageReceivedEvent) => void,
+  ): Promise<PluginListenerHandle>;
+
+  /**
+   * Subscribes to SDK Authentication error events. Fires when Braze's
+   * backend rejects a request signed with the consumer's
+   * `sdkAuthSignature` (expired JWT, rotated-out signing key, mismatched
+   * user id). The standard response is to fetch a fresh signature from
+   * the consumer's backend and push it back into the SDK via
+   * {@link BrazePlugin.setSdkAuthenticationSignature}.
+   *
+   * @example
+   * await Braze.addListener('sdkAuthError', async ({ userId }) => {
+   *   const fresh = await myBackend.mintBrazeSignature(userId);
+   *   await Braze.setSdkAuthenticationSignature({ signature: fresh });
+   * });
+   */
+  addListener(
+    eventName: 'sdkAuthError',
+    listenerFunc: (event: BrazeSdkAuthErrorEvent) => void,
   ): Promise<PluginListenerHandle>;
 
   /**

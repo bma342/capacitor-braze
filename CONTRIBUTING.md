@@ -100,6 +100,67 @@ The PR template has the full list. Highlights:
 - [ ] CHANGELOG entry added
 - [ ] Tested against real Braze (or noted explicitly in the PR if you couldn't)
 
+## Maintainer setup (one-time, per [`SECURITY.md`](./SECURITY.md) §13)
+
+The supply-chain hygiene SECURITY.md promises has a handful of bits that
+sit at the GitHub / npm account level and can't be configured from a PR.
+The maintainer (Bryce, currently) does these once:
+
+### Signed-commit branch protection on `main`
+
+```bash
+# Enable required signed commits on main (POST is correct; the GitHub
+# API uses POST for this resource even though it reads as "PUT-y").
+gh api -X POST "repos/bma342/capacitor-braze/branches/main/protection/required_signatures"
+```
+
+The `audit` job's gitleaks step + this requirement together close
+SECURITY.md §13's supply-chain attestation list. Commits coming from
+PR merges via GitHub's web UI (squash / rebase / merge) are signed by
+GitHub's own GPG key automatically — no GPG setup needed on local
+machines unless you're committing directly to a non-PR branch.
+
+If a contributor doesn't have GPG / SSH signing set up locally, GitHub's
+"Sign commits via web editor" + the PR squash-merge flow remain a
+working path. For the local-signing flow, see
+<https://docs.github.com/en/authentication/managing-commit-signature-verification>.
+
+### Snyk integration (optional but documented in CI)
+
+The `Snyk vulnerability scan` step in `.github/workflows/test.yml` is
+gated on `env.SNYK_TOKEN != ''`. To enable it:
+
+1. Create a free Snyk account: <https://snyk.io/login> (the free tier
+   covers open-source projects with no monitoring cap).
+2. Get the auth token: Account Settings → API Token → copy.
+3. Provision it as a repo secret:
+   ```bash
+   gh secret set SNYK_TOKEN --body "<paste-token>"
+   ```
+4. Push any change. The next CI run picks up the secret and runs the
+   scan with `--severity-threshold=high --all-projects`.
+
+`continue-on-error: true` on the step means a positive Snyk finding
+warns but doesn't block the merge (npm-audit + dependabot remain the
+hard gate for high/critical CVEs).
+
+### npm 2FA on the maintainer account
+
+Before the first `0.1.0` publish, enable two-factor authentication on
+the npm account with the "Authorization and writes" level (not just
+"Authorization only"). This blocks token-theft attacks from publishing
+malicious versions of the package.
+
+```bash
+# Verify your 2FA level by inspecting the publish-time prompt — the
+# correct level prompts for an OTP on every `npm publish`.
+npm profile enable-2fa auth-and-writes
+```
+
+`npm publish --provenance --access public` (already wired in
+`.github/workflows/release.yml`) ships the npm provenance attestation
+that consumers can verify with `npm install --foreground-scripts`.
+
 ## Code of conduct
 
 Be respectful. Assume good faith. No harassment, discrimination, or personal
