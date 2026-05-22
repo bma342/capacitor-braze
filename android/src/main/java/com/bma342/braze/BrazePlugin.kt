@@ -162,8 +162,15 @@ class BrazePlugin : Plugin() {
             BrazeLogger.enableVerboseLogging()
         }
 
-        val sessionTimeoutInSeconds = call.getInt("sessionTimeoutInSeconds")
-        if (sessionTimeoutInSeconds != null && sessionTimeoutInSeconds > 0) {
+        if (call.hasOption("sessionTimeoutInSeconds")) {
+            // L5-08: reject sessionTimeoutInSeconds <= 0 explicitly rather
+            // than silently dropping. Web's TS validation already rejects;
+            // matching the natives keeps C04 validation parity.
+            val sessionTimeoutInSeconds = call.getInt("sessionTimeoutInSeconds")
+            if (sessionTimeoutInSeconds == null || sessionTimeoutInSeconds <= 0) {
+                call.reject("Braze.initialize: `sessionTimeoutInSeconds` must be a positive integer.")
+                return
+            }
             // Android SDK's setter takes seconds (Int); we accept seconds
             // at the plugin boundary per C03 so cross-platform parity is
             // maintained without a unit conversion.
@@ -444,23 +451,26 @@ class BrazePlugin : Plugin() {
     @PluginMethod
     fun setDateOfBirth(call: PluginCall) {
         val user = requireUser(call) ?: return
+        // L2-07: per-field error messages, byte-identical to the web bridge.
         val year = call.getInt("year")
+        if (year == null || year < 1900 || year > 2100) {
+            call.reject("Braze.setDateOfBirth: `year` must be an integer between 1900 and 2100.")
+            return
+        }
         val month = call.getInt("month")
+        if (month == null || month < 1 || month > 12) {
+            call.reject("Braze.setDateOfBirth: `month` must be an integer between 1 and 12.")
+            return
+        }
         val day = call.getInt("day")
-        if (year == null || month == null || day == null) {
-            call.reject("Braze.setDateOfBirth: `year`, `month`, and `day` are required (integers).")
+        if (day == null || day < 1 || day > 31) {
+            call.reject("Braze.setDateOfBirth: `day` must be an integer between 1 and 31.")
             return
         }
-        if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
-            call.reject(
-                "Braze.setDateOfBirth: out of range. " +
-                    "Expected year 1900-2100, month 1-12, day 1-31.",
-            )
-            return
-        }
-        // Month enum is ordered JANUARY..DECEMBER; values()[month-1] maps
-        // the 1-indexed TS month to the matching enum case.
-        val monthEnum = Month.values()[month - 1]
+        // K04: Month.entries is the cached array form on Kotlin 1.9+ (we're
+        // on Kotlin 2.2). One-time allocation, matches what we want for a
+        // hot-ish per-call lookup.
+        val monthEnum = Month.entries[month - 1]
         user.setDateOfBirth(year, monthEnum, day)
         call.resolve()
     }

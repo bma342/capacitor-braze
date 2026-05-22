@@ -112,7 +112,14 @@ public class BrazePlugin: CAPPlugin {
         let configuration = Braze.Configuration(apiKey: apiKey, endpoint: endpoint)
         configuration.logger.level = enableLogging ? .debug : .info
         configuration.api.sdkAuthentication = enableSdkAuthentication
-        if let sessionTimeout = call.getInt("sessionTimeoutInSeconds"), sessionTimeout > 0 {
+        if call.hasOption("sessionTimeoutInSeconds") {
+            // L5-08: reject sessionTimeoutInSeconds <= 0 explicitly rather
+            // than silently dropping. Web's TS validation already rejects;
+            // matching the natives keeps C04 validation parity.
+            guard let sessionTimeout = call.getInt("sessionTimeoutInSeconds"), sessionTimeout > 0 else {
+                call.reject("Braze.initialize: `sessionTimeoutInSeconds` must be a positive integer.")
+                return
+            }
             // BrazeKit's sessionTimeout is a TimeInterval (seconds); the
             // plugin contract uses Int seconds for cross-platform parity
             // per C03, so we just cast.
@@ -344,14 +351,19 @@ public class BrazePlugin: CAPPlugin {
     /// and the Web SDK's three-int signature behave.
     @objc func setDateOfBirth(_ call: CAPPluginCall) {
         guard let braze = Self.requireInitialized(call) else { return }
-        guard let year = call.getInt("year"),
-              let month = call.getInt("month"),
-              let day = call.getInt("day") else {
-            call.reject("Braze.setDateOfBirth: `year`, `month`, and `day` are required (integers).")
+        // L2-07: per-field error messages, byte-identical to the web bridge.
+        // Order matters — year is validated first so a missing year reports
+        // as the year error rather than a generic "all required" message.
+        guard let year = call.getInt("year"), year >= 1900, year <= 2100 else {
+            call.reject("Braze.setDateOfBirth: `year` must be an integer between 1900 and 2100.")
             return
         }
-        guard year >= 1900, year <= 2100, month >= 1, month <= 12, day >= 1, day <= 31 else {
-            call.reject("Braze.setDateOfBirth: out of range. Expected year 1900-2100, month 1-12, day 1-31.")
+        guard let month = call.getInt("month"), month >= 1, month <= 12 else {
+            call.reject("Braze.setDateOfBirth: `month` must be an integer between 1 and 12.")
+            return
+        }
+        guard let day = call.getInt("day"), day >= 1, day <= 31 else {
+            call.reject("Braze.setDateOfBirth: `day` must be an integer between 1 and 31.")
             return
         }
 
