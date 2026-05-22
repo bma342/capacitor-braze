@@ -6,6 +6,11 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 
 ## [Unreleased]
 
+### Changed
+- **`tsconfig.json` forward-compat for TypeScript 5.6+.** Switched `moduleResolution` from the deprecated implicit `node`/`node10` to `bundler` (matches our Rollup build pipeline), and added explicit `rootDir: "./src"`. Both changes are no-ops on TS 5.4 (the current pinned version) but unblock upcoming Dependabot bumps that raise TS to 5.6+.
+- **Dependabot:** ignore `@capacitor/*` major bumps across the plugin, example, and demo. Capacitor 8 raised the AGP/JDK minimum to 21 (our CI runs JDK 17) and falls outside the plugin's `^6 \|\| ^7` peer-dep range. Capacitor majors land via deliberate maintainer-driven migration.
+- **Maintenance bumps:** `actions/setup-java@4 → @5`, `android-actions/setup-android@3 → @4`, example dev-deps refresh.
+
 ## [0.1.0] — 2026-05-22 — Audit cleanup + first credible npm tag
 
 This is the first release the project's own audit ([`findings/SUMMARY.md`](./findings/SUMMARY.md)) judges credible to publish. 17 phases of cleanup close the BLOCKER + MAJOR findings across contract integrity, cross-platform translation, native code quality, security, CI/tooling, and documentation. The plugin is now consumable from npm as `npm install capacitor-braze` (Capacitor 6 or 7), with iOS in-app message rendering wired out of the box, SDK Authentication enforced client-side, and `inAppMessageReceived` / `sdkAuthError` listener events on every platform.

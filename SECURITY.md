@@ -95,8 +95,8 @@ The primary defense against user-identity spoofing. Without it, anyone with the 
 
 - **`Braze.initialize({ apiKey, endpoint, enableSdkAuthentication: true })`** — turns on signature requirement on the SDK side. Defaults to `false` in v0.1 (matches Braze's default) but README **strongly recommends** enabling for any production app with real users.
 - **`Braze.changeUser({ userId, sdkAuthSignature })`** — both params required when auth is enabled. Plugin validates `sdkAuthSignature` is non-empty string client-side before bridging.
-- **`Braze.addListener('sdkAuthError', listener)`** — fires when Braze rejects a signature (expired, malformed, etc.). Consumer should refresh the JWT via their backend and call `Braze.setSdkAuthenticationSignature({ signature })`.
-- **`Braze.setSdkAuthenticationSignature({ signature })`** — for in-session signature refresh (v0.2).
+- **`Braze.addListener('sdkAuthError', listener)`** — fires when Braze rejects a signature (expired, malformed, etc.). Consumer should refresh the JWT via their backend and call `Braze.setSdkAuthenticationSignature({ signature })`. (Live in v0.1.)
+- **`Braze.setSdkAuthenticationSignature({ signature })`** — for in-session signature refresh. (Live in v0.1.)
 
 ### Server-side guidance in README
 

@@ -2,7 +2,9 @@
 
 > The standard the plugin must clear to (a) be genuinely easy for any Capacitor team to adopt, (b) be feature-complete enough to ship to production, and (c) survive a tough review from a senior Braze SDK engineer. Companion to [`PLAN.md`](./PLAN.md), [`SDK_SURFACE.md`](./SDK_SURFACE.md), [`SECURITY.md`](./SECURITY.md).
 
-**Last updated:** 2026-05-19
+**Last updated:** 2026-05-22
+
+**Release state:** `0.1.0` shipped to npm 2026-05-22 ([npmjs.com/package/capacitor-braze](https://www.npmjs.com/package/capacitor-braze)). The 17-phase audit completion pass closed every BLOCKER and MAJOR from [`findings/SUMMARY.md`](./findings/SUMMARY.md). The two `0.1.0` blockers this doc previously called out — Layer 4 smoke + native test harness — landed as scaffolding (smoke wrappers via `npm run smoke:*`, Android Robolectric tests running in CI, iOS XCTest scaffolding ready for Xcode wire-up); the maintainer-driven trial captures + Xcode target are post-`0.1.0` polish items, not gates.
 
 ---
 

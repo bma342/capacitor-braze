@@ -77,7 +77,7 @@ If you find yourself writing more than ~20 lines for a single method, you're pro
 
 ## Status
 
-Snapshot at `0.0.12` (see `package.json` for the live version):
+Snapshot at `0.1.0` (see `package.json` for the live version):
 
 | Milestone | Status |
 |---|---|
@@ -87,19 +87,32 @@ Snapshot at `0.0.12` (see `package.json` for the live version):
 | Android bridge against `com.braze:android-sdk-ui:42.2.0` | ✅ |
 | iOS bridge against `BrazeKit / BrazeUI 14.1.0` | ✅ |
 | Mock Braze server (Ktor, in `test/mock-server`) | ✅ |
-| Web behavioral tests (vitest + mock) — 94/94 | ✅ |
+| Web behavioral tests (vitest + mock) — 108/108 | ✅ |
 | CI: `verify-ios` (xcodebuild) + `verify-android` (gradle) | ✅ |
 | Demo + example apps build in CI | ✅ |
 | Privacy manifest (`PrivacyInfo.xcprivacy` via podspec) | ✅ |
-| C11 native test harnesses (XCTest / Robolectric) | ⏳ design done, impl pending |
-| Layer 4 real-Braze smoke (manual against trial) | ⏳ templates staged, runs pending |
-| Audit cleanup (`findings/` punch list, Phases 1–10) | ⏳ in progress |
-| `0.1.0` to npm | ⏳ pending audit cleanup |
+| `inAppMessageReceived` + `sdkAuthError` listener events | ✅ (all 3 platforms) |
+| iOS in-app message presenter wired (`BrazeInAppMessageUI`) | ✅ |
+| Android IAM lifecycle wired (`BrazeInAppMessageManager`) | ✅ |
+| URL parsing + cluster sanity check at `initialize` | ✅ |
+| SDK Authentication enforcement on `changeUser` | ✅ |
+| Required signed-commit branch protection on `main` | ✅ |
+| Gitleaks CI step | ✅ |
+| Snyk CI step (gated on `SNYK_TOKEN`) | ✅ |
+| Capacitor 7 forward-compat (`^6 \|\| ^7` peer dep) | ✅ |
+| `noUncheckedIndexedAccess` in main tsconfig | ✅ |
+| Smoke wrappers (`npm run smoke:web/ios/android`) | ✅ |
+| Audit cleanup (`findings/` punch list, Phases 1–17) | ✅ |
+| `0.1.0` to npm | ✅ [npmjs.com/package/capacitor-braze](https://www.npmjs.com/package/capacitor-braze) |
+| C11 native test harnesses — first batch | ✅ Android (Robolectric, 7 tests); iOS scaffolded |
+| C11 native test harnesses — full integration tier | ⏳ URLProtocol-intercept design lives in C11 MDC |
+| Layer 4 real-Braze smoke (manual against trial) | ⏳ wrappers staged, captures pending maintainer trial |
+| Snyk token provisioned in CI | ⏳ maintainer setup (CONTRIBUTING.md) |
 
 **This table drifts.** When in doubt, source-of-truth checks:
 - Versions, scripts, dependencies → `package.json`
 - What's actually been done → `git log --oneline`
-- What's left to fix before `0.1.0` → `findings/SUMMARY.md` punch list
+- What's left for the next release → `CHANGELOG.md` `[Unreleased]` section
 - What's planned next → `PLAN.md`
 
 ---
