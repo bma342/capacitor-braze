@@ -22,6 +22,22 @@
   - [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md) — consumer-side config the SDK pins force (Podfile, Gradle, peer dep)
   - [C11](./docs/mdcs/C11-NATIVE-TEST-HARNESSES.md) — iOS XCTest + Android JUnit/Robolectric mock-server harness design (impl pending)
 
+### MDC glossary — when to consult which doc
+
+| Doc | Topic | Read it before… |
+|---|---|---|
+| [C01](./docs/mdcs/C01-METHOD-ANATOMY.md) | 8-file lockstep, init guards, C01-format error strings | …adding *any* new method or touching a bridge |
+| [C02](./docs/mdcs/C02-DTO-SHAPES.md) | Web SDK wire format as canonical DTO shape | …returning a Braze model (FeatureFlag, ContentCard, …) over the bridge |
+| [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md) | Month indexing, currency, decimals, dates, enums, sentinels, anonymous user id | …writing per-platform conversion logic |
+| [C04](./docs/mdcs/C04-VALIDATION.md) | TS-at-boundary + native duplication, byte-identical error strings | …accepting any user input on a method |
+| [C05](./docs/mdcs/C05-LISTENERS.md) | Listener lifecycle: eager subscription at `initialize`, shared, no replay | …adding a listener event or wiring a subscription |
+| [C06](./docs/mdcs/C06-SECURITY-DEFAULTS.md) | Security defaults (`enableLogging: false`, HTTPS required, PII non-logging) | …touching `initialize` options or any logging path |
+| [C07](./docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md) | When a method may skip the init guard (the privacy/lifecycle quartet) | …adding a method consumers might call pre-`initialize` |
+| [C08](./docs/mdcs/C08-NATIVE-SDK-PINNING.md) | Exact pin policy, bump protocol | …bumping a Braze SDK version |
+| [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md) | Capacitor's official toolchain (eslint / prettier / swiftlint / docgen) | …editing CI, `package.json` scripts, or lint config |
+| [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md) | Consumer-side Podfile, Gradle, peer dep requirements the pin policy forces | …writing README integration sections or breaking-change notes |
+| [C11](./docs/mdcs/C11-NATIVE-TEST-HARNESSES.md) | iOS XCTest + Android Robolectric mock-server harness (impl pending) | …implementing or extending the native test layer |
+
 > **THIS PROJECT WRAPS — IT DOES NOT REIMPLEMENT.** Braze's native SDKs do all the actual work (network calls, encryption, push handling, IAM rendering, analytics batching). This plugin is a thin bridge layer that translates Capacitor `PluginCall`s into native SDK invocations. Before writing any code, confirm whether the underlying Braze SDK already does what you want — almost always, the answer is yes, and your job is to expose it through the bridge.
 
 ---
@@ -61,19 +77,30 @@ If you find yourself writing more than ~20 lines for a single method, you're pro
 
 ## Status
 
-| Phase | Status |
-|---|---|
-| Strategic plan ([PLAN.md](./PLAN.md)) | ✅ written |
-| AI dev guide (this file) | ✅ written |
-| Repo scaffold (`npm init @capacitor/plugin`) | ⏳ next |
-| Mock Braze server | ⏳ Week 1 |
-| Web impl | ⏳ Week 1 |
-| Android bridge | ⏳ Week 2 |
-| iOS bridge | ⏳ Week 2 |
-| Real Braze smoke tests | ⏳ Week 3 |
-| `0.1.0` to npm | ⏳ Week 3 target |
+Snapshot at `0.0.12` (see `package.json` for the live version):
 
-Always check actual `package.json` + git log for current state; this table can drift.
+| Milestone | Status |
+|---|---|
+| Strategic plan (`PLAN.md`) | ✅ |
+| AI dev guide (this file) | ✅ |
+| TS interface + web impl | ✅ |
+| Android bridge against `com.braze:android-sdk-ui:42.2.0` | ✅ |
+| iOS bridge against `BrazeKit / BrazeUI 14.1.0` | ✅ |
+| Mock Braze server (Ktor, in `test/mock-server`) | ✅ |
+| Web behavioral tests (vitest + mock) — 94/94 | ✅ |
+| CI: `verify-ios` (xcodebuild) + `verify-android` (gradle) | ✅ |
+| Demo + example apps build in CI | ✅ |
+| Privacy manifest (`PrivacyInfo.xcprivacy` via podspec) | ✅ |
+| C11 native test harnesses (XCTest / Robolectric) | ⏳ design done, impl pending |
+| Layer 4 real-Braze smoke (manual against trial) | ⏳ templates staged, runs pending |
+| Audit cleanup (`findings/` punch list, Phases 1–10) | ⏳ in progress |
+| `0.1.0` to npm | ⏳ pending audit cleanup |
+
+**This table drifts.** When in doubt, source-of-truth checks:
+- Versions, scripts, dependencies → `package.json`
+- What's actually been done → `git log --oneline`
+- What's left to fix before `0.1.0` → `findings/SUMMARY.md` punch list
+- What's planned next → `PLAN.md`
 
 ---
 
@@ -86,27 +113,39 @@ Two apps live alongside the plugin source — same monorepo, different audiences
 
 Each app builds against the plugin via `file:..` so a `npm run build` at the repo root automatically propagates into both apps' next install. CI builds all three artifacts on every push.
 
-## Repo structure (planned)
+## Repo structure
 
 ```
 capacitor-braze/
-├── PLAN.md / CLAUDE.md / README.md
-├── package.json                        # peer deps + scripts
-├── BrazePlugin.podspec                 # iOS CocoaPod
+├── CLAUDE.md / PLAN.md / SECURITY.md / SDK_SURFACE.md / REVIEW_READINESS.md / CHANGELOG.md
+├── README.md                                              # auto-regenerated by docgen
+├── package.json                                           # peer deps + scripts
+├── CapacitorBraze.podspec                                 # iOS CocoaPod manifest
 ├── src/
-│   ├── definitions.ts                  # TS interface — SINGLE SOURCE OF TRUTH
-│   ├── index.ts                        # registerPlugin()
-│   └── web.ts                          # WebPlugin impl
-├── ios/Plugin/BrazePlugin.swift        # CAPPlugin bridge → braze-swift-sdk
-├── android/src/main/java/com/bma342/braze/BrazePlugin.kt   # @CapacitorPlugin bridge → braze-android-sdk
-├── example/                            # working Capacitor app for testing
+│   ├── definitions.ts                                     # TS interface — SOURCE OF TRUTH
+│   ├── index.ts                                           # registerPlugin('Braze', ...)
+│   └── web.ts                                             # WebPlugin impl (@braze/web-sdk wrapper)
+├── ios/Plugin/
+│   ├── BrazePlugin.swift                                  # CAPPlugin bridge → BrazeKit 14.1.0
+│   ├── BrazePlugin.m                                      # CAP_PLUGIN_METHOD obj-c registrations
+│   └── PrivacyInfo.xcprivacy                              # App Store privacy manifest
+├── android/
+│   ├── build.gradle                                       # com.braze:android-sdk-ui:42.2.0
+│   ├── consumer-rules.pro                                 # R8/ProGuard rules consumer apps inherit
+│   └── src/main/java/com/bma342/braze/BrazePlugin.kt      # @CapacitorPlugin bridge
+├── dist/                                                  # build output (gitignored, regen via npm run build)
+├── docs/
+│   ├── mdcs/                                              # C01–C11 design-contract docs
+│   └── smoke-tests/                                       # staged real-Braze smoke run templates
+├── findings/                                              # current audit punch list (see SUMMARY.md)
+├── example/                                               # developer testbed (per-method buttons)
+├── demo/                                                  # consumer-fork-starter (React 19 + TanStack)
 └── test/
-    ├── mock-server/                    # Ktor mock Braze server
-    ├── ts/                             # Jest unit tests
-    └── e2e/                            # Maestro flows
+    ├── mock-server/                                       # Ktor mock Braze backend (port 8080)
+    └── web/src/                                           # vitest behavioral tests (94 as of 0.0.12)
 ```
 
-When adding a new method, you touch four files in lockstep: `definitions.ts`, `web.ts`, `BrazePlugin.swift`, `BrazePlugin.kt`. Add to one without the others and CI will catch it.
+**The 8-file lockstep:** when adding or changing a plugin method, you touch four files in lockstep — `src/definitions.ts`, `src/web.ts`, `ios/Plugin/BrazePlugin.swift`, `android/src/main/java/com/bma342/braze/BrazePlugin.kt` — plus four test files (web + native harness × 2 when C11 lands). Add to one without the others and CI catches it. See [`docs/mdcs/C01-METHOD-ANATOMY.md`](./docs/mdcs/C01-METHOD-ANATOMY.md).
 
 ---
 
@@ -176,7 +215,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
 }
 ```
 
-**Pattern rule:** every method follows this exact shape across all four files. Input validation in the native bridge (Swift/Kotlin), not in TS. Errors via `call.reject()` with a clear message, not by throwing.
+**Pattern rule:** every method follows this exact shape across all four files. **Input validation goes at both boundaries** — the web impl throws `new Error('Braze.<method>: \`<field>\` is required (<type>).')` and the native bridges duplicate the same check with `call.reject(...)` using the byte-identical error string. See [`C04`](./docs/mdcs/C04-VALIDATION.md). The web impl throws (Capacitor's web layer translates throws into rejected promises); the native bridges call `call.reject()` directly. **Never throw from a native bridge** — Capacitor expects a rejected promise, not a crash.
 
 ---
 
@@ -213,19 +252,94 @@ cd example && BRAZE_API_KEY=$REAL_TRIAL_KEY npm run smoke
 ## Native SDK pinning
 
 Pinned versions live in:
-- `android/build.gradle` — `com.braze:android-sdk-ui:34.x.x` (exact, not range)
-- `BrazePlugin.podspec` — `s.dependency 'BrazeKit', '12.x.x'` (exact)
-- `package.json` peer dep — `"@braze/web-sdk": "^6.0.0"` (range, web only)
+- `android/build.gradle` — `com.braze:android-sdk-ui:42.2.0` (exact pin, not range)
+- `CapacitorBraze.podspec` — `s.dependency 'BrazeKit', '14.1.0'` + `s.dependency 'BrazeUI', '14.1.0'` (exact)
+- `package.json` peer dep — `"@braze/web-sdk": "^6.0.0"` (range, web peer dep only per [`C08`](./docs/mdcs/C08-NATIVE-SDK-PINNING.md))
 
 **When bumping native SDK versions:**
 
 1. Read the Braze SDK changelog for breaking changes.
 2. Update the pin in the relevant manifest.
-3. Run the full CI matrix locally.
+3. Run the full CI matrix.
 4. If Layer 4 smoke tests pass against real Braze, ship a minor/patch.
-5. If the bump is a breaking change for consumers (e.g., requires Android API level bump), ship a major and document in CHANGELOG.
+5. If the bump is a breaking change for consumers (e.g. requires Android API level bump or new Pod), ship a major and document in `CHANGELOG.md`.
 
 Daily spec-drift CI catches Braze REST changes; you catch SDK changes by subscribing to Braze SDK release notes.
+
+---
+
+## Adding a new method — the 8-file lockstep
+
+When the surface grows (which should only happen per the [`SDK_SURFACE.md`](./SDK_SURFACE.md) roadmap), every method touches the same eight artifacts. Walk them in this order:
+
+1. **`src/definitions.ts`** — declare the method signature on the `BrazePlugin` interface. Include JSDoc with at least one `@example` block ([`C01`](./docs/mdcs/C01-METHOD-ANATOMY.md)). Define any new option / result interfaces in the same file. If the method returns a Braze model, define the DTO with a `type` discriminator per [`C02`](./docs/mdcs/C02-DTO-SHAPES.md).
+2. **`src/web.ts`** — implement on `BrazeWeb`. Validate input at the top with `throw new Error('Braze.<method>: \`<field>\` is required (<type>).')` matching the format in [`C01`](./docs/mdcs/C01-METHOD-ANATOMY.md). Gate non-init-independent methods through `this.requireInitialized()` or `this.requireUser()`.
+3. **`ios/Plugin/BrazePlugin.swift`** — `@objc func <method>(_ call: CAPPluginCall)`. Validate with `call.reject(...)` using the byte-identical error string. Gate through `Self.requireInitialized(call)` (or the C07 quartet bypass).
+4. **`ios/Plugin/BrazePlugin.m`** — add the `CAP_PLUGIN_METHOD(<method>, CAPPluginReturnPromise);` registration. Missing this line means the Capacitor bridge can't see the Swift method.
+5. **`android/src/main/java/com/bma342/braze/BrazePlugin.kt`** — `@PluginMethod fun <method>(call: PluginCall)`. Validate with `call.reject(...)`. Gate through `requireInitialized(call)` / `requireUser(call)`.
+6. **`test/web/src/<area>.test.ts`** — vitest behavioral test. Drive the method through `BrazeWeb` against the mock server (`capacitor-braze-mock-server`). Assert both happy path and validation rejections.
+7. **`example/index.html` + `example/src/main.ts`** — add a button that calls the method and logs the result, so the developer testbed exercises the full surface.
+8. **`CHANGELOG.md`** — under `Unreleased`, a one-line entry describing the addition. Pre-1.0 we don't gate on semver; post-1.0 a new method is a minor bump.
+
+If you skip one of these, CI catches it:
+- Missing the `BrazePlugin.m` macro → the Capacitor `verify-ios` job's smoke test for the method 404s.
+- Missing the native bridge → contract tests in `test/web/src/` still pass (web is independent), but iOS / Android consumers hit "method not implemented" at runtime.
+- Missing the docgen `@example` → `npm run build` (docgen step) regenerates `README.md` with a placeholder, lint diff catches it.
+
+---
+
+## Tips for AI assistants
+
+Short, sharp, codebase-specific patterns that pay off repeatedly:
+
+### Before writing code, grep these
+
+- **C01 error format** — `grep -rn 'call.reject("Braze' ios android src` to copy the error-string format and stay byte-identical across platforms.
+- **Existing typed-id usage on Web SDK** — `grep -rn '@braze/web-sdk' src` shows how the dynamic-import is structured. Don't add a static import.
+- **What the contract promises for a DTO** — open `src/definitions.ts` and find the matching `export interface Braze<Name>` — that's the contract, native bridges follow it.
+- **What the SDK actually returns** — for iOS, `find /tmp/brazekit -name '*.swiftinterface'` (after `curl https://github.com/braze-inc/braze-swift-sdk/releases/download/14.1.0/BrazeKit.zip`); for Android, `gh api repos/braze-inc/braze-android-sdk/contents/<path>`; for Web, `node_modules/@braze/web-sdk/index.d.ts`. The audit punch list and Phase 1 commit show how to do this without a local Pod install.
+
+### Common gotchas, sorted by how often AI gets them wrong
+
+1. **Months are 1-indexed.** TS/Web pass `month: 7` for July. Android wraps via `Month.entries[month - 1]`; iOS uses `DateComponents(.month, value: 7)`. Never pass 0-indexed.
+2. **Timestamps are epoch milliseconds at the wire.** Android SDK uses seconds for `card.created` + `getContentCardsLastUpdatedInSecondsFromEpoch()`; bridge multiplies by 1000. iOS BrazeKit uses `TimeInterval` (seconds with fraction); bridge converts via `Int(seconds * 1000)`. The DTO contract is always epoch ms.
+3. **`iOS getInt` truncates non-integer doubles.** When you write `if let v = call.getInt(...)` for a value field that could be a JS `number`, doubles silently lose their fractional part. For `setCustomUserAttribute`, check `getDouble` first when the value has a fractional component (see audit L4-S02).
+4. **Content card type discrimination is `instanceof` (web) / enum-case (iOS) / class-based `when` (Android).** Field-presence heuristics fail on sparse cards. See `serializeContentCard` in each bridge.
+5. **Feature flag properties are a tagged union** `{ type, value }` per [`C02`](./docs/mdcs/C02-DTO-SHAPES.md). Order accessors so image-before-string and timestamp-before-number; BrazeKit's typed accessors return nil if the property isn't of the requested type.
+6. **The init guard is non-negotiable except for the C07 quartet** (`wipeData`, `disableSDK`, `enableSDK`, `isDisabled`). iOS BrazeKit 14.x asymmetry: `enableSDK` requires init on iOS; `isDisabled` returns false pre-init on iOS. JSDoc in `definitions.ts` reflects this.
+7. **`MARK:` / `// MARK:` comments and `@objc` decorations matter.** Removing them confuses Xcode navigation; removing `@objc` from a method breaks the Obj-C registration in `BrazePlugin.m`.
+
+### Where to find what
+
+| If you want… | Look at… |
+|---|---|
+| The plugin's full method list and JSDoc | [`src/definitions.ts`](./src/definitions.ts) |
+| How a method should validate input | [`C04`](./docs/mdcs/C04-VALIDATION.md) + existing methods in `src/web.ts` |
+| What error string to emit | `grep -rn 'Braze\.' src ios android \| grep call.reject` for examples |
+| What the Web SDK exposes | `node_modules/@braze/web-sdk/index.d.ts` (typed) and `node_modules/@braze/web-sdk/src/` (source) |
+| What the iOS SDK exposes | Download `BrazeKit.zip` from `braze-inc/braze-swift-sdk` releases; read `BrazeKit.framework/Modules/BrazeKit.swiftmodule/arm64-apple-ios.swiftinterface` |
+| What the Android SDK exposes | `gh api repos/braze-inc/braze-android-sdk/contents/<path>` against the public source; the actual `Card` model classes are closed-source but `com.braze.models.cards.{CaptionedImageCard, ImageOnlyCard, ShortNewsCard, TextAnnouncementCard}` field access is visible in the open `android-sdk-ui` module |
+| What's left to fix before `0.1.0` | [`findings/SUMMARY.md`](./findings/SUMMARY.md) — current audit punch list |
+| Whether a behavior is intended | git log → commit messages have rationale; `CHANGELOG.md` has the user-facing version |
+| What the test fixtures look like | [`test/web/src/test-utils.ts`](./test/web/src/test-utils.ts) for the `freshPluginWithConfig()` helper |
+
+### Things that look like bugs but aren't
+
+- **`prepare: npm run build` runs on every `npm install` in this repo.** Annoying for local dev but required so `npm install bma342/capacitor-braze` from a git URL works; `prepare` is skipped on consumer installs from the npm registry tarball.
+- **`addListener` resolves immediately without firing.** Listeners attach to a native subscription created at `initialize` time; if `initialize` hasn't run yet, the handle is silently inert. See [`C05`](./docs/mdcs/C05-LISTENERS.md) and the listener JSDocs.
+- **Subscribed events don't replay.** A consumer that subscribes after `initialize` won't see flags / cards that already arrived; the SDK keeps them in cache and the consumer should call `getFeatureFlag` / `getContentCards` to read current state.
+- **iOS `wipeData()` post-wipe disables SDK for the app run.** `Braze.wipeDataAndDisableForAppRun()` on iOS doesn't auto-re-enable; a subsequent `initialize` no-ops until next app launch. This is a BrazeKit constraint, not a plugin bug.
+
+### Verifying native changes without a local Xcode / Android Studio
+
+- Use the CI `verify-ios` (xcodebuild against BrazeKit) and `verify-android` (gradle against `com.braze:android-sdk-ui`) jobs — they run on every PR.
+- For local verification, download the BrazeKit xcframework directly:
+  ```bash
+  curl -L https://github.com/braze-inc/braze-swift-sdk/releases/download/14.1.0/BrazeKit.zip -o /tmp/brazekit.zip
+  unzip -q /tmp/brazekit.zip -d /tmp/brazekit
+  # API in /tmp/brazekit/BrazeKit.xcframework/.../*.swiftinterface
+  ```
+- For Android, the public source at `braze-inc/braze-android-sdk` has the UI module open; field signatures on `Card` and subclasses are inferable from `android-sdk-ui/src/main/java/com/braze/ui/contentcards/view/*.kt`.
 
 ---
 
