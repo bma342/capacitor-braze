@@ -19,6 +19,7 @@ import com.braze.enums.inappmessage.ClickAction
 import com.braze.enums.inappmessage.MessageType
 import com.braze.models.inappmessage.IInAppMessage
 import com.braze.models.inappmessage.IInAppMessageImmersive
+import com.braze.models.inappmessage.IInAppMessageWithImage
 import com.braze.models.inappmessage.MessageButton
 import com.braze.support.BrazeLogger
 import com.braze.ui.inappmessage.BrazeInAppMessageManager
@@ -184,7 +185,12 @@ class BrazePlugin : Plugin() {
      */
     private fun serializeInAppMessage(message: IInAppMessage): JSObject {
         val dto = JSObject()
-        dto.put("id", message.triggerId ?: JSObject.NULL)
+        // Android's IInAppMessage doesn't expose a trigger / analytics id
+        // the way iOS BrazeKit and Web do; the SDK tracks impression
+        // attribution internally via the SDK's own bookkeeping. Surface
+        // `null` so the cross-platform contract slot stays populated for
+        // forward compat.
+        dto.put("id", JSObject.NULL)
         dto.put("clickAction", serializeClickAction(message.clickAction, message.uri?.toString(), message.openUriInWebView))
         dto.put("extras", extrasToJSObject(message.extras))
 
@@ -193,11 +199,17 @@ class BrazePlugin : Plugin() {
             return dto
         }
 
+        // `remoteImageUrl` is on the IInAppMessageWithImage sibling
+        // interface, not the base IInAppMessage. Cast once, use across
+        // variants — modals/fulls/slideups can all carry an image.
+        val withImage = message as? IInAppMessageWithImage
+        val imageUrl: String? = withImage?.remoteImageUrl
+
         when (message.messageType) {
             MessageType.SLIDEUP -> {
                 dto.put("type", "slideup")
                 dto.put("message", message.message ?: "")
-                message.remoteImageUrl?.let { dto.put("imageUrl", it) }
+                if (!imageUrl.isNullOrBlank()) dto.put("imageUrl", imageUrl)
                 // Android's SLIDEUP doesn't carry imageAltText/language on
                 // the base IInAppMessage; immersive-only fields stay absent.
                 // slideFrom is fixed by SDK (no enum exposed at plugin layer).
@@ -208,7 +220,7 @@ class BrazePlugin : Plugin() {
                 val immersive = message as? IInAppMessageImmersive
                 dto.put("header", immersive?.header ?: "")
                 dto.put("message", message.message ?: "")
-                message.remoteImageUrl?.let { dto.put("imageUrl", it) }
+                if (!imageUrl.isNullOrBlank()) dto.put("imageUrl", imageUrl)
                 dto.put("buttons", serializeButtons(immersive?.messageButtons ?: emptyList()))
             }
             MessageType.FULL -> {
@@ -216,7 +228,7 @@ class BrazePlugin : Plugin() {
                 val immersive = message as? IInAppMessageImmersive
                 dto.put("header", immersive?.header ?: "")
                 dto.put("message", message.message ?: "")
-                message.remoteImageUrl?.let { dto.put("imageUrl", it) }
+                if (!imageUrl.isNullOrBlank()) dto.put("imageUrl", imageUrl)
                 dto.put("buttons", serializeButtons(immersive?.messageButtons ?: emptyList()))
             }
             MessageType.HTML, MessageType.HTML_FULL -> {
@@ -237,18 +249,15 @@ class BrazePlugin : Plugin() {
 
     private fun serializeClickAction(action: ClickAction, uri: String?, useWebView: Boolean): JSObject {
         val obj = JSObject()
-        when (action) {
-            ClickAction.URI -> {
-                obj.put("type", "url")
-                obj.put("uri", uri ?: "")
-                obj.put("useWebView", useWebView)
-            }
-            // NEWSFEED is a legacy in-app deep-link target. Surface as
-            // 'none' so the contract stays clean across platforms (iOS
-            // doesn't have it).
-            ClickAction.NONE, ClickAction.NEWS_FEED -> {
-                obj.put("type", "none")
-            }
+        // Braze Android's ClickAction enum is just NONE / URI as of
+        // 42.x — no NEWSFEED variant (iOS dropped it too). Map URI →
+        // contract `url`, everything else → `none`.
+        if (action == ClickAction.URI) {
+            obj.put("type", "url")
+            obj.put("uri", uri ?: "")
+            obj.put("useWebView", useWebView)
+        } else {
+            obj.put("type", "none")
         }
         return obj
     }
@@ -259,7 +268,11 @@ class BrazePlugin : Plugin() {
             val obj = JSObject()
             obj.put("id", b.id)
             obj.put("text", b.text ?: "")
-            obj.put("clickAction", serializeClickAction(b.clickAction, b.uri?.toString(), b.openUriInWebView))
+            // Note: MessageButton's "open in webview" accessor is
+            // `openUriInWebview` (lowercase 'w' in 'webview') —
+            // different from IInAppMessage's `openUriInWebView`
+            // (capital 'W'). Braze SDK convention.
+            obj.put("clickAction", serializeClickAction(b.clickAction, b.uri?.toString(), b.openUriInWebview))
             array.put(obj)
         }
         return array
