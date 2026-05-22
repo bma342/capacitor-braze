@@ -52,6 +52,9 @@
     "watch": "tsc --watch",
     "test": "cd test/web && npm test",
     "test:watch": "cd test/web && npm run test:watch",
+    "smoke:web": "bash scripts/smoke-web.sh",
+    "smoke:ios": "bash scripts/smoke-ios.sh",
+    "smoke:android": "bash scripts/smoke-android.sh",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
