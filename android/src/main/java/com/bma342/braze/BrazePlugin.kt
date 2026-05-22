@@ -15,6 +15,7 @@ import com.braze.models.cards.ShortNewsCard
 import com.braze.models.cards.TextAnnouncementCard
 import com.braze.models.outgoing.BrazeProperties
 import com.braze.support.BrazeLogger
+import com.braze.ui.inappmessage.BrazeInAppMessageManager
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -103,6 +104,29 @@ class BrazePlugin : Plugin() {
      * post-`configure`.
      */
     private var sdkAuthenticationEnabled: Boolean = false
+
+    // -------------------------------------------------------------------------
+    // In-app message lifecycle
+    //
+    // L4-S11 / Phase 3: Braze Android renders IAMs via a singleton
+    // [BrazeInAppMessageManager] that must be registered against the
+    // currently-foregrounded Activity in onResume and unregistered in
+    // onPause. Without this wiring, BrazeKit fetches IAM campaigns but
+    // never displays them. Capacitor exposes Plugin.handleOnResume() /
+    // handleOnPause() as lifecycle hooks; we forward those to the IAM
+    // manager. The bridge Activity (bridge.activity) is the host for
+    // all in-app message display.
+    // -------------------------------------------------------------------------
+
+    override fun handleOnResume() {
+        super.handleOnResume()
+        BrazeInAppMessageManager.getInstance().registerInAppMessageManager(bridge.activity)
+    }
+
+    override fun handleOnPause() {
+        super.handleOnPause()
+        BrazeInAppMessageManager.getInstance().unregisterInAppMessageManager(bridge.activity)
+    }
 
     // -------------------------------------------------------------------------
     // Bridge sanity check

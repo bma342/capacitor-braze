@@ -1,4 +1,5 @@
 import BrazeKit
+import BrazeUI
 import Capacitor
 import Foundation
 
@@ -140,6 +141,15 @@ public class BrazePlugin: CAPPlugin {
         let braze = Braze(configuration: configuration)
         BrazePlugin.braze = braze
         BrazePlugin.sdkAuthenticationEnabled = enableSdkAuthentication
+
+        // L4-S11: wire BrazeUI's in-app message presenter so IAMs render
+        // out of the box on iOS. Without this, BrazeKit fetches campaigns
+        // but never displays them — the audit caught this as 2 MB of
+        // linked binary doing nothing. The presenter handles the entire
+        // display + dismiss lifecycle; consumer apps that want to
+        // customize can override after init by assigning a different
+        // BrazeInAppMessagePresenter implementation (planned for v0.2).
+        braze.inAppMessagePresenter = BrazeInAppMessageUI()
 
         // Wire the persistent feature-flag update subscription. Retaining the
         // returned cancellable keeps the subscription alive; releasing it (in
