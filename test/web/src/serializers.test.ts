@@ -199,9 +199,9 @@ describe('classifyContentCard (instanceof-driven)', () => {
 
   it('falls back to field-shape heuristic when the SDK module is null (unit-test path)', () => {
     const sut = getSerializers();
-    expect(
-      sut.classifyContentCard({ title: 't', description: 'd', imageUrl: 'https://x' }, null),
-    ).toBe('captionedImage');
+    expect(sut.classifyContentCard({ title: 't', description: 'd', imageUrl: 'https://x' }, null)).toBe(
+      'captionedImage',
+    );
     expect(sut.classifyContentCard({ imageUrl: 'https://x' }, null)).toBe('imageOnly');
     expect(sut.classifyContentCard({ title: 't', description: 'd' }, null)).toBe('classic');
     expect(sut.classifyContentCard({ isControl: true }, null)).toBe('control');

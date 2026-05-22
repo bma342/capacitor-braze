@@ -674,10 +674,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    * tests catch that drift, and unit tests that care construct real
    * Card instances rather than plain objects.
    */
-  private classifyContentCard(
-    card: BrazeWebSdkModule.Card,
-    braze: BrazeWebSdk | null,
-  ): BrazeContentCardType | null {
+  private classifyContentCard(card: BrazeWebSdkModule.Card, braze: BrazeWebSdk | null): BrazeContentCardType | null {
     if (braze !== null) {
       if (card instanceof braze.ControlCard) return 'control';
       if (card instanceof braze.CaptionedImage) return 'captionedImage';
