@@ -267,8 +267,32 @@ The mock-server harness on `test/web` covers Web-bridge wire output. The native 
 - **Adding emulator-based instrumented tests in CI before Robolectric proves insufficient.** Emulator startup time is a 5-minute tax per job per push; only worth it if Robolectric demonstrably misses a class of bug.
 - **Adding XCTest tests in the demo app's test target.** Demo is consumer-facing reference code; mixing plugin tests in muddles its purpose. Tests live in `test/ios/` (separate target, depends on the plugin Pod the same way the demo does).
 
-## Status (as of 0.0.12)
+## Status (as of `0.0.13`)
 
-**Not yet implemented.** This MDC is the design; the implementation is sequenced as a future commit. The blocker is finding the time/value tradeoff to set up the platform-specific framework ceremony — both platforms need ~half a day of one-time setup before incremental test additions become cheap.
+**Implementation kickoff complete.** Phase 15 of the audit completion pass lands the framework ceremony + the first batch of contract tests:
 
-The [Phase Q audit](../../REVIEW_READINESS.md#7-blockers-to-tag-010) lists this as one of two leverage moves before tagging `0.1.0`; the other is the real-Braze trial smoke test, which is faster + cheaper to execute and catches a different class of bug. The smoke test is the recommended first move; this harness is the regression-protection that locks in whatever the smoke test validates.
+### Android
+
+- `android/build.gradle` adds Robolectric 4.13 + Mockito 5.14 + Truth 1.4 as `testImplementation` deps, with `testOptions.unitTests.includeAndroidResources = true` so Robolectric can synthesize a working Android context.
+- `android/src/test/java/com/bma342/braze/BrazePluginContractTest.kt` covers the audit-fix contract surface:
+  - `echo` empty-value rejection (C01 error format)
+  - `initialize` validation: empty apiKey, HTTP-without-allowInsecureEndpoint, malformed URL (L5-03), zero `sessionTimeoutInSeconds` (L5-08)
+  - `setDateOfBirth` reject path (L2-07)
+- CI runs the suite via `./gradlew :capacitor-braze:testDebugUnitTest` in the `verify-android` job.
+
+### iOS
+
+- `ios/PluginTests/BrazePluginContractTests.swift` covers the pure-function serializer surface (`BrazeInAppMessageSerializer`):
+  - 5-variant control / html / slideup / modal collapse from BrazeKit's 7-case enum
+  - Button array shape per C02
+  - Graphic-image flattening to `imageUrl`
+- Wiring into the Xcode workspace is documented in the file header. The Capacitor plugin ships as a Pod + SwiftPM target with no host app, so the XCTest bundle hosts inside the demo app's Xcode workspace after `npx cap sync ios` (one-time maintainer setup, ~10 minutes).
+- CI wiring is staged for the same setup pass — `xcodebuild test -scheme CapacitorBrazeTests` will run alongside `verify-ios` once the Xcode target lands.
+
+### What's left
+
+- Android: extend coverage to subscription-group rejections, alias validation, customAttribute type dispatch with Long values (L4-K02).
+- iOS: extend to `BrazeContentCard` serializer + `BrazeFeatureFlag` typed-accessor walk + the URLProtocol-intercept integration tier this MDC's iOS section originally designed.
+- Both: the integration tier (full Capacitor bridge round-trip with mock-server response replay) per the §"What tests should we write first" list above.
+
+The audit's L6-01 finding is closed by this kickoff; ongoing coverage growth tracks against the [`findings/`](../../findings/) punch list and the smoke-test playbooks in [`docs/smoke-tests/`](../smoke-tests/).

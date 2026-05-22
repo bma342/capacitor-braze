@@ -339,3 +339,11 @@ jobs:
       - name: Build Android demo (assembleDebug)
         working-directory: demo/android
         run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Run Android plugin unit tests (Robolectric/JUnit)
+        # Phase 15 / C11: JVM-tier contract tests covering validation
+        # strings, SDK Auth enforcement, and DTO classification. Lives
+        # under android/src/test/. The Gradle module is the
+        # `:capacitor-braze` library, exposed via the demo's settings.
+        working-directory: demo/android
+        run: ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon
