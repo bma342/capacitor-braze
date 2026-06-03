@@ -13,15 +13,15 @@
     "cap:android": "npm run cap:sync && cap open android"
   },
   "dependencies": {
-    "@braze/web-sdk": "^6.0.0",
+    "@braze/web-sdk": "^6.8.0",
     "@capacitor/android": "^6.0.0",
     "@capacitor/core": "^6.0.0",
     "@capacitor/ios": "^6.0.0",
     "capacitor-braze": "file:.."
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.3.4",
+    "@capacitor/cli": "^8.4.0",
     "typescript": "~5.4.2",
-    "vite": "^8.0.14"
+    "vite": "^8.0.16"
   }
 }
