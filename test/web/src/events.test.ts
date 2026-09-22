@@ -102,6 +102,14 @@ describe('events (web bridge → @braze/web-sdk → mock)', () => {
     );
   });
 
+  it('logPurchase rejects an empty currency', async () => {
+    // Surfaced by coverage instrumentation (A5-15): every other
+    // `validatePurchase` branch had a test, this one did not.
+    await expect(plugin.logPurchase({ productId: 'sku', currency: '', price: 9.99 })).rejects.toThrow(
+      'Braze.logPurchase: `currency` is required (ISO 4217 string).',
+    );
+  });
+
   it('logPurchase rejects negative price', async () => {
     await expect(plugin.logPurchase({ productId: 'sku', currency: 'USD', price: -1 })).rejects.toThrow(
       /non-negative finite/i,

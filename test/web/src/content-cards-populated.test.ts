@@ -1,9 +1,9 @@
 import type { MockServer } from 'capacitor-braze-mock-server';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BrazeWeb } from '../../../src/web';
 
-import { freshPluginWithConfig, teardownPlugin } from './test-utils';
+import { freshPluginWithConfig, teardownPlugin, waitUntil } from './test-utils';
 
 /**
  * Populated-cache content-cards tests: requestContentCardsRefresh ->
@@ -203,5 +203,34 @@ describe('content cards (populated cache via refresh end-to-end)', () => {
         .map((r) => `${r.method} ${r.path}`)
         .join(', ')}`,
     ).toBeTruthy();
+  });
+
+  it('resolves and warns — not rejects — when the server fails the refresh', async () => {
+    // A5-18 noted that `ScriptedResponse.status` existed and no test had
+    // ever used it: nothing covered a non-2xx from Braze. The contract here
+    // is deliberate — a failed background refresh is not a programming
+    // error, so the bridge warns and resolves rather than handing the
+    // consumer a rejection to swallow at every call site. The cached cards
+    // from the successful refresh in `beforeEach` must survive it.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      mock.respondTo({
+        pathPattern: /\/content_cards\/sync$/,
+        method: 'POST',
+        status: 500,
+        body: { message: 'internal error' },
+      });
+
+      await expect(plugin.requestContentCardsRefresh()).resolves.toBeUndefined();
+      await waitUntil(
+        () => warn.mock.calls.some((call) => String(call[0]).includes('reported the refresh failed')),
+        'the refresh-failure warning',
+      );
+
+      const { cards } = await plugin.getContentCards();
+      expect(cards, 'a failed refresh must not clear the cache').toHaveLength(3);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

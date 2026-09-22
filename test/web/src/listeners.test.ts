@@ -12,6 +12,10 @@ import { freshPluginWithConfig, teardownPlugin } from './test-utils';
  *   `contentCardsUpdated` -> fired after a successful CC refresh
  *   `sdkAuthError`        -> fired when Braze rejects a signature (below)
  *
+ * The re-`initialize` transitions for `contentCardsUpdated` (where a
+ * server-config gate, not a dead subscription, decides whether it fires)
+ * are in `lifecycle.test.ts`.
+ *
  * The plugin's `initialize()` eagerly subscribes to the underlying
  * `@braze/web-sdk` hooks and retains each subscription's GUID, so a later
  * `initialize` tears the old subscriptions down through the SDK's
@@ -174,12 +178,11 @@ describe('addListener / notifyListeners end-to-end', () => {
  * signature that was rejected. Scripting that body on the mock drives the
  * real code path rather than a stub.
  *
- * The sibling event, `inAppMessageReceived`, is NOT covered end-to-end
- * here: triggering it requires reproducing Braze's trigger-delivery
- * envelope (trigger definitions in the data response, then the SDK's
- * trigger engine deciding to fire). Its DTO is covered directly in
- * `serializers.test.ts` against real SDK message classes; the remaining
- * gap is the delivery path itself.
+ * The sibling event, `inAppMessageReceived`, lives in its own file:
+ * `in-app-messages.test.ts` reproduces Braze's trigger-delivery envelope
+ * (trigger definitions in the data response, then the SDK's trigger engine
+ * deciding to fire) and asserts the delivered DTO end to end. Its shape is
+ * additionally covered in isolation by `serializers.test.ts`.
  */
 describe('sdkAuthError listener', () => {
   let mock: MockServer;

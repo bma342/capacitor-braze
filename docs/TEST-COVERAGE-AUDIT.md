@@ -1,16 +1,54 @@
 # Test coverage audit (web bridge)
 
-> ⚠️ **This table is maintained by hand.** There is no coverage instrumentation on any platform, so
-> nothing verifies it. Treat it as a map of intent, re-derived when the suite changes, and check
-> `git log` on `test/web/src/` if a row looks stale. The per-method detail below was last re-derived
-> for `0.2.0`; the header numbers are from a live run.
+> The **percentages below are measured**, not asserted: `npm run test:coverage` (from `test/web`)
+> instruments `src/web.ts` with `@vitest/coverage-v8` and fails the run if coverage drops. The
+> **per-method table** further down is still maintained by hand — it answers "does this method have
+> a behavioral test at all", which a line percentage cannot. Re-derive it when the suite changes.
 
 **Audited:** 2026-09-22 (`0.2.0`).
-**Web test count:** **154 tests across 14 files, ~3s** (`npm test`).
+**Web test count:** **180 tests across 16 files, ~3.5s** (`npm test`).
 **Native:** 74 Robolectric/JUnit (`android/src/test/`) + 26 XCTest (`ios/PluginTests/`), both in CI.
 **Methods on the surface:** 35, plus `addListener` (4 event overloads) and `removeAllListeners`.
 **Directly covered:** **35 of 35**, plus dedicated rejection coverage for every input-validation
 branch in `src/web.ts` ([`validation.test.ts`](../test/web/src/validation.test.ts)).
+
+## Measured coverage of `src/web.ts`
+
+```
+npm --prefix test/web run test:coverage
+```
+
+| Metric | Covered / total | % | Ratchet threshold |
+|---|---|---|---|
+| Statements | 611 / 627 | **97.44** | 97 |
+| Lines | 611 / 627 | **97.44** | 97 |
+| Branches | 269 / 298 | **90.26** | 90 |
+| Functions | 53 / 53 | **100** | 99 |
+
+Thresholds live in [`test/web/vitest.config.ts`](../test/web/vitest.config.ts) and are a **ratchet**:
+they sit just under the measured values, so a regression fails the run. Raise them as coverage
+improves; never lower them to make a run pass. Instrumentation is off during plain `npm test` so the
+fast loop stays fast — only `test:coverage` turns it on.
+
+Scope is `src/web.ts` alone. `definitions.ts` is types (no runtime statements) and `index.ts` is
+`registerPlugin`, which these tests bypass deliberately — they construct `BrazeWeb` directly so the
+assertions are about the bridge, not about Capacitor's registration.
+
+### What is not covered, and why
+
+Three regions, all defensive paths unreachable without stubbing the SDK module:
+
+| Lines | What | Why it stays uncovered |
+|---|---|---|
+| 369–373 | `getDeviceId`'s "SDK has not generated a device ID yet" throw | `getDeviceId()` always returns an id once `initialize` has resolved. Forcing `null` means replacing the SDK with a stub, at which point the test asserts against the stub rather than the SDK |
+| 647–651 | `requireUser`'s "`getUser()` returned null" throw | Same — unreachable post-init. The message itself tells the consumer to file an issue, which is the right shape for a can't-happen branch |
+| 672–680 | `loadSdk`'s dynamic-import failure branch | Needs the `@braze/web-sdk` import itself to fail (CSP violation, bundler interop, non-DOM context). Simulating it means intercepting the module loader |
+
+Instrumenting paid for itself immediately: it surfaced three branches that *were* worth covering and
+that the per-method table had made look covered — a valid `sessionTimeoutInSeconds` (only its
+rejection was tested, so the conditional spread that forwards it to the SDK never ran),
+`logPurchase`'s missing-`currency` rejection, and `requestContentCardsRefresh`'s failure callback.
+All three now have tests.
 
 **What 0.2.0 changed here.** The 2026-09 audit found that breadth was real but depth was not:
 eleven tests would have passed with their implementation replaced by `return;`, and swapping
@@ -38,13 +76,13 @@ Every consumer-facing method has at least one direct behavioral test. `initializ
 | `addAlias` | `identity.test.ts` | wire format + empty-rejection |
 | `getDeviceId` | `identity.test.ts` | return value |
 | `logCustomEvent` | `events.test.ts` | wire format + properties survive |
-| `logPurchase` | `events.test.ts` | wire format + 3 validation rejections |
+| `logPurchase` | `events.test.ts` | wire format + every validation rejection (productId, currency, price, quantity, property types) |
 | `getFeatureFlag` | `feature-flags.test.ts` | empty-cache + empty-id rejection |
 | `getAllFeatureFlags` | `feature-flags.test.ts` | empty-cache |
 | `refreshFeatureFlags` | `feature-flags.test.ts` | does not throw |
 | `logFeatureFlagImpression` | `feature-flags.test.ts` | does not throw + empty-id rejection |
 | `getContentCards` | `content-cards.test.ts` | empty-cache |
-| `requestContentCardsRefresh` | `content-cards.test.ts` | does not throw |
+| `requestContentCardsRefresh` | `content-cards.test.ts`, `content-cards-populated.test.ts` | populated refresh end-to-end + a 500 response resolves-with-warning and preserves the cache |
 | `logContentCardClick` / `logContentCardImpression` | `content-cards.test.ts` | unknown-cardId rejection with specific message |
 | `disableSDK` / `enableSDK` / `isDisabled` | `lifecycle.test.ts` | state transitions |
 | `requestImmediateDataFlush` | `lifecycle.test.ts` | weak: no-op when nothing queued |
@@ -52,8 +90,10 @@ Every consumer-facing method has at least one direct behavioral test. `initializ
 | `registerPushToken` | `push.test.ts` | rejects on web with named, helpful error |
 | `echo` | `privacy-lifecycle.test.ts` | Capacitor convention round-trip, init-independent |
 | `addListener('featureFlagsUpdated', cb)` | `listeners.test.ts` | refresh fires callback with serialized DTOs |
-| `addListener('contentCardsUpdated', cb)` | `listeners.test.ts` | same |
-| `removeAllListeners` | `listeners.test.ts` | subsequent refreshes do not invoke removed callbacks |
+| `addListener('contentCardsUpdated', cb)` | `listeners.test.ts`, `lifecycle.test.ts` | same, plus the re-`initialize` config gate (both branches) |
+| `addListener('inAppMessageReceived', cb)` | `in-app-messages.test.ts` | end-to-end trigger delivery: slideup / modal / full / control DTOs, button click actions, `enableInAppMessageUI` on and off |
+| `addListener('sdkAuthError', cb)` | `listeners.test.ts` | scripted `auth_error` response fires the listener with userId / code / reason / signature |
+| `removeAllListeners` | `listeners.test.ts`, `in-app-messages.test.ts` | subsequent refreshes and triggers do not invoke removed callbacks |
 | Init guard | `privacy-lifecycle.test.ts` | clear message on `logCustomEvent`, `getFeatureFlag`, `getContentCards` without prior `initialize()` |
 
 Plus 17 serializer unit tests (`serializers.test.ts`) covering `serializeFeatureFlag` / `serializeContentCard` / `detectContentCardType` / `serializeContentCards` in isolation, across all valid + edge-case shapes.
@@ -91,6 +131,39 @@ The populated-cache gap that this section originally tracked is **closed**. Two 
 | `addListener('contentCardsUpdated', cb)` | ✅ asserts callback fires after `requestContentCardsRefresh` with the canonical `{ cards: BrazeContentCard[], lastUpdated: number \| null }` payload |
 | `removeAllListeners` | ✅ asserts no further callback invocations after removal, even when a subsequent refresh fires |
 
+### Gaps closed by end-to-end in-app-message delivery (2026-09-22)
+
+Both gaps the 2026-09 audit left explicitly open on the web bridge are now closed.
+
+**`inAppMessageReceived` delivery** — [`in-app-messages.test.ts`](../test/web/src/in-app-messages.test.ts),
+8 tests. The mock now returns a real `triggers` array on the `/api/v3/data/` response, and the real
+`@braze/web-sdk` trigger engine parses it, evaluates the condition, builds a real `InAppMessage`
+subclass through its own factory, and invokes the subscription the plugin registered in
+`initialize`. Nothing is stubbed; the assertions are on what a consumer's `addListener` callback
+receives. Covered: session-start (`open`) slideup with the full C02 DTO, custom-event modal with
+per-button click actions, full-screen, control message, a non-matching event firing nothing,
+`enableInAppMessageUI` true (SDK presenter mounts) and false (listener fires, nothing renders), and
+one-native-subscription fan-out to multiple JS listeners plus `removeAllListeners`.
+
+The wire format (`triggers[].trigger_condition`, `triggers[].data`, the `type` discriminator, the
+gating fields) was read out of `@braze/web-sdk` 6.13.0's own source and is documented on
+`mockTrigger` in [`test-utils.ts`](../test/web/src/test-utils.ts).
+
+**`contentCardsUpdated` after a second `initialize`** — three tests in
+[`lifecycle.test.ts`](../test/web/src/lifecycle.test.ts). The behaviour reproduces, but the earlier
+diagnosis ("the SDK does not publish to a fresh subscriber") was wrong: the subscription is fine,
+and the same listener fires once the gate opens. The real cause is a race against the Web SDK's
+server-config memoization. `initialize` reads `ab.storage.serverConfig` exactly once, synchronously;
+the plugin's re-init path destroys the previous SDK instance first (it must, or the SDK would keep
+the original API key and base URL). If the first cycle's `/api/v3/data/` response has not landed by
+then, the fresh config manager memoizes empty defaults — `content_cards.enabled: false` — and the
+response lands on the destroyed manager. `requestContentCardsRefresh()` then sends no sync POST at
+all and parks on the config-change subscription; the promise still resolves. Any later data round
+trip repairs it. Feature flags are gated identically; in-app messages and `sdkAuthError` are not
+config-gated and are unaffected. The tests pin both branches — settled re-init works, mid-flight
+re-init is gated until a data round trip — and the mock's new `delayMs` makes the race deterministic
+rather than timing-dependent.
+
 ### Native coverage — what the unit tiers now cover
 
 [C11](./mdcs/C11-NATIVE-TEST-HARNESSES.md)'s unit tiers landed in `0.2.0` and run in CI. On Android,
@@ -106,9 +179,8 @@ asymmetry this table used to list is gone — the plugin now tracks that state i
 | Surface | What's untested today | Plan |
 |---|---|---|
 | iOS / Android bridge **wire format** | Whether BrazeKit 18.2.1 and `com.braze:android-sdk-ui` 43.2.0 emit the same HTTP this file's web tests validate. The native tiers assert the bridge's *translation* against SDK model objects, not the bytes the SDK then sends | C11's integration tier (URLProtocol / MockWebServer), still design-only. The Layer 4 smoke would capture the ground truth to write it against |
-| `inAppMessageReceived` delivery | The DTO is covered at the serializer level on all three platforms; nothing reproduces Braze's trigger-delivery envelope end to end | Mock-server modelling of trigger definitions |
-| `contentCardsUpdated` after a second `initialize` on web | The SDK does not appear to publish to a fresh content-cards subscriber after destroy + re-init; feature flags do | Possible upstream issue; first-init delivery is covered |
-| Coverage percentages | No instrumentation on any platform | Unblocked whenever someone wires it; this table is the substitute |
+| Coverage percentages on the **native** bridges | Android and iOS have no instrumentation; only the web bridge is measured | JaCoCo on the Robolectric tier and `xcodebuild -enableCodeCoverage` on the XCTest tier are both a config change away |
+| `inAppMessageReceived` delivery on **iOS / Android** | Closed on web (below). The native serializers are covered against real SDK message classes, but neither native tier drives a real trigger through the SDK's trigger engine | C11's integration tier, or a Layer 4 smoke capture |
 
 ## Is this enough to ship?
 
@@ -131,7 +203,7 @@ or `0.2.0`. That is stated in the README, the CHANGELOG, C08's bump protocol and
 2. **Layer 4 smoke** (maintainer, ~2–3 hrs). Walk [`SMOKE-TEST-PLAYBOOK.md`](./SMOKE-TEST-PLAYBOOK.md)
    against a Braze trial; capture templates are pre-staged in [`smoke-tests/`](./smoke-tests/).
    Nothing in this repo has ever been run against a live Braze backend.
-3. **Coverage instrumentation**, which would let this table stop being hand-maintained.
+3. **Native coverage instrumentation** — JaCoCo on the Robolectric tier, `-enableCodeCoverage` on the XCTest tier. The web bridge is instrumented and ratcheted as of `0.2.0`; the natives are not.
 
 With (1) and (2), the plugin reaches "every method has at least one end-to-end behavioral test on
 the platform it runs on." That is the bar this doc tracks against, and it is not met yet.

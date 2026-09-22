@@ -63,6 +63,24 @@ describe('input validation (web bridge)', () => {
       ).rejects.toThrow(/sessionTimeoutInSeconds.*positive/);
     });
 
+    it('accepts a valid sessionTimeoutInSeconds and forwards it to the SDK', async () => {
+      // The rejection above was the only test touching this option, so the
+      // accept path — the conditional spread that actually forwards it into
+      // `braze.initialize` — was never executed. Coverage instrumentation
+      // (A5-15) is what surfaced that; a passing rejection test looks like
+      // the option is covered.
+      const plugin = new BrazeWeb();
+      await expect(
+        plugin.initialize({
+          apiKey: 'test-public-sdk-key',
+          endpoint: mock.baseUrl,
+          allowInsecureEndpoint: true,
+          sessionTimeoutInSeconds: 60,
+        }),
+      ).resolves.toBeUndefined();
+      await plugin.wipeData().catch(() => undefined);
+    });
+
     // L5-03: URL parsing client-side. Malformed endpoints reject before the
     // SDK ever sees them, delivering on the SECURITY.md §4 claim.
     it('rejects a malformed endpoint with a clear message', async () => {
