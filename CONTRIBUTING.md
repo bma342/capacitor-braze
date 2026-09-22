@@ -38,6 +38,30 @@ npm run build              # in the repo root
 (cd example && npm install)   # picks up the rebuilt artifacts via the file:.. link
 ```
 
+### Linting
+
+ESLint runs on **flat config** (`eslint.config.cjs`, ESLint 10). There is no `.eslintrc.cjs` and no
+`.eslintignore` — flat config reads neither, so ignores live in the first block of the config file.
+`npm run eslint` takes no `--ext` flag: both `@ionic/eslint-config` rule sets scope themselves to
+TypeScript, which is the whole lint surface (`src/`, `test/web/src/`, `test/web/vitest.config.ts`).
+
+```bash
+npm run eslint            # eslint . --max-warnings=0 — a warning fails, same as an error
+npm run prettier -- --check
+npm run fmt               # eslint --fix + prettier --write + swiftlint --fix
+```
+
+Two things that catch people out:
+
+- **`no-console` is on** (C09 L9-01). If you need a log line in a bridge, add an
+  `// eslint-disable-next-line no-console` and expect to justify it in review —
+  [`SECURITY.md` §3](./SECURITY.md#3-pii-handling) forbids PII at any log level.
+- **Unused `eslint-disable` directives are reported**, which is an ESLint 9+ default. A disable
+  naming a rule that isn't enabled now fails the build instead of sitting there forever.
+
+Adding or changing a rule means updating [`C09`](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md) in the
+same commit, with the reason.
+
 ## Running the tests
 
 Three tiers run locally and in CI. A fourth, against a real Braze account, has never been run.
@@ -321,7 +345,7 @@ Six PRs are open, the oldest ~4 months. After `0.2.0`'s SHA pins:
 | #25 | `actions/setup-node` 4 → 7 | **Close** — superseded; v7.0.0's SHA is pinned |
 | #19 | example-deps group | **Rebase** (`@dependabot rebase`) — `example/package-lock.json` was regenerated for the `@braze/web-sdk ^6.13.0` bump, so it will conflict |
 | #26 | demo-deps group (11 updates) | **Rebase** — same conflict on `demo/package-lock.json`. Largest PR; worth a manual demo smoke afterwards |
-| #22 | dev-deps group (7 updates) | **Rebase**, then `npm run fmt` — it carries Prettier 3.8 → 3.9, which reformats and currently fails lint. It also carries `@ionic/eslint-config` 0.5.0, the likely unblocker for the ESLint 9/10 migration |
+| #22 | dev-deps group (7 updates) | **Close** — absorbed. Six of the seven bumps (and the ESLint 10 flat-config migration they unblocked) landed in the `chore(lint)` commit on this branch, including the Prettier 3.9 reformat it was red on. The seventh, TypeScript 5.4 → 6.0, was deliberately left out: it is a major, it is not needed by any of the others, and it wants verifying on its own. Dependabot will re-raise it |
 
 ### Verifying the release afterwards
 

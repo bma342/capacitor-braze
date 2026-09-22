@@ -5,7 +5,15 @@ All notable changes to `capacitor-braze` are documented here. Format follows [Ke
 Pre-1.0: minor versions may include breaking changes (documented loudly here). Post-1.0: strict semver.
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **Tooling: migrated to ESLint 10 flat config.** `.eslintrc.cjs` is replaced by `eslint.config.cjs`, and the `eslint` script drops both `ESLINT_USE_FLAT_CONFIG=false` and `--ext ts` (flat config ignores the flag; the Ionic rule sets scope themselves to TypeScript). The base is still Capacitor's official ruleset — `@ionic/eslint-config` 0.5.0 is its flat-config rewrite — so no rules are hand-rolled. Consumer-facing API, runtime behaviour and the published tarball are unchanged.
+- **`npm audit` including dev dependencies now reports 0 vulnerabilities**, down from 2 high. Both were `js-yaml` DoS advisories reachable only through end-of-life ESLint 8's config loader (audit finding **A4-21**); the CI gate remains `--omit=dev`. The dev tree also shrank from 358 packages to 191.
+- **`npm run eslint` now runs with `--max-warnings=0`**, so a warning fails the build exactly like an error.
+- **`no-console` is enabled** (C09 L9-01). ESLint 9+ reports unused disable directives by default, which revealed that the five `// eslint-disable-next-line no-console` comments in `src/web.ts` had never suppressed anything — the rule was in neither `eslint:recommended` nor either Ionic preset. Enabling it matches the intent and backs `SECURITY.md` §3's no-PII-in-logs rule with a gate instead of reviewer attention.
+- **Dev-dependency bumps** absorbed from Dependabot PR #22: `eslint` 8.57.1 → 10.11.0, `@ionic/eslint-config` 0.4.0 → 0.5.0, `prettier` 3.8.3 → 3.9.8, `rollup` 4.60.4 → 4.63.4, `@rollup/plugin-node-resolve` 15.3.1 → 16.0.3, `rimraf` 5.0.10 → 6.1.3, `@capacitor/docgen` 0.3.0 → 0.3.1. TypeScript stays on `~5.4.2`; PR #22's TypeScript 6.0 major is deliberately deferred to its own change.
+- **Prettier 3.9 reformatted one file**, `src/definitions.ts` — the `BrazeContentCard` union now fits on one line under the preset's 120-char width. Formatting only; no type or doc change, and `npm run docgen` reproduces the same README.
+- **`@types/node` is now an explicit devDependency pinned to `^22`.** It is unused by `src/` and reaches the tree only via `swiftlint` → `@ionic/utils-fs` → `@types/fs-extra`, but `@capacitor/docgen` 0.3.1 moving it to devDependencies let it float to v26, which uses lib types TypeScript 5.4 does not ship and broke `npm run build`. See C09 for the proper fix (`"types": []` in `tsconfig.json`).
 
 ## [0.2.0] — 2026-09-22 — Native SDK bumps, real native test tiers, and an audited release pipeline
 

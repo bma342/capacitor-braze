@@ -543,10 +543,7 @@ export interface BrazeControlContentCard extends BrazeContentCardBase {
  * if (card.type === 'classic') console.log(card.title);
  */
 export type BrazeContentCard =
-  | BrazeClassicContentCard
-  | BrazeCaptionedImageContentCard
-  | BrazeImageOnlyContentCard
-  | BrazeControlContentCard;
+  BrazeClassicContentCard | BrazeCaptionedImageContentCard | BrazeImageOnlyContentCard | BrazeControlContentCard;
 
 export interface BrazeGetContentCardsResult {
   /** All cards currently cached for the user. Empty if not yet fetched. */
