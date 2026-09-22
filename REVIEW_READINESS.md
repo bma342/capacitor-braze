@@ -19,7 +19,7 @@ standard to aim at; this block is what is true.
 | **CI jobs** | **9** in `test.yml` + **2** CodeQL analyses in `codeql.yml`, all actions SHA-pinned, per-job least-privilege permissions |
 | **Lint** | **ESLint 10** flat config (`eslint.config.cjs`) on `@ionic/eslint-config` 0.5.0, run with `--max-warnings=0`; Prettier 3.9; SwiftLint `--strict`; Android Lint `abortOnError true`. `npm audit` including dev deps: **0 vulnerabilities** |
 | **Native pins** | BrazeKit/BrazeUI **18.2.1** (Xcode 26+), `com.braze:android-sdk-ui` **43.2.0**, `@braze/web-sdk` peer **`^6.13.0`** (security floor) |
-| **Capacitor** | `^6.0.0 \|\| ^7.0.0`. **Capacitor 8: not supported**, tracked follow-up |
+| **Capacitor** | `^6.0.0 \|\| ^7.0.0 \|\| ^8.0.0` (podspec `>= 6.0, < 9.0`). iOS installs under **CocoaPods or SPM**; `demo/` + `example/` both on 8.5.2. **Capacitor 6/7 are in range but no longer built by CI** |
 | **Coverage instrumentation** | **web only**: `src/web.ts` measured at 97.45% statements/lines, 90.80% branches, 100% functions, with ratcheted thresholds enforced in the `test-web` job. **Native: none** — the Android and iOS numbers are test counts. `docs/TEST-COVERAGE-AUDIT.md` reports the measurement |
 | **Layer 4 (real Braze)** | **never run.** No release is validated against a live Braze backend |
 | **e2e runner (Maestro/Detox)** | **none, and none planned** — decided against; see `PLAN.md` §14 |
@@ -233,7 +233,7 @@ Concrete things a senior Braze SDK engineer would look for when deciding whether
 - [x] `[weak self]` in all closures retaining the plugin.
 - [x] UI-affecting calls dispatched to main thread explicitly.
 - [x] `PrivacyInfo.xcprivacy` manifest included (Apple App Store requirement).
-- **[ ]** **CocoaPods only.** There is no `Package.swift` and no `CAPBridgedPlugin` conformance. This matters more than it used to: Capacitor 8's CLI generates SPM iOS projects by default, so the plugin does not install into a default-generated Cap 8 app. Tracked in `SDK_SURFACE.md`'s roadmap.
+- [x] **CocoaPods *and* SPM.** `Package.swift` at the repo root (`capacitor-swift-pm` `6.0.0..<9.0.0`, `braze-swift-sdk` `exact: "18.2.1"`), `CAPBridgedPlugin` conformance in place of the deleted `BrazePlugin.m`, sources at `ios/Sources/BrazePlugin/`. `demo/ios` builds through Pods and `example/ios` through SPM, both in `verify-ios`.
 - **[ ]** Not audited against `braze-react-native-sdk`'s iOS bridge — same reasoning as the Android row.
 - [x] SwiftLint clean.
 
@@ -481,8 +481,8 @@ Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open ·
 | iOS: official BrazeKit API | ✓ | All calls go through `braze.X` or `Braze.X` statics, verified by Phase O compile |
 | iOS: no force unwraps, proper `guard let` | ✓ | Verified |
 | iOS: `[weak self]` in closures | ✓ | Both subscribeToUpdates closures capture `[weak self]` |
-| iOS: `PrivacyInfo.xcprivacy` manifest | ✓ | Shipped via podspec `resource_bundles` (Phase S). Verified on fresh-`cap-init` install: `CapacitorBraze.bundle` resource target generated in Pods.xcodeproj with the manifest as a build file. The manifest declares "no tracking, no required-reason API access" because the plugin layer doesn't directly touch any (BrazeKit's own manifest covers what the SDK does) |
-| iOS: SwiftPM + CocoaPods install paths tested | ⚠️ | **CocoaPods only.** There is no `Package.swift`. Capacitor 8's CLI generates SPM projects by default, so this is now coupled to the Capacitor 8 lane |
+| iOS: `PrivacyInfo.xcprivacy` manifest | ✓ | Shipped on **both** install paths — podspec `resource_bundles` (Phase S) and, since 0.3.0, `resources: [.copy(...)]` on the SPM target. Verified on fresh-`cap-init` install: `CapacitorBraze.bundle` resource target generated in Pods.xcodeproj with the manifest as a build file. The manifest declares "no tracking, no required-reason API access" because the plugin layer doesn't directly touch any (BrazeKit's own manifest covers what the SDK does) |
+| iOS: SwiftPM + CocoaPods install paths tested | ✓ | **Both**, as of 0.3.0. `verify-ios` runs `pod install` + `xcodebuild test` on `demo/ios` and an SPM `xcodebuild build` on `example/ios` |
 | iOS: matches Braze RN bridge style | ⚠️ | Patterns are similar; no literal diff |
 | iOS: SwiftLint clean | ✓ | `swiftlint lint --strict` → **0 violations in 3 files**, including `ios/Tests/BrazePluginTests`. The config previously pointed `parent_config` at a nonexistent path, so no Ionic rule had ever run; the ruleset is now inlined |
 | TS: `strict: true` | ✓ | `tsconfig.json` |
@@ -549,7 +549,7 @@ Plus, before tagging: ☐ **triage the six open Dependabot PRs** — the per-PR 
 ### Still open, and honestly so
 
 - ☐ **Layer 4 manual smoke.** Walk [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) on all three platforms against a real trial and commit the captures. **Neither `0.1.0` nor `0.2.0` is validated against a live Braze backend**, and the README, CHANGELOG and C08 all say so rather than implying otherwise. This is the single largest gap in the project.
-- ☐ **Capacitor 8 support** and ☐ **SPM packaging** — see `SDK_SURFACE.md`'s roadmap. Related: Capacitor 8's CLI generates SPM projects by default.
+- ☐ **Capacitor 6/7 are supported but unexercised.** Both apps moved to Capacitor 8 in 0.3.0, so no CI job compiles against 6 or 7. The registration mechanism was verified identical across the 6.2.2 / 7.6.9 / 8.5.2 runtimes, which is evidence rather than a test. (Capacitor 8 support and SPM packaging themselves shipped in 0.3.0.)
 - ☐ **C11's integration tier** — URLProtocol on iOS, MockWebServer on Android, asserting real HTTP rather than DTO shape.
 - ☐ **`inAppMessageReceived` delivery-path coverage on iOS and Android.** Web is covered end to end as of `0.2.0` (the mock server returns real trigger envelopes); the native tiers still cover the DTO only, at the serializer level.
 - ☐ **Setter return values** (audit A1-10): `setEmail('nonsense')` resolves everywhere. Deferred as a cross-platform contract change.
