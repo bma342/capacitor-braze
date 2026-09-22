@@ -172,24 +172,42 @@ If a contributor doesn't have GPG / SSH signing set up locally, GitHub's
 working path. For the local-signing flow, see
 <https://docs.github.com/en/authentication/managing-commit-signature-verification>.
 
-### Snyk integration (optional but documented in CI)
+### Security scanning — what runs, and why there is no Snyk
 
-The `Snyk vulnerability scan` step in `.github/workflows/test.yml` is
-gated on `env.SNYK_TOKEN != ''`. To enable it:
+**No setup required.** Every scanner below is wired and runs on its own; none
+needs a token, and `SNYK_TOKEN` is no longer referenced anywhere.
 
-1. Create a free Snyk account: <https://snyk.io/login> (the free tier
-   covers open-source projects with no monitoring cap).
-2. Get the auth token: Account Settings → API Token → copy.
-3. Provision it as a repo secret:
-   ```bash
-   gh secret set SNYK_TOKEN --body "<paste-token>"
-   ```
-4. Push any change. The next CI run picks up the secret and runs the
-   scan with `--severity-threshold=high --all-projects`.
+| Scanner | Runs where | Blocks a merge? |
+|---|---|---|
+| `npm audit --audit-level=high --omit=dev` | `audit` job | **Yes**, on a high/critical advisory in the runtime tree |
+| **gitleaks** (full history, `fetch-depth: 0`) | `audit` job | **Yes**, on a committed secret |
+| **CodeQL** — `javascript-typescript` + `actions` | `codeql.yml`: push + PR to `main`, and Mondays 05:27 UTC | Findings appear in the Security tab; wire it as a required check once you have seen a clean baseline |
+| **Tarball manifest** (`npm run pack:check`) | `pack-check` job | **Yes** |
+| **Bundle-size budget** (`node .github/scripts/assert-size.mjs`) | `build-plugin` job | **Yes**, above 16,384 B gzipped ESM |
+| **Dependabot version updates** | six ecosystems, weekly | Opens PRs |
+| **Dependabot security updates** | repository setting — **still to enable**, item 4 in the pre-tag checklist below | — |
 
-`continue-on-error: true` on the step means a positive Snyk finding
-warns but doesn't block the merge (npm-audit + dependabot remain the
-hard gate for high/critical CVEs).
+**Snyk was removed in this wave.** It was added gated on
+`if: env.SNYK_TOKEN != ''`, the token was never provisioned, and a step that
+always skips is worse than no step at all: it reads as coverage in the job list
+while delivering none. Its unique yield over `npm audit` + Dependabot + CodeQL
+would in any case have been small on a repo whose entire runtime dependency
+tree is three Braze SDKs. If you ever do want it, re-add it as an unconditional
+step with the token provisioned — not as a conditional that silently no-ops.
+
+**Swift and Kotlin are not analysed by CodeQL.** Both require a full native
+compile inside the CodeQL tracer, which means duplicating the CocoaPods and
+Gradle setup from `verify-ios` / `verify-android` and roughly doubling their
+already 8–15-minute runtime. The reasoning and the shape of the follow-up are
+in the header of `.github/workflows/codeql.yml`.
+
+**Raising the bundle-size budget.** `assert-size.mjs` fails above 16,384 B
+gzipped for `dist/esm/**/*.js`; the measured total at `0.2.0` is 13,511 B. If a
+deliberate addition pushes past the budget, re-measure with
+`npm run build && node .github/scripts/assert-size.mjs`, raise
+`ESM_GZIP_BUDGET_BYTES` **in the same commit as the code**, and update the
+recorded measurement in the script header and in `REVIEW_READINESS.md` §2.
+Never raise it on its own to turn a red build green.
 
 ### npm publishing — token today, Trusted Publishing intended
 
@@ -287,8 +305,10 @@ npmjs.com → `capacitor-braze` → Settings → Trusted publisher → GitHub Ac
 successful publish through it, delete the `NODE_AUTH_TOKEN` lines from `release.yml` and revoke
 `NPM_TOKEN`.
 
-**8. Optional: provision `SNYK_TOKEN`** (see above), or accept that the Snyk step skips. It is wired
-correctly either way as of `0.2.0` — previously its `if:` condition could never evaluate true.
+**8. Add `Analyze (javascript-typescript)` and `Analyze (actions)` to the required status checks**
+once the first CodeQL run on `main` is green, so a new finding blocks a merge rather than only
+appearing in the Security tab. (Nothing to provision — CodeQL needs no token on a public repo, and
+`SNYK_TOKEN` is no longer referenced by any workflow.)
 
 ### Dependabot PR triage before tagging
 

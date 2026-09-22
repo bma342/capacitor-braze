@@ -63,12 +63,18 @@ permissions:
 jobs:
   # Full CI suite (lint, build, pack-check, example, demo, web tests, audit,
   # verify-ios, verify-android) as the publish gate.
+  #
+  # No `secrets: inherit`. A called workflow always receives `GITHUB_TOKEN`
+  # (scoped by the `permissions:` below), and nothing in test.yml reads any
+  # other secret now that the Snyk step is gone. `inherit` would hand
+  # `NPM_TOKEN` to all nine jobs of the CI suite — including the two that run
+  # third-party toolchains (CocoaPods, Gradle) over a dependency graph this
+  # repo does not own — for no benefit.
   ci:
     name: CI gate
     permissions:
       contents: read
     uses: ./.github/workflows/test.yml
-    secrets: inherit
 
   publish:
     name: Publish to npm
@@ -168,7 +174,14 @@ jobs:
     permissions:
       contents: write # creating a Release is the only write this workflow needs
     steps:
+      # `persist-credentials: false`: this is the one job holding a
+      # `contents: write` token, and it neither pushes nor reads history — it
+      # only calls the Releases API through the action below. Leaving a
+      # write-scoped token behind in the checkout's local config would make it
+      # reachable by any later step or transitive tool in this job.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2

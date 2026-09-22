@@ -95,6 +95,13 @@ jobs:
           fi
           echo "README docgen section is populated."
 
+      # A5-20 / L7-02: REVIEW_READINESS.md §2 published bundle budgets that
+      # nothing measured and nothing enforced. This asserts the gzipped ESM
+      # tree against a budget derived from a real measurement; the script
+      # header records the measurement and the re-measure protocol.
+      - name: Assert bundle-size budget
+        run: node .github/scripts/assert-size.mjs
+
   # A4-20 / A5-20: assert the published tarball's contents before a consumer
   # (or the Release workflow) ever sees it. Catches both halves of a `files`
   # regression: a consumer-required artifact dropped, and repo-internal
@@ -232,16 +239,12 @@ jobs:
         working-directory: test/web
         run: npm test
 
+  # Dependency + secret hygiene. Static analysis of the code itself lives in
+  # the separate CodeQL workflow (.github/workflows/codeql.yml), which needs
+  # `security-events: write` and a language matrix this job has no use for.
   audit:
     name: Security audit (plugin only)
     runs-on: ubuntu-latest
-    # A4-10: the Snyk step's `if: env.SNYK_TOKEN != ''` reads the `env`
-    # context, which is populated from workflow- and job-level `env` only —
-    # never from the step's own `env:` block, which binds after the
-    # conditional is evaluated. Declaring it here is what makes the
-    # conditional evaluate at all once the secret is provisioned.
-    env:
-      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # gitleaks needs the full history to scan. Without this, the action
@@ -275,19 +278,6 @@ jobs:
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # L5-05: Snyk's broader vulnerability scan complements npm audit by
-      # catching deeper transitive issues + known CVEs in the runtime
-      # surface. Requires SNYK_TOKEN to be provisioned in repo secrets;
-      # without it the step skips with a warning rather than failing the
-      # job (so PRs from forks / first-time clones don't hard-error).
-      # See CONTRIBUTING.md for the SNYK_TOKEN setup procedure.
-      - name: Snyk vulnerability scan
-        if: env.SNYK_TOKEN != ''
-        uses: snyk/actions/node@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
-        continue-on-error: true
-        with:
-          args: --severity-threshold=high --all-projects
 
   # ------------------------------------------------------------------
   # Native verify jobs — compile the demo's Xcode + Gradle projects

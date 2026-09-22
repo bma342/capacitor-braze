@@ -436,13 +436,21 @@ await Braze.wipeData();
 |---|---|---|
 | `npm audit --audit-level=high --omit=dev` | `audit` job, every push and PR | **Runs, and fails the build** on a high/critical advisory in the runtime tree |
 | **gitleaks** | `audit` job, full history (`fetch-depth: 0`) | **Runs.** Catches a committed Braze key before it reaches `main` |
+| **CodeQL (SAST)** — `javascript-typescript` | `codeql.yml`, every push + PR to `main`, plus Mondays 05:27 UTC | **Runs**, `build-mode: none`. Results land in the Security tab |
+| **CodeQL (SAST)** — `actions` | same workflow | **Runs.** Analyses these workflow files for injection into `run:` blocks and over-broad permissions |
 | **GitHub secret scanning + push protection** | Repository setting | **Enabled** |
-| **Dependabot version updates** | `.github/dependabot.yml` | **Enabled**, five ecosystems |
-| **Snyk** | `audit` job, `if: env.SNYK_TOKEN != ''` | Wired correctly as of 0.2.0, but **the secret is not provisioned**, so it skips. Until then, treat it as absent |
+| **Dependabot version updates** | `.github/dependabot.yml` | **Enabled**, six ecosystems (`/`, `/example`, `/demo`, `/test/web`, `/test/mock-server`, `github-actions`) |
+| **Tarball manifest gate** | `pack-check` job, `.github/scripts/assert-pack.mjs` | **Runs.** Asserts every consumer-required artifact is published and no repo-internal tree leaks into the package |
+| **Bundle-size budget** | `build-plugin` job, `.github/scripts/assert-size.mjs` | **Runs, and fails the build** above 16,384 B gzipped for the ESM tree. Mostly a supply-chain canary: a dependency inlined into the bundle shows up as a size jump |
 | **Dependabot security updates** | Repository setting | **Not enabled** — a maintainer action, see [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
-| **CodeQL / SAST** | — | **Not present.** There is no CodeQL workflow. Adding one is a scope decision, not an omission to be papered over |
+| **CodeQL for Swift / Kotlin** | — | **Not analysed.** Both need a full native compile inside the CodeQL tracer, which would duplicate `verify-ios` / `verify-android` and roughly double their runtime. The reasoning is in the header of `codeql.yml`; it is a tracked follow-up |
 
-There is no Renovate configuration in this repo; the grouped weekly updates come from Dependabot.
+Snyk was wired into the `audit` job in 0.2.0 behind `if: env.SNYK_TOKEN != ''` and **has been
+removed**. Provisioning the token was never done, a step that always skips is worse than no step
+(it reads as coverage in the job list and delivers none), and the overlap with `npm audit` +
+Dependabot + CodeQL left it with little unique yield on a repo whose runtime dependency tree is
+three Braze SDKs. There is likewise no Renovate configuration; the grouped weekly updates come from
+Dependabot.
 
 ### Lockfile discipline
 
@@ -459,8 +467,12 @@ There is no Renovate configuration in this repo; the grouped weekly updates come
 
 - No real Braze API key is in any committed file, including `demo/.env.example`; gitleaks scans the
   full history on every run to keep it that way.
-- The only secrets any workflow references are `NPM_TOKEN` (publishing) and the optional
-  `SNYK_TOKEN`. There is no Braze credential in CI, because no CI job talks to Braze.
+- **`NPM_TOKEN` is the only repository secret any workflow references**, and only the `publish` job
+  in `release.yml` reads it. Nothing in `test.yml` or `codeql.yml` reads a secret other than the
+  automatically-provided `GITHUB_TOKEN`; the CI suite is therefore called from `release.yml`
+  **without `secrets: inherit`**, so the publish token is never present in the nine CI jobs — two of
+  which run third-party toolchains (CocoaPods, Gradle) over a dependency graph this repo does not
+  own. There is no Braze credential in CI, because no CI job talks to Braze.
 
 ### Publishing
 
@@ -501,15 +513,23 @@ Honestly **not** in force, and deliberately so or pending:
 ### Supply-chain hardening
 
 - **Every GitHub Action is pinned to a full 40-character commit SHA**, with the version in a
-  trailing comment. Each pin was re-resolved from its tag through the GitHub API and matched.
-  `snyk/actions/node@master` — a mutable branch reference — was the worst offender and is now a
-  tagged release SHA. `.github/dependabot.yml` bumps the pins weekly.
+  trailing comment, across all three workflows. Each pin was re-resolved from its tag through the
+  GitHub API and matched (annotated tags dereferenced to the commit they point at).
+  `snyk/actions/node@master` — a mutable branch reference, and the worst offender — is gone with
+  the Snyk step itself. `.github/dependabot.yml` bumps the pins weekly.
 - **No `postinstall` script.** `package.json` has `prepare` and `prepublishOnly`, both of which run
   the build. `prepare` executes on a **git-URL or local** install — the same arbitrary-code-on-install
   surface — but is skipped for installs from the npm registry tarball, which is how the README now
   tells consumers to install.
 - **A `pack-check` CI job asserts the tarball's contents**: every artifact a consumer's build needs
   is present, and nothing from `test/`, `example/`, `demo/`, `docs/` or `.claude/` leaks in.
+- **A bundle-size gate** (`.github/scripts/assert-size.mjs`, run in `build-plugin`) fails the build
+  if the gzipped ESM output crosses 16,384 B. Its security value is as a canary: code that should
+  never be in the published bundle — an inlined dependency, a vendored copy of something — is
+  visible as a size jump even when it compiles and every test still passes.
+- **The reusable CI call in `release.yml` passes no secrets** (see *Secret management* above), and
+  the `github-release` job — the only one holding `contents: write` — checks out with
+  `persist-credentials: false`, so no write-scoped token is left behind for a later step to reach.
 
 ---
 

@@ -16,14 +16,14 @@ standard to aim at; this block is what is true.
 | **Web tests** | **154** vitest across **14 files**, ~3s, against an in-process Fastify mock |
 | **Android tests** | **74** Robolectric/JUnit — run in CI |
 | **iOS tests** | **26** XCTest — run in CI via a generated target (`scripts/ios-add-test-target.rb`) |
-| **CI jobs** | **9**, all actions SHA-pinned, per-job least-privilege permissions |
+| **CI jobs** | **9** in `test.yml` + **2** CodeQL analyses in `codeql.yml`, all actions SHA-pinned, per-job least-privilege permissions |
 | **Native pins** | BrazeKit/BrazeUI **18.2.1** (Xcode 26+), `com.braze:android-sdk-ui` **43.2.0**, `@braze/web-sdk` peer **`^6.13.0`** (security floor) |
 | **Capacitor** | `^6.0.0 \|\| ^7.0.0`. **Capacitor 8: not supported**, tracked follow-up |
 | **Coverage instrumentation** | none — `docs/TEST-COVERAGE-AUDIT.md` is hand-maintained |
 | **Layer 4 (real Braze)** | **never run.** No release is validated against a live Braze backend |
 | **e2e runner (Maestro/Detox)** | **none, and none planned** — decided against; see `PLAN.md` §14 |
-| **Perf / bundle budgets in CI** | **none** — the budgets in §2 are aspirational |
-| **SAST / CodeQL** | **none.** `npm audit`, gitleaks, secret scanning; Snyk is wired but its token is not provisioned |
+| **Perf / bundle budgets in CI** | **one, enforced**: gzipped ESM bundle ≤ 16,384 B (measured 13,511 B). The other budgets in §2 were unmeasured guesses and are gone |
+| **SAST / CodeQL** | **CodeQL on `javascript-typescript` + `actions`** (push, PR, weekly), plus `npm audit`, gitleaks and secret scanning. Swift/Kotlin need a traced native build — deferred, see `codeql.yml`. Snyk removed: its token was never provisioned |
 | **Provenance** | `0.1.0` published by hand, **no attestation**. `0.2.0` will be the first workflow-published release |
 | **Repo settings still to do** | private vulnerability reporting, `enforce_admins`, `v*` tag ruleset, npm Trusted Publishing — see [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
 
@@ -178,21 +178,34 @@ they need a real backend.
 
 ### Performance budgets (per [SDK_SURFACE.md §5](./SDK_SURFACE.md#5-bundle-size--performance))
 
-> ⚠️ **These are aspirational targets. None is enforced, and none is currently measured.** There is
-> no `size-limit` config, no `apk-analyzer` step and no benchmark job in `.github/workflows/`. The
-> "How measured" column below is how they *would* be measured.
+> **One budget is measured and enforced. The rest have been deleted rather than left standing as
+> aspirations** — an unmeasured budget in a readiness document is a claim a reviewer can falsify in
+> thirty seconds, which is worse than admitting there is no budget.
 
-| Metric | Budget | How it would be measured | Enforced? |
+| Metric | Budget | How it is measured | Enforced? |
 |---|---|---|---|
-| Plugin .aar size (Android) | <50 KB | `apk-analyzer` in CI | ✗ |
-| Plugin .framework size (iOS) | <100 KB | `du -sh` of build artifact | ✗ |
-| Web bundle gzipped | <5 KB plugin-only | `size-limit` CI check | ✗ |
-| Init time (cold start) | <100 ms native, <50 ms web | benchmark in CI | ✗ |
-| Bridge round-trip (`logCustomEvent`) | <5 ms | benchmark in CI | ✗ |
+| Web bundle gzipped, plugin only (`dist/esm/**/*.js`) | **≤ 16,384 B** — measured **13,511 B** at `0.2.0` (2026-09-22) | `node .github/scripts/assert-size.mjs`, run in the `build-plugin` job | **✓ fails the build** |
 
-The one size-related gate that *does* exist is `pack-check`, which asserts the npm tarball's
-*contents* — every consumer-required artifact present, no repo-internal directory leaked — not its
-size.
+The number is what it is: ~13.2 KB gzipped for the bridge, not the **"<5 KB"** this table used to
+promise. Thirty-five methods of boundary validation, DTO serializers and listener plumbing do not
+fit in 5 KB, and nobody had ever checked. `dist/plugin.cjs.js` (13,213 B gzipped) is printed
+alongside for information and is not gated — Rollup builds it from the same modules, so it tracks
+the ESM total. `@braze/web-sdk` is a peer dependency and is never bundled, so it is outside the
+budget by construction.
+
+The budget carries ~21% headroom over the measurement, which absorbs ordinary method-by-method
+growth while still catching a dependency accidentally inlined into the bundle. Raising it is
+allowed, in the same commit as the code that needs it, with the new measurement recorded in the
+script header and here; raising it to turn a red build green is not.
+
+**Removed from this table, and honestly so:** `.aar` size (<50 KB), `.framework` size (<100 KB),
+cold-start init time (<100 ms native / <50 ms web) and bridge round-trip (<5 ms). None was ever
+measured, none had an instrument, and two of them (the native binary sizes) are dominated by the
+Braze SDKs rather than by anything this plugin controls. If a real need for them appears, they come
+back with a measurement attached, not as targets.
+
+The other size-related gate is `pack-check`, which asserts the npm tarball's *contents* — every
+consumer-required artifact present, no repo-internal directory leaked — not its size.
 
 ---
 
@@ -358,7 +371,7 @@ Items marked **[manual]** are yours. §6 grades the current state of each.
 - **[manual]** Layer 4 smoke against a real Braze trial. **Never yet done.** If you ship without it, say so in the release notes, as `0.2.0` does
 - **[manual]** No `any`, no `!`, no `TODO`, no `@Suppress` (without a documented reason)
 - ~~Code coverage targets met~~ — no coverage instrumentation exists; nothing to check
-- ~~Bundle size budgets met~~ — no budget is enforced; see §2
+- **[CI]** Bundle size budget met — `assert-size.mjs` in `build-plugin` fails above 16,384 B gzipped ESM; see §2
 
 ### Docs
 
@@ -417,7 +430,7 @@ Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open ·
 | No `any`, no `!`, no `TODO`, no `@Suppress` (without docs) | ✓ | Re-verified 2026-09-22 by grep over `src/`, `ios/Plugin/`, `android/src/main/`: no TODO/FIXME, no `@Suppress`, no Swift force-unwraps / `try!` / `as!` / `fatalError`, no `any` |
 | Lint clean | ✓ | ESLint + Prettier in `lint`; **SwiftLint `--strict`, 0 violations** in `verify-ios` — the binary is now installed and asserted, having previously been absent, which made the gate a silent no-op; **Android Lint** `abortOnError true` in `verify-android`. **ktlint deliberately not used** per [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md) |
 | Code coverage targets met | ○ | **No coverage instrumentation on any platform**, so there is no number to compare. 254 tests across three platforms; the per-method map in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) is hand-maintained and says so |
-| Bundle size budgets met | ○ | **Not enforced and not measured** — no `size-limit` config, no `apk-analyzer` step. §2 labels the budgets aspirational. `pack-check` asserts tarball *contents*, not size |
+| Bundle size budget met | ✓ | **Measured and enforced** as of `0.2.0`: `node .github/scripts/assert-size.mjs` runs in `build-plugin` and fails above **16,384 B** gzipped for `dist/esm/**/*.js`; the measured total is **13,511 B**. The four unmeasurable budgets (`.aar`, `.framework`, init time, round-trip) were deleted from §2 rather than left as aspirations |
 
 ### Docs (§5)
 
@@ -526,7 +539,7 @@ Maintainer actions, none of which a code change can perform. Exact `gh api` comm
 5. ☐ **Configure npm Trusted Publishing** (web UI only), then delete `NODE_AUTH_TOKEN` from `release.yml` and revoke `NPM_TOKEN`. Until then the publish uses a 2FA-bypassing automation token, and `SECURITY.md` §13 says so.
 6. ☐ **Enable Dependabot security updates** (distinct from the version updates already configured).
 7. ☐ **Triage the six open Dependabot PRs** — three are superseded by the SHA pins and should be closed; three need a rebase onto this branch.
-8. ☐ *(optional)* **Provision `SNYK_TOKEN`**, or accept that the Snyk step skips. It is now wired correctly either way.
+8. ☐ **Make CodeQL a required status check** (`Analyze (javascript-typescript)`, `Analyze (actions)`) once the first run on `main` is green. Nothing to provision — CodeQL needs no token on a public repo, and the Snyk step, whose token was never provisioned, has been removed.
 
 ### Still open, and honestly so
 
@@ -543,7 +556,8 @@ absence as an oversight.
 
 - **TypeDoc rendering** — replaced by `@capacitor/docgen` into the README, per C09.
 - **ktlint** — not in Capacitor's standard toolchain, per C09. Android Lint covers Kotlin *static analysis*; Kotlin *formatting* is reviewed by hand.
-- **Numeric code-coverage and bundle-size budgets** — no instrumentation, no `size-limit` config. §2's budgets are labelled aspirational.
+- **Numeric code-coverage budgets** — no instrumentation on any platform, so there is no number to gate. (Bundle size is no longer on this list: §2's gzipped-ESM budget is measured and enforced as of `0.2.0`.)
+- **CodeQL for Swift and Kotlin** — both need a full native compile inside the CodeQL tracer, duplicating `verify-ios` / `verify-android` and roughly doubling their runtime. The `javascript-typescript` and `actions` analyses do run. Reasoning in the header of `.github/workflows/codeql.yml`.
 - **A daily spec-drift job against real Braze** — the Fastify mock covers the bulk, and drift is caught by reading Braze's release notes (C08). Five documents described this job as existing; none of them was right.
 - **Maestro / Detox e2e** — decided against outright, not merely deferred. See `PLAN.md` §14 item 3.
 
