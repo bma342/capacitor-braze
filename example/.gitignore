@@ -1,9 +1,14 @@
 node_modules/
 dist/
 
-# Capacitor-generated native platform projects (large + machine-specific).
-# Re-create locally with `npx cap add ios` / `npx cap add android`.
-ios/
+# `ios/` IS committed as of 0.3.0: it is the Swift Package Manager verification
+# leg (`cap add ios --packagemanager SPM`), built by CI's verify-ios job
+# alongside demo/ios's CocoaPods build. `ios/.gitignore`, shipped by Capacitor's
+# own template, already excludes the machine-specific parts (App/build, Pods,
+# DerivedData, xcuserdata, App/App/public, the generated config files).
+#
+# `android/` stays ignored — demo/android is the Android verification leg, and a
+# second Gradle project would only duplicate it.
 android/
 
 # Vite cache

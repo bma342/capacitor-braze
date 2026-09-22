@@ -8,6 +8,11 @@ demo/node_modules/
 demo/package-lock.json
 demo/ios/
 demo/android/
+# Generated native projects. example/ios is committed (it is the SPM
+# verification leg) but its App/App/public tree is copied build output that
+# `cap sync` rewrites, and .gitignore already excludes it.
+example/ios/
+example/android/
 test/mock-server/node_modules/
 test/web/node_modules/
 test/web/coverage/
