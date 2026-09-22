@@ -299,7 +299,7 @@ jobs:
   # ------------------------------------------------------------------
 
   verify-ios:
-    name: Verify iOS (Xcode build against BrazeKit)
+    name: Verify iOS (CocoaPods + SPM builds against BrazeKit)
     runs-on: macos-latest
     needs: build-plugin
     env:
@@ -319,6 +319,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             demo/package-lock.json
+            example/package-lock.json
 
       - name: Select Xcode 26.x
         run: |
@@ -411,6 +412,41 @@ jobs:
             CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/xcodebuild-test.log"
           grep -E 'Executed [0-9]+ tests' "$RUNNER_TEMP/xcodebuild-test.log" | tail -1
 
+      # ----------------------------------------------------------------
+      # SPM leg. `demo/ios` above is the CocoaPods verification; `example/ios`
+      # is a Capacitor 8 SPM project (`cap add ios --packagemanager SPM`), so
+      # between them every cell of the Pods x SPM matrix compiles on every PR.
+      #
+      # This is the only thing that exercises the root `Package.swift`: it
+      # resolves `capacitor-swift-pm` and `braze-swift-sdk` from the network
+      # and compiles `ios/Sources/BrazePlugin` as an SPM target, which is a
+      # different code path from the Pods build (no `.m`, no resource bundle,
+      # module-scoped `Bundle.module`). A CocoaPods-only CI would not catch an
+      # SPM-breaking change to Package.swift or the source layout.
+      # ----------------------------------------------------------------
+      - name: Install example deps + build web assets
+        working-directory: example
+        run: |
+          npm ci
+          npm run build
+
+      - name: Capacitor sync (regenerates CapApp-SPM/Package.swift)
+        working-directory: example
+        env:
+          LANG: en_US.UTF-8
+        run: npx cap sync ios
+
+      - name: Build iOS example via Swift Package Manager
+        working-directory: example/ios/App
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project App.xcodeproj \
+            -scheme App \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO
+
   verify-android:
     name: Verify Android (Gradle build against com.braze:android-sdk-ui)
     runs-on: ubuntu-latest
@@ -438,7 +474,10 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          # compileSdk 36 / build-tools 36.0.0 are Capacitor 8's stock values,
+          # which android/build.gradle now defaults to. Keep this in step with
+          # `compileSdkVersion` in demo/android/variables.gradle.
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
 
       - name: Install plugin deps + build
         run: |
