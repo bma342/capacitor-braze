@@ -6,10 +6,9 @@
 > a behavioral test at all", which a line percentage cannot. Re-derive it when the suite changes.
 
 **Audited:** 2026-09-22 (`0.2.0`).
-**Web test count:** **205 tests across 18 files, ~3.4s** (`npm test`).
-**Native:** 91 Robolectric/JUnit (`android/src/test/`) + 35 XCTest (`ios/PluginTests/`), both in CI. Neither
-is coverage-instrumented — those are test counts. See "Remaining gaps".
-**Methods on the surface:** 35, plus `addListener` (5 event overloads) and `removeAllListeners`.
+**Web test count:** **206 tests across 18 files, ~3.5s** (`npm test`).
+**Native:** 74 Robolectric/JUnit (`android/src/test/`) + 26 XCTest (`ios/PluginTests/`), both in CI.
+**Methods on the surface:** 35, plus `addListener` (4 event overloads) and `removeAllListeners`.
 **Directly covered:** **35 of 35**, plus dedicated rejection coverage for every input-validation
 branch in `src/web.ts` ([`validation.test.ts`](../test/web/src/validation.test.ts)).
 
@@ -21,10 +20,10 @@ npm --prefix test/web run test:coverage
 
 | Metric | Covered / total | % | Ratchet threshold |
 |---|---|---|---|
-| Statements | 670 / 688 | **97.38** | 97 |
-| Lines | 670 / 688 | **97.38** | 97 |
-| Branches | 301 / 332 | **90.66** | 90 |
-| Functions | 55 / 55 | **100** | 99 |
+| Statements | 689 / 707 | **97.45** | 97 |
+| Lines | 689 / 707 | **97.45** | 97 |
+| Branches | 306 / 337 | **90.80** | 90 |
+| Functions | 56 / 56 | **100** | 99 |
 
 Thresholds live in [`test/web/vitest.config.ts`](../test/web/vitest.config.ts) and are a **ratchet**:
 they sit just under the measured values, so a regression fails the run. Raise them as coverage
@@ -37,13 +36,18 @@ assertions are about the bridge, not about Capacitor's registration.
 
 ### What is not covered, and why
 
-Three regions, all defensive paths unreachable without stubbing the SDK module:
+Line numbers drift; the symbol is the durable part. Re-derive with
+`npm --prefix test/web run test:coverage`.
 
-| Lines | What | Why it stays uncovered |
+Three of the four regions are defensive paths unreachable without stubbing the SDK module. The
+fourth is a real gap with a known fix.
+
+| Lines | What | Status |
 |---|---|---|
-| 392–396 | `getDeviceId`'s "SDK has not generated a device ID yet" throw | `getDeviceId()` always returns an id once `initialize` has resolved. Forcing `null` means replacing the SDK with a stub, at which point the test asserts against the stub rather than the SDK |
-| 688–692 | `requireUser`'s "`getUser()` returned null" throw | Same — unreachable post-init. The message itself tells the consumer to file an issue, which is the right shape for a can't-happen branch |
-| 713–721 | `loadSdk`'s dynamic-import failure branch | Needs the `@braze/web-sdk` import itself to fail (CSP violation, bundler interop, non-DOM context). Simulating it means intercepting the module loader |
+| 461–465 | `getDeviceId`'s "SDK has not generated a device ID yet" throw | Unreachable. `getDeviceId()` always returns an id once `initialize` has resolved; forcing `null` means replacing the SDK with a stub, at which point the test asserts against the stub rather than the SDK |
+| 772–776 | `requireUser`'s "`getUser()` returned null" throw | Unreachable post-init for the same reason. The message itself tells the consumer to file an issue, which is the right shape for a can't-happen branch |
+| 797–805 | `loadSdk`'s dynamic-import failure branch | Unreachable without intercepting the module loader: it needs the `@braze/web-sdk` import itself to fail (CSP violation, bundler interop, non-DOM context) |
+| 282–283 | the `deepLinkHandling: 'app'` call to `interceptDeepLinks` inside the in-app-message subscription | **Coverable, and worth doing.** `deep-links.test.ts` covers the deep-link surface, but nothing yet delivers a *real* triggered in-app message while in `'app'` mode. Now that `in-app-messages.test.ts` can deliver one, this is a `deepLinkHandling: 'app'` override away |
 
 Instrumenting paid for itself immediately: it surfaced three branches that *were* worth covering and
 that the per-method table had made look covered — a valid `sessionTimeoutInSeconds` (only its
@@ -94,20 +98,10 @@ Every consumer-facing method has at least one direct behavioral test. `initializ
 | `addListener('contentCardsUpdated', cb)` | `listeners.test.ts`, `lifecycle.test.ts` | same, plus the re-`initialize` config gate (both branches) |
 | `addListener('inAppMessageReceived', cb)` | `in-app-messages.test.ts` | end-to-end trigger delivery: slideup / modal / full / control DTOs, button click actions, `enableInAppMessageUI` on and off |
 | `addListener('sdkAuthError', cb)` | `listeners.test.ts` | scripted `auth_error` response fires the listener with userId / code / reason / signature |
-| `addListener('deepLinkReceived', cb)` | `deep-links.test.ts` | `deepLinkHandling: 'app'` suppresses the SDK's navigation and emits `{ url, source, useWebView }`; `'sdk'` (the default) does not; unknown values reject |
 | `removeAllListeners` | `listeners.test.ts`, `in-app-messages.test.ts` | subsequent refreshes and triggers do not invoke removed callbacks |
 | Init guard | `privacy-lifecycle.test.ts` | clear message on `logCustomEvent`, `getFeatureFlag`, `getContentCards` without prior `initialize()` |
 
-Plus, not tied to a single method:
-
-| File | Tests | Covers |
-|---|---|---|
-| `serializers.test.ts` | 33 | `serializeFeatureFlag` / `serializeContentCard` / `detectContentCardType` / `serializeContentCards` / `serializeInAppMessage` in isolation, across all valid + edge-case shapes, including content-card `useWebView` |
-| `validation.test.ts` | 29 | Every input-validation rejection branch in `src/web.ts`, byte-exact |
-| `security-options.test.ts` | 13 | `allowUserSuppliedJavascript` asserted through SDK *behaviour* — `showInAppMessage` returns `false` for a `javascript:` click action when off and `true` when on — plus the SDK-rejection warning path and its non-PII guarantee |
-| `mock-server.test.ts` | 12 | The harness itself: `/api/v3/data/` request-shape validation, `delayMs`, scripted-response registration order, oneShot yielding to the next script |
-
-Per-file totals for the whole suite are reproducible with `npx vitest run --reporter=json`.
+Plus 17 serializer unit tests (`serializers.test.ts`) covering `serializeFeatureFlag` / `serializeContentCard` / `detectContentCardType` / `serializeContentCards` in isolation, across all valid + edge-case shapes.
 
 ## Known gaps (the honest list)
 
@@ -178,13 +172,11 @@ rather than timing-dependent.
 ### Native coverage — what the unit tiers now cover
 
 [C11](./mdcs/C11-NATIVE-TEST-HARNESSES.md)'s unit tiers landed in `0.2.0` and run in CI. On Android,
-91 Robolectric tests cover every `@PluginMethod` validation branch byte-exact against `src/web.ts`,
-an init-guard sweep over all 29 guarded methods, every serializer against real Braze model
-objects parsed from Braze's own wire JSON, and the `IBrazeDeeplinkHandler` install/chain for
-`deepLinkHandling: 'app'`. On iOS, 35 XCTests cover the attribute-value classifier
+74 Robolectric tests cover every `@PluginMethod` validation branch byte-exact against `src/web.ts`,
+an init-guard sweep over all 29 guarded methods, and every serializer against real Braze model
+objects parsed from Braze's own wire JSON. On iOS, 26 XCTests cover the attribute-value classifier
 (including the `0`/`1`-as-boolean regression), `dataFromHex` for `registerPushToken`, the C04 error
-strings, extras stringification, the `sdkAuthError` payload, and the `Braze.Channel` → `source`
-mapping. **Neither tier is coverage-instrumented** — those are test counts, not percentages. The iOS `enableSDK` / `isDisabled`
+strings, extras stringification, and the `sdkAuthError` payload. The iOS `enableSDK` / `isDisabled`
 asymmetry this table used to list is gone — the plugin now tracks that state itself.
 
 ### Remaining gaps
@@ -212,7 +204,7 @@ or `0.2.0`. That is stated in the README, the CHANGELOG, C08's bump protocol and
 1. **C11's integration tier** — URLProtocol intercept on iOS, MockWebServer on Android, asserting
    real HTTP rather than DTO shape. Still design-only, and deliberately so: writing it well needs
    captured ground truth from a real Braze backend to assert against, which is what the smoke run
-   would produce. The unit tiers (91 + 35) already lock in the bridge translation on every PR.
+   would produce. The unit tiers (74 + 26) already lock in the bridge translation on every PR.
 2. **Layer 4 smoke** (maintainer, ~2–3 hrs). Walk [`SMOKE-TEST-PLAYBOOK.md`](./SMOKE-TEST-PLAYBOOK.md)
    against a Braze trial; capture templates are pre-staged in [`smoke-tests/`](./smoke-tests/).
    Nothing in this repo has ever been run against a live Braze backend.

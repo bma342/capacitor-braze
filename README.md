@@ -294,9 +294,18 @@ initializing or the call rejects.
 
 Calling `initialize` a **second time in the same process** behaves
 differently per platform, because the underlying SDKs do:
-  - **Web:** the plugin tears down its event subscriptions, calls the
-    SDK's `destroy()`, and initializes again — so switching workspace /
-    API key at runtime works, and listeners are re-wired exactly once.
+  - **Web:** the plugin tears down and re-wires its event subscriptions
+    exactly once, and rebuilds the underlying SDK (`destroy()` then
+    initialize) only when an option the Web SDK fixes at construction —
+    `apiKey`, `endpoint`, `enableLogging`, `enableSdkAuthentication`,
+    `allowUserSuppliedJavascript`, `sessionTimeoutInSeconds` — actually
+    changed, so switching workspace / API key at runtime still works.
+    Keeping the instance when nothing changed preserves the server
+    config the SDK only reads once per instance; rebuilding used to
+    discard it mid-flight and silently gate every later
+    {@link BrazePlugin.requestContentCardsRefresh} and
+    {@link BrazePlugin.refreshFeatureFlags} until the next data round
+    trip.
   - **iOS:** the bridge tears down subscriptions, presenters and
     delegates and constructs a fresh `Braze` instance with the new
     configuration.

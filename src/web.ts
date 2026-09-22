@@ -134,6 +134,15 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    */
   private deepLinkHandling: BrazeDeepLinkHandling = 'sdk';
 
+  /**
+   * Fingerprint of the options the Web SDK baked in at construction time,
+   * or `null` when this plugin has never successfully initialized it.
+   *
+   * Compared on a re-`initialize` to decide whether the SDK instance has to
+   * be rebuilt or can be kept — see {@link BrazeWeb.initialize} step 2.
+   */
+  private sdkConstructionKey: string | null = null;
+
   // ---------------------------------------------------------------------------
   // Bridge sanity check
   // ---------------------------------------------------------------------------
@@ -156,11 +165,36 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    *
    *   1. Validate options (nothing reaches the SDK until they pass).
    *   2. If the SDK is already initialized — this plugin instance or any
-   *      other holder of the module singleton — tear down our subscriptions
-   *      and `destroy()` it. The SDK ignores a second `initialize()` and
-   *      keeps the first API key / base URL, so without the destroy a
-   *      consumer switching workspace at runtime would keep talking to the
-   *      old one while the plugin reported success.
+   *      other holder of the module singleton — tear down our subscriptions,
+   *      and `destroy()` it **only if something it bakes in at construction
+   *      actually changed** (see {@link BrazeWeb.sdkConstructionKey}).
+   *
+   *      The destroy is what makes a workspace switch honest: the SDK
+   *      ignores a second `initialize()` and keeps the first API key and
+   *      base URL, so without it a consumer switching workspace at runtime
+   *      would keep talking to the old one while the plugin reported
+   *      success. But when nothing changed, destroying is pure loss — and
+   *      specifically it loses the server config, which is what used to
+   *      make content cards and feature flags go quiet after a re-init:
+   *
+   *      `destroy()` drops the SDK's `ServerConfigManager`, and its
+   *      replacement reads stored config exactly once, synchronously,
+   *      during `initialize` itself. If the previous cycle's
+   *      `/api/v3/data/` response has not landed by then — and it usually
+   *      has not, because `initialize` resolves before its own first
+   *      request returns — the fresh manager memoizes the defaults, in
+   *      which content cards and feature flags are *disabled*, and the late
+   *      response is written where nothing will read it again. Every
+   *      subsequent `requestContentCardsRefresh()` / `refreshFeatureFlags()`
+   *      then silently parks on a config gate: no HTTP request is made, the
+   *      promise still resolves, and the listener never fires. Nothing
+   *      un-gates it until some later event forces a data round trip.
+   *
+   *      Keeping the instance when the options match removes that failure
+   *      mode for the case it actually bit: `initialize` called twice with
+   *      the same configuration. Subscriptions are still torn down and
+   *      re-created either way, so listener state is identical on both
+   *      paths and nothing stacks (C05).
    *   3. `initialize()` and **check its boolean**. `false` means the SDK
    *      declined (bad key, bad base URL, opted-out user, crawler UA); the
    *      subsequent `subscribeTo*` calls would all silently no-op and every
@@ -177,13 +211,22 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
 
     const braze = await this.loadSdk();
 
+    const constructionKey = BrazeWeb.sdkConstructionKeyFor(options);
     if (this.initialized || braze.isInitialized()) {
       this.teardownSubscriptions(braze);
-      braze.destroy();
-      this.initialized = false;
-      this.sdkAuthenticationEnabled = false;
+      // `sdkConstructionKey` is null when some other holder of the module
+      // singleton initialized it, in which case we cannot know what options
+      // it used and must rebuild.
+      if (this.sdkConstructionKey !== constructionKey) {
+        braze.destroy();
+        this.initialized = false;
+        this.sdkAuthenticationEnabled = false;
+        this.sdkConstructionKey = null;
+      }
     }
 
+    // A no-op returning `true` when the instance above was kept; the options
+    // are identical by construction, so there is nothing for it to apply.
     const started = braze.initialize(options.apiKey, {
       baseUrl: options.endpoint,
       enableLogging: options.enableLogging ?? false,
@@ -205,6 +248,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     }
 
     this.initialized = true;
+    this.sdkConstructionKey = constructionKey;
     this.sdkAuthenticationEnabled = options.enableSdkAuthentication === true;
     this.inAppMessageUiEnabled = options.enableInAppMessageUI !== false;
     this.deepLinkHandling = options.deepLinkHandling ?? 'sdk';
@@ -254,6 +298,31 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       }) ?? null;
 
     braze.openSession();
+  }
+
+  /**
+   * Fingerprint of every option the Web SDK reads once, when it builds its
+   * instance — i.e. the ones a second `initialize()` cannot change without a
+   * `destroy()` first.
+   *
+   * Everything else `initialize` accepts (`enableInAppMessageUI`,
+   * `deepLinkHandling`, `allowInsecureEndpoint`) is plugin-side state,
+   * re-applied on every call, and so deliberately absent here: changing one
+   * of those must not cost a rebuild.
+   *
+   * `JSON.stringify` of a fixed-order tuple rather than a hand-rolled
+   * delimiter join, so a value containing the delimiter cannot make two
+   * different option sets compare equal.
+   */
+  private static sdkConstructionKeyFor(options: BrazeInitializeOptions): string {
+    return JSON.stringify([
+      options.apiKey,
+      options.endpoint,
+      options.enableLogging ?? false,
+      options.enableSdkAuthentication ?? false,
+      options.allowUserSuppliedJavascript ?? false,
+      options.sessionTimeoutInSeconds ?? null,
+    ]);
   }
 
   // ---------------------------------------------------------------------------
@@ -569,6 +638,11 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     // previous run's enforcement.
     this.initialized = false;
     this.sdkAuthenticationEnabled = false;
+    // The SDK instance this key described is gone (`wipeData` clears its
+    // storage; `disableSDK` / `enableSDK` both end in `destroy()`), so the
+    // next `initialize` must build a fresh one rather than recognise this
+    // one and keep it.
+    this.sdkConstructionKey = null;
     // Deep-link mode is per-initialize, like the SDK-auth flag: a later
     // `initialize` with no `deepLinkHandling` falls back to the 'sdk'
     // default rather than inheriting the previous run's 'app' mode.
@@ -587,6 +661,11 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     braze.disableSDK();
     this.initialized = false;
     this.sdkAuthenticationEnabled = false;
+    // The SDK instance this key described is gone (`wipeData` clears its
+    // storage; `disableSDK` / `enableSDK` both end in `destroy()`), so the
+    // next `initialize` must build a fresh one rather than recognise this
+    // one and keep it.
+    this.sdkConstructionKey = null;
     // Deep-link mode is per-initialize, like the SDK-auth flag: a later
     // `initialize` with no `deepLinkHandling` falls back to the 'sdk'
     // default rather than inheriting the previous run's 'app' mode.
@@ -605,6 +684,11 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     braze.enableSDK();
     this.initialized = false;
     this.sdkAuthenticationEnabled = false;
+    // The SDK instance this key described is gone (`wipeData` clears its
+    // storage; `disableSDK` / `enableSDK` both end in `destroy()`), so the
+    // next `initialize` must build a fresh one rather than recognise this
+    // one and keep it.
+    this.sdkConstructionKey = null;
     // Deep-link mode is per-initialize, like the SDK-auth flag: a later
     // `initialize` with no `deepLinkHandling` falls back to the 'sdk'
     // default rather than inheriting the previous run's 'app' mode.

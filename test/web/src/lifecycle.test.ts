@@ -288,9 +288,10 @@ describe('privacy / lifecycle (web bridge → @braze/web-sdk)', () => {
  * re-subscribed listener firing. It is a race against the Web SDK's
  * server-config memoization.
  *
- *  1. The plugin's re-init path destroys the SDK instance. It has to — the
- *     Web SDK ignores a second `initialize()` and would keep the first API
- *     key and base URL, so without the destroy a consumer switching
+ *  1. The plugin's re-init path used to destroy the SDK instance
+ *     unconditionally. The destroy is what makes a workspace switch honest
+ *     — the Web SDK ignores a second `initialize()` and would keep the
+ *     first API key and base URL, so without it a consumer switching
  *     workspace at runtime would keep talking to the old one while the
  *     plugin reported success.
  *  2. `destroy()` drops the `ServerConfigManager`. The replacement built by
@@ -322,8 +323,25 @@ describe('privacy / lifecycle (web bridge → @braze/web-sdk)', () => {
  * The window is small but real: `plugin.initialize()` resolves before its
  * own first data response returns, so back-to-back
  * `await initialize(); await initialize();` lands inside it every time.
- * Test 2 pins it open with a delayed mock response instead of relying on
- * that timing, so it asserts the behaviour rather than racing it.
+ *
+ * **The fix** (`src/web.ts`): destroy only when an option the Web SDK fixes
+ * at construction actually changed. A re-`initialize` with the same
+ * configuration now keeps the instance — and with it the server config —
+ * while still tearing down and re-creating every subscription, so listener
+ * behaviour is identical on both paths. A changed API key or endpoint still
+ * rebuilds, which the last test guards.
+ *
+ * Priming the fresh instance instead was tried first and cannot work:
+ * `requestImmediateDataFlush()` short-circuits on an empty queue
+ * (`request-controller.js` `Xd` returns early when `Dc()` reports nothing to
+ * send), and on a re-initialize the session is already open, so
+ * `openSession()` enqueues no session-start event. No public SDK call forces
+ * a data POST in that state — which is why the old workaround had to log an
+ * event first.
+ *
+ * Test 2 pins the mid-flight window open with a delayed mock response
+ * instead of relying on timing, so it asserts the behaviour rather than
+ * racing it.
  */
 describe('a second initialize in the same page', () => {
   let mock: MockServer;
@@ -411,7 +429,7 @@ describe('a second initialize in the same page', () => {
     });
   });
 
-  it('re-initializing mid-flight leaves refreshes config-gated until the next data round trip', async () => {
+  it('re-initializing mid-flight keeps the server config, so contentCardsUpdated still fires', async () => {
     mock = await freshMockServer();
     const config = {
       message: 'success',
@@ -422,13 +440,13 @@ describe('a second initialize in the same page', () => {
         content_cards: { enabled: true, refresh_rate_limit: 0 },
       },
     };
-    // Two scripts, matched in registration order. The first holds the
-    // FIRST data response open for longer than the second `initialize`
-    // takes, so the fresh ServerConfigManager is guaranteed to memoize
-    // before that config can reach storage — without the delay this is a
-    // genuine race and the test would be a coin flip on a loaded CI box.
-    // It is `oneShot`, so the second script (immediate, same body) answers
-    // every later POST and the recovery phase is not also delayed.
+    // Two scripts, matched in registration order. The first holds the FIRST
+    // data response open past the second `initialize`, which is what makes
+    // this test exercise the mid-flight path rather than the settled one:
+    // the config provably has not reached storage when the re-initialize
+    // runs. Without the delay this is a genuine race and the test would be
+    // a coin flip on a loaded CI box. It is `oneShot`, so the second script
+    // (immediate, same body) answers every later POST.
     mock.respondTo({
       pathPattern: /\/api\/v3\/data\/?$/,
       method: 'POST',
@@ -449,40 +467,64 @@ describe('a second initialize in the same page', () => {
       endpoint: mock.baseUrl,
       allowInsecureEndpoint: true,
     });
-    // The first data response is still held by the mock at this point.
+    // Precondition: the first response is still held by the mock, so no
+    // config has been stored and the session-open card sync has not run.
+    // This is exactly the window that used to break the re-initialize.
     expect(countSyncs(mock), 'precondition: the first cycle has not synced yet').toBe(0);
+
     await reinitialize(plugin, mock);
 
     const received = vi.fn();
     await plugin.addListener('contentCardsUpdated', received);
     scriptCardSync(mock);
 
-    // --- the gap ---------------------------------------------------------
-    // The observation window is deliberately shorter than `delayMs`: the
-    // held response is what eventually repairs the config, so waiting for
-    // it would watch the gate close again. In the settled case (test 1) the
-    // sync POST goes out on the same tick as the refresh, so 100ms is far
-    // more than enough to see one if the gate were open.
+    // The refresh is issued while the config is still in flight, so it parks
+    // — correctly. What matters is that the SDK instance holding the parked
+    // work is the same one the response will reach: the plugin kept it
+    // instead of destroying it, because nothing the SDK bakes in at
+    // construction changed. When the held response lands, the provider
+    // un-parks and the sync goes out on its own.
+    //
+    // The consumer does nothing here. Before the fix this needed an explicit
+    // `logCustomEvent` + `requestImmediateDataFlush` to force a second data
+    // round trip, and without that the listener never fired at all.
     await expect(plugin.requestContentCardsRefresh()).resolves.toBeUndefined();
-    await new Promise((r) => setTimeout(r, 60));
+    await waitUntil(() => received.mock.calls.length > 0, 'contentCardsUpdated after the re-initialize');
 
-    expect(countSyncs(mock), 'a config-gated refresh must not reach the network').toBe(0);
-    expect(received, 'contentCardsUpdated cannot fire when no sync was sent').not.toHaveBeenCalled();
-
-    // --- and the recovery ------------------------------------------------
-    // Any `/api/v3/data/` round trip that carries a config unparks it —
-    // here the held first response, plus an explicit prime so the test does
-    // not depend on which arrives first. `requestImmediateDataFlush` alone
-    // would not do it: with nothing queued there is no POST to carry a
-    // config back, hence the event first.
-    await plugin.logCustomEvent({ name: 'reinit_config_prime' });
-    await plugin.requestImmediateDataFlush().catch(() => undefined);
-    await waitUntil(() => received.mock.calls.length > 0, 'contentCardsUpdated after the config was re-delivered');
-
-    expect(countSyncs(mock), 'the parked refresh should now have reached the network').toBeGreaterThan(0);
+    expect(countSyncs(mock), 'the refresh reached the network without consumer intervention').toBeGreaterThan(0);
     expect(received.mock.calls[0]?.[0]).toMatchObject({
       cards: [{ id: 'reinit-card', title: 'After re-init' }],
     });
+  });
+
+  it('still rebuilds the SDK when the credentials change, so a workspace switch is honest', async () => {
+    // The guard on the fix above. Keeping the SDK instance is only safe
+    // while every option it bakes in at construction is unchanged — the Web
+    // SDK ignores a second `initialize()` and keeps the first API key and
+    // base URL, so if the fingerprint were too coarse a consumer switching
+    // workspace would silently keep reporting to the old one.
+    ({ mock, plugin } = await freshPluginWithTriggers([]));
+    await waitUntil(() => countSyncs(mock) > 0, 'the first session-open content-card sync');
+
+    mock.clearCaptured();
+    await plugin.initialize({
+      apiKey: 'second-workspace-key',
+      endpoint: mock.baseUrl,
+      allowInsecureEndpoint: true,
+    });
+
+    // Not "the first POST carries the new key": `destroy()` flushes whatever
+    // the old instance still had queued, and that farewell request correctly
+    // goes out under the OLD key. What must happen is that the new key then
+    // appears at all — which it cannot if the SDK instance was kept.
+    await waitForCaptured(
+      mock,
+      (r) =>
+        r.method === 'POST' &&
+        /\/api\/v3\/data\/?$/.test(r.path) &&
+        (r.body as { api_key?: string } | undefined)?.api_key === 'second-workspace-key',
+      { label: 'a data POST carrying the new API key' },
+    );
   });
 
   it('replaces rather than stacks every subscription', async () => {
