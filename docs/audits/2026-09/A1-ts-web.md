@@ -17,7 +17,7 @@
 | A1-07 | documented | The iOS "disables the SDK for the app run" behaviour is now in the `wipeData` JSDoc, C07 and the README. |
 | A1-08 | fixed | Property validation on all three platforms with one shared error string. |
 | A1-09 | fixed | See [A2-02](./A2-ios.md); `CFGetTypeID` discrimination on iOS. |
-| A1-10 | **deliberately not changed** | Every SDK return value is still discarded, so `setEmail('nonsense')` resolves. iOS and Android now warn (method name only, never the value); the Web SDK exposes no equivalent signal for most setters, so rejecting would break cross-platform parity. Deferred as a contract change and listed in the README's *Known gaps*. |
+| A1-10 | **partly fixed** — the contract change is still deferred | Every SDK return value is still discarded, so `setEmail('nonsense')` resolves. **Web and Android** now emit one non-PII warning — `Braze.<method>: the Braze SDK rejected the value (see SDK logs)`, byte-identical on both — where the earlier note had this backwards. **iOS reports nothing**, because BrazeKit 18.2.1's setters return `Void`; that is why turning a rejection into a promise rejection would still break cross-platform parity. Deferred as a contract change and listed in the README's *Known gaps*. |
 | A1-11 | fixed | Web gained the `echo` / `setGender` validators; iOS and Android moved to web's canonical HTTPS, card-not-found and `getDeviceId` strings. The Android `requireUser` `currentUser` wording is retained as a sanctioned exception, documented in [C04](../../mdcs/C04-VALIDATION.md). |
 | A1-12 | fixed | Warning matches on the parsed hostname (so `:443` no longer misfires) and never interpolates the endpoint. |
 | A1-13 | fixed | Feature-flag properties, `jsonobject` values, card `extras` and IAM `extras` are all copied. |
@@ -27,7 +27,7 @@
 | A1-17 | fixed | `requestImmediateDataFlush` resolves on the callback and rejects on reported failure; both refresh methods warn on error. |
 | A1-18 | fixed | A second `initialize` tears down and re-initializes. |
 | A1-19 | fixed | The underlying error is reported and attached as `cause`. |
-| A1-20 | documented | The `html` variant only occurs on iOS/Android; the JSDoc says so and states that `allowUserSuppliedJavascript` is deliberately not exposed. |
+| A1-20 | **fixed** | Originally closed as JSDoc stating that `allowUserSuppliedJavascript` was deliberately not exposed. It is now exposed: `initialize({ allowUserSuppliedJavascript })`, default `false`, web-only, and it is what makes the `html` variant reachable on web at all. iOS and Android ignore it — neither SDK has a counterpart. See [A4-03](./A4-security.md). |
 | A1-21 | fixed | The IIFE build and the `unpkg` field were **removed**. The package ships ESM + CJS only. |
 | A1-22 | fixed | Peer floor `^6.13.0` (a security floor) and the example/demo lockfiles were regenerated, so CI genuinely exercises 6.13.0. |
 | A1-23 | fixed | Structural casts removed from the IAM serializers; `WEB_GENDER_MAP` is typed so `setGender` needs no cast. |

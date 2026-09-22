@@ -21,7 +21,7 @@ The plugin's quality gates are exactly the set Capacitor's official plugins (`@c
 | `swiftlint` (npm wrapper) | Swift bridge linting |
 | `@ionic/swiftlint-config` | Capacitor's swift rules |
 | `@capacitor/docgen` | Auto-generates README API section from JSDoc |
-| `@types/node` (22.x) | **Not used by `src/`.** Pinned to the 22 line — see "The `@types/node` pin" below |
+| `@vitest/coverage-v8` (in `test/web`) | V8 coverage over `src/web.ts`, with ratcheted thresholds — see "CI integration" below |
 
 ### Required scripts
 
@@ -126,24 +126,22 @@ crossing the logging boundary, and the bridge currently emits no log line contai
 any platform. With `no-console` at `error`, keeping it that way stops depending on a reviewer
 noticing a new `console.log`. The five existing `console.warn` calls keep their now-live disables.
 
-### The `@types/node` pin
+### `tsconfig.json` pins `"types": []` — do not remove it
 
 `@types/node` is **not used by `src/`** — the plugin targets `lib: ["dom", "es2017"]` and touches no
 Node API. It is in the tree only transitively (`swiftlint` → `@ionic/utils-fs` → `@types/fs-extra`,
-which asks for `*`), and `tsconfig.json` sets no `types` allowlist, so TypeScript auto-includes it
-in the library build.
+which asks for `*`), and with no `types` allowlist TypeScript auto-includes it in the library build.
 
 That was harmless only by accident: `@capacitor/docgen` 0.3.0 declared `@types/node` as a real
 dependency, which pinned the whole tree to 14.x. 0.3.1 moved it to devDependencies, the `*` floated
 to v26, and v26 uses lib types (`IteratorObject`, `BuiltinIteratorReturn`) that TypeScript 5.4 does
 not ship — `npm run build` broke with eight errors inside `node_modules/@types/node`.
 
-It is therefore pinned to `^22` (the whole 22 line compiles under TS 5.4, and 22 matches the Node
-version CI runs). **This pin is a symptom, not the cure.** The real fix is `"types": []` in
-`tsconfig.json`, which would drop a dev-only transitive dependency out of a browser-targeted
-library's type surface for good and make the build immune to this drift. That belongs with whoever
-next touches `tsconfig.json` or bumps TypeScript; until then, do not let Dependabot walk this pin
-past 22 while TypeScript is below 5.6.
+The first fix was an explicit `@types/node: ^22` devDependency. That was a symptom fix, and it is
+gone: `tsconfig.json` now sets `"types": []`, which drops every dev-only transitive `@types/*` out
+of a browser-targeted library's type surface for good and makes the build immune to this drift in
+both directions. **Do not remove that line**, and do not re-add `@types/node` as a devDependency to
+make some tool happy — give that tool its own tsconfig instead.
 
 ---
 
@@ -178,9 +176,10 @@ The rules ARE the design contract. If a contributor wants to deviate, the deviat
 ## What lint does NOT catch
 
 - **Kotlin *formatting*.** Capacitor's official template targets Java (via `prettier-plugin-java`), not Kotlin. The Kotlin ecosystem's de-facto formatter is `ktlint`; we don't run it. Kotlin style is reviewed by hand. Add `ktlint` if/when Kotlin diff churn becomes a real cost.
-- **`.mjs` files.** The prettier glob is `**/*.{css,html,ts,js}`, so `rollup.config.mjs` and `.github/scripts/assert-pack.mjs` are unformatted by design, and ESLint names the JS extensions in `ignores` so flat config does not pick them up either (see "Scope: TypeScript only" above). Widening either is an MDC change (see "Rules for extending").
+- **`.mjs` files.** The prettier glob is `**/*.{css,html,ts,js}`, so `rollup.config.mjs`, `.github/scripts/assert-pack.mjs` and `.github/scripts/assert-size.mjs` are unformatted by design, and ESLint names the JS extensions in `ignores` so flat config does not pick them up either (see "Scope: TypeScript only" above). Widening either is an MDC change (see "Rules for extending").
 - **Cross-file consistency** (e.g. "did you touch every artifact in the lockstep"). That is [C01](./C01-METHOD-ANATOMY.md) discipline and PR review, not lint. Worth being blunt: **nothing in CI fails when a method ships without a native implementation or without tests.**
-- **Behavior correctness.** Lint is shape-level. Behaviour is caught by the three test tiers (154 vitest / 74 Robolectric / 26 XCTest), the example app, and — in principle — Layer 4 smoke testing, which has not been run.
+- **Behavior correctness.** Lint is shape-level. Behaviour is caught by the three test tiers (205 vitest / 91 Robolectric / 35 XCTest), the example app, and — in principle — Layer 4 smoke testing, which has not been run.
+- **Swift and Kotlin security analysis.** CodeQL covers `javascript-typescript` and `actions` only. Both native languages need a traced compile inside the CodeQL tracer, which would duplicate the `verify-ios` / `verify-android` setup and roughly double their 8–15-minute runtime; that is a deliberate deferral in the same class as ktlint, and the reasoning is in `codeql.yml`'s header. SwiftLint `--strict`, Android Lint and the 126 native contract tests are what stand in.
 
 **Kotlin static analysis is covered**, separately from formatting: Android Lint runs on the library
 module with `abortOnError true`, which is what catches e.g. a call above the `minSdkVersion` floor.
@@ -190,20 +189,25 @@ It is in the table below.
 
 The `.github/workflows/test.yml` workflow runs the following jobs on every push to `main` and every PR targeting `main`:
 
-**Nine jobs.** `test.yml` also runs on a `v*` tag push and is invoked by `release.yml` via
-`workflow_call`, which is what puts every one of these gates in front of `npm publish`.
+**Nine jobs in `test.yml`, plus two CodeQL analyses in `codeql.yml`.** `test.yml` also runs on a
+`v*` tag push and is invoked by `release.yml` via `workflow_call`, which is what puts every one of
+its gates in front of `npm publish`. `codeql.yml` is a separate workflow because it needs
+`security-events: write` and a language matrix the other jobs have no use for; it is **not** in the
+publish path, and is a tracked pre-tag item to make a required check.
 
 | Job | Runner | What it does |
 |---|---|---|
 | `lint` | ubuntu-latest | `npm run eslint` + `npm run prettier -- --check`. **Not SwiftLint** — see below |
-| `build-plugin` | ubuntu-latest | `npm run build`, then asserts the dist artifacts (`dist/esm/index.js`, `dist/esm/index.d.ts`, `dist/plugin.cjs.js`, `dist/docs.json`) exist and the README docgen block is populated |
+| `build-plugin` | ubuntu-latest | `npm run build`, then asserts the dist artifacts (`dist/esm/index.js`, `dist/esm/index.d.ts`, `dist/plugin.cjs.js`, `dist/docs.json`) exist and the README docgen block is populated, then `node .github/scripts/assert-size.mjs` — gzipped `dist/esm/**/*.js` ≤ **20,480 B**, fails the build above it (measured **16,180 B** at `0.2.0`) |
 | `pack-check` | ubuntu-latest | `npm run pack:check` → `.github/scripts/assert-pack.mjs`: asserts every consumer-required path is in the tarball and that nothing from `test/ example/ demo/ docs/ .claude/` leaked |
 | `build-example` | ubuntu-latest | Builds the `example/` testbed app against the freshly built plugin |
 | `build-demo` | ubuntu-latest | Builds the `demo/` reference app's web assets against the freshly built plugin |
-| `test-web` | ubuntu-latest | Type-checks `test/mock-server` and `test/web` (vitest never type-checks), then runs the **154** behavioral tests |
-| `audit` | ubuntu-latest | `npm audit --audit-level=high --omit=dev`, gitleaks over full history, and Snyk when `SNYK_TOKEN` is set |
-| `verify-ios` | macos-latest | Pins `DEVELOPER_DIR` to an Xcode 26.x, installs SwiftLint, runs `swiftlint lint --strict`, regenerates the XCTest target and fails if the committed project is stale, then **one** `xcodebuild test` that builds the demo against BrazeKit 18.2.1 and runs the **26** XCTests |
-| `verify-android` | ubuntu-latest | JDK 21. `:app:assembleDebug` against `com.braze:android-sdk-ui` 43.2.0, then `:capacitor-braze:testDebugUnitTest` (**74** Robolectric tests), then `:capacitor-braze:lintDebug` (Android Lint, `abortOnError true`) |
+| `test-web` | ubuntu-latest | Type-checks `test/mock-server` and `test/web` (vitest never type-checks), runs the **205** behavioral tests, then re-runs them under `npm run test:coverage` so a drop below the `src/web.ts` coverage ratchet fails the job. Both steps are kept so a test failure and a coverage regression are distinguishable in the log |
+| `audit` | ubuntu-latest | `npm audit --audit-level=high --omit=dev` + gitleaks over full history. Snyk was removed in `0.2.0` — its token was never provisioned, so the step always skipped |
+| `verify-ios` | macos-latest | Pins `DEVELOPER_DIR` to an Xcode 26.x, installs SwiftLint, runs `swiftlint lint --strict`, regenerates the XCTest target and fails if the committed project is stale, then **one** `xcodebuild test` that builds the demo against BrazeKit 18.2.1 and runs the **35** XCTests |
+| `verify-android` | ubuntu-latest | JDK 21. `:app:assembleDebug` against `com.braze:android-sdk-ui` 43.2.0, then `:capacitor-braze:testDebugUnitTest` (**91** Robolectric tests), then `:capacitor-braze:lintDebug` (Android Lint, `abortOnError true`) |
+| `analyze (javascript-typescript)` | ubuntu-latest | CodeQL SAST, `build-mode: none`. Separate workflow (`codeql.yml`): push + PR to `main`, plus Mondays 05:27 UTC |
+| `analyze (actions)` | ubuntu-latest | CodeQL over the workflow files themselves — `run:`-block injection, over-broad permissions. Same workflow and triggers |
 
 No job talks to a real Braze backend, and no Braze credential exists in CI. The whole suite is
 self-contained against the in-process Fastify mock.

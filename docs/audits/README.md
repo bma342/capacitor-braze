@@ -21,7 +21,8 @@ Four patterns showed up in both audits:
    `node-swiftlint` exiting 0 with no binary installed; Android Lint with `abortOnError false`; a
    Snyk step whose `if:` condition could never evaluate true. All four read as green for months.
    The response is in [C09](../mdcs/C09-TOOLING-QUALITY-GATES.md): break a new gate on purpose and
-   confirm it goes red.
+   confirm it goes red — which is how the `0.2.0` bundle-size gate was validated, and why the Snyk
+   step was deleted rather than repaired once it was clear its token was never going to exist.
 2. **Tests that could not fail.** Eleven web tests would have survived their implementation being
    replaced with `return;`; an Android test asserted only that a message started with `"Braze."`.
    The response is in [C01](../mdcs/C01-METHOD-ANATOMY.md) and the PR template: assert the wire
@@ -29,7 +30,10 @@ Four patterns showed up in both audits:
 3. **Docs describing code that was never written.** `BrazeUnsupportedError`, `BrazeAuthRequiredError`,
    a `deepLinkReceived` listener, a PII-masking scheme, a daily spec-drift CI job, a Ktor mock
    server, Maestro e2e tests, a core/UI Web SDK split. Each was stated in the present indicative in
-   at least one document. This is what the 2026-09 doc pass was mostly about.
+   at least one document. This is what the 2026-09 doc pass was mostly about. Note the one that went
+   the other way: `deepLinkReceived` **was** built later in `0.2.0`, and `SECURITY.md` §7 now
+   describes the shipped hook — including the two channels it cannot cover — rather than an
+   interception contract Capacitor could not support.
 4. **Claims that drift silently because nothing checks them.** Every one of the 29 `file:line`
    references in the MDC set was stale, several landing on blank lines — in a document set that
    explicitly told readers to verify against them. They are now symbol-anchored.

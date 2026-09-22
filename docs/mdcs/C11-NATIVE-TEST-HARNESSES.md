@@ -3,11 +3,12 @@
 **iOS and Android bridges need behavioral coverage equivalent to what `test/web` gives the JS bridge. This MDC documents the shape both platforms follow, so coverage grows rather than being reinvented per phase.**
 
 > **Status: implemented, one tier of two.** The **unit / contract tier** is live on both platforms
-> and runs in CI on every PR — **74** Robolectric/JUnit tests on Android, **26** XCTests on iOS. The
+> and runs in CI on every PR — **91** Robolectric/JUnit tests on Android, **35** XCTests on iOS. The
 > **integration tier** designed below (URLProtocol on iOS, MockWebServer on Android, asserting real
 > HTTP wire output) is still design-only. See "Status" at the end for exactly what exists.
 
-The web bridge runs against a Fastify mock under jsdom (154 vitest tests across 14 files, ~3s). The
+The web bridge runs against a Fastify mock under jsdom (205 vitest tests across 18 files, ~3.4s,
+with measured V8 coverage of `src/web.ts` ratcheted in CI). The
 native bridges had *compile-only* coverage until 0.2.0. What the unit tier closed: every validation
 branch is now pinned byte-exact against `src/web.ts` on all three platforms, and every serializer is
 driven against real Braze model objects rather than hand-built fixtures. What the integration tier
@@ -283,7 +284,7 @@ The mock-server harness on `test/web` covers Web-bridge wire output. The native 
 
 **Both unit tiers are implemented and run in CI.** The integration tier is not.
 
-### Android — 74 Robolectric/JUnit tests, in CI
+### Android — 91 Robolectric/JUnit tests, in CI
 
 Run with `cd demo/android && ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon` (JDK 21 +
 `ANDROID_HOME`). CI runs it in `verify-android`, followed by `:capacitor-braze:lintDebug`.
@@ -292,8 +293,8 @@ Run with `cd demo/android && ./gradlew :capacitor-braze:testDebugUnitTest --no-d
 |---|---|---|
 | `TestSupport.kt` | — | `fakePluginCall` replicating `PluginCall`'s strict accessor semantics; `initializedPlugin()`; reject/resolve captors |
 | `BrazePluginContractTest.kt` | 45 | Every `@PluginMethod` validation branch, byte-exact against `src/web.ts`, plus a table-driven init-guard sweep over all 29 guarded methods (C07) |
-| `BrazePluginSerializerTest.kt` | 16 | Every serializer, driven against **real Braze model objects parsed from Braze's own wire JSON** |
-| `BrazePluginLifecycleTest.kt` | 13 | Log level (both branches + reversibility), double-`initialize`, `handleOnDestroy` / `wipeData` teardown, the listener-ordering guard, `sdkAuthError` payload |
+| `BrazePluginSerializerTest.kt` | 24 | Every serializer, driven against **real Braze model objects parsed from Braze's own wire JSON**, including content-card `useWebView` |
+| `BrazePluginLifecycleTest.kt` | 22 | Log level (both branches + reversibility), double-`initialize`, `handleOnDestroy` / `wipeData` teardown, the listener-ordering guard, `sdkAuthError` payload, the `IBrazeDeeplinkHandler` install/chain for `deepLinkHandling: 'app'`, and the SDK-rejection warning |
 
 **The unlock was running `initialize` end-to-end under Robolectric.** Stub the `Bridge` so
 `getContext()` returns the Robolectric application, and `Braze.configure`, `currentUser`, `deviceId`,
@@ -312,7 +313,7 @@ everything else is a real object from real JSON. The serializers were widened `p
 **To add a test:** write it in the matching file. Nothing else — the Gradle module is already wired
 through the demo's `settings.gradle`.
 
-### iOS — 26 XCTests, in CI
+### iOS — 35 XCTests, in CI
 
 ```bash
 ruby scripts/ios-add-test-target.rb      # idempotent; regenerates the target from the directory
@@ -338,7 +339,8 @@ Coverage: the 5 pre-existing serializer tests, plus `classifyAttributeValue` boo
 including the `0`/`1` regression (5), `dataFromHex` including `"<>"` / `"   "` / over-length (4),
 `propertiesError` + `integerValue` C04 strings (4), `BrazeExtras.stringify` (3), the `sdkAuthError`
 payload including `userId: null` and the `BrazeSDKAuthDelegate`-not-`BrazeDelegate` type assertion
-(4), and the slide-up icon (1).
+(4), the slide-up icon (1), and the `deepLinkHandling` validation + `Braze.Channel` → `source`
+mapping + content-card `useWebView` (9).
 
 **To add a test:** add the file to `ios/PluginTests/`, then re-run `ruby scripts/ios-add-test-target.rb`
 and commit the regenerated project. Adding a test *method* to an existing file needs neither.
@@ -352,8 +354,8 @@ muddle consumer-facing reference code with plugin tests — is preserved.
 ### What's left
 
 - **The integration tier** designed above: URLProtocol intercept on iOS, MockWebServer on Android, asserting real HTTP wire output rather than DTO shape. This is the only tier that can prove cross-platform *wire* consistency, and it remains the honest gap.
-- **`inAppMessageReceived` delivery.** The DTO is covered at the serializer level on all three platforms; nothing reproduces Braze's trigger-delivery envelope end to end.
-- **Coverage instrumentation.** `docs/TEST-COVERAGE-AUDIT.md` is still a hand-maintained table on every platform.
+- **`inAppMessageReceived` delivery on the native tiers.** Web is covered end to end as of `0.2.0` — the mock server returns real trigger envelopes and the Web SDK's own trigger engine builds the message. Nothing reproduces that on iOS or Android; the DTO is covered at the serializer level on all three platforms.
+- **Coverage instrumentation on the native bridges.** The web bridge is measured by `@vitest/coverage-v8` (`npm --prefix test/web run test:coverage`) at 97.38% statements/lines on `src/web.ts`, with thresholds that fail the `test-web` job on a regression. The native tiers report **test counts, not coverage**: neither JaCoCo (a `jacocoTestReport` task wired to `testDebugUnitTest`) nor `xcodebuild -enableCodeCoverage YES` is configured, so nobody knows which bridge branches the 91 + 35 tests actually reach. Wiring both is the natural companion to the integration tier, and `docs/TEST-COVERAGE-AUDIT.md` tracks it as the open coverage item.
 
 The 2026-05 audit's L6-01 finding is closed. Ongoing coverage tracks against
 [`docs/audits/2026-09/A5-tests-ci.md`](../audits/2026-09/A5-tests-ci.md) and the smoke-test

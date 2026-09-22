@@ -4,9 +4,9 @@
 > happened to each one in `0.2.0`. Where the report and the current code disagree, the code wins.
 > Index of audits: [`../README.md`](../README.md).
 >
-> Headline numbers after the fixes: **154** web tests (14 files), **74** Android Robolectric tests,
-> **26** iOS XCTests — all three run in CI. Layer 4 against a real Braze backend has **still never
-> been run**.
+> Headline numbers after the fixes: **205** web tests (18 files, with measured + ratcheted V8
+> coverage of `src/web.ts`), **91** Android Robolectric tests, **35** iOS XCTests — all three run in
+> CI. Layer 4 against a real Braze backend has **still never been run**.
 
 ## Resolution status
 
@@ -21,17 +21,17 @@
 | A5-07 | fixed | CI installs SwiftLint explicitly and asserts the binary answers before `--strict` runs. See [A2-13](./A2-ios.md). |
 | A5-08 | fixed | The `gradle`-ecosystem entry for an npm project is now `npm`; `/test/web` added. |
 | A5-09 | **open** | Layer 4 has still never been executed. The wrappers now build the plugin first and run from any cwd, but `docs/smoke-tests/` contains only templates. Stated in the README, the CHANGELOG and `REVIEW_READINESS.md`. |
-| A5-10 | partly fixed | `sdkAuthError` now has end-to-end coverage on web (the mock returns a scripted `auth_error` body) and payload-shape coverage on iOS and Android. `inAppMessageReceived` is covered at the **serializer** level against real SDK message classes on all three platforms; the **delivery path** is not, because it means reproducing Braze's trigger-delivery envelope. Stated in the test file's header rather than left implied. The example app gained the two missing listener buttons (A5-24). |
+| A5-10 | **fixed on web; native delivery still open** | `sdkAuthError` has end-to-end coverage on web and payload-shape coverage on iOS and Android. `inAppMessageReceived` **is now covered end to end on web too**: the mock returns a real `triggers` array on the `/api/v3/data/` response, the real Web SDK trigger engine parses it, evaluates the condition, builds a real `InAppMessage` through its own factory, and invokes the plugin's subscription — 8 tests in `in-app-messages.test.ts` asserting the DTO a consumer's callback receives (slideup, modal with buttons, full-screen, control, non-matching event, `enableInAppMessageUI` both ways, fan-out + `removeAllListeners`). Nothing stubbed. The **native** delivery paths remain serializer-level only; that needs C11's integration tier. The example app gained the two missing listener buttons (A5-24). |
 | A5-11 | fixed | See [A4-17](./A4-security.md). |
 | A5-12 | fixed | One build, one exit code; the `\| xcpretty \|\| true` pass is gone (xcpretty is not on the macOS 26 image either), and `DEVELOPER_DIR` pins an Xcode 26.x with a fallback and a hard error. |
 | A5-13 | fixed | See [A4-15](./A4-security.md). |
 | A5-14 | fixed | `test-web` type-checks `test/mock-server` and `test/web` with their own strict tsconfigs; `npm run typecheck:tests` mirrors it locally. |
-| A5-15 | **open — deliberate** | Still no coverage instrumentation; `docs/TEST-COVERAGE-AUDIT.md` remains a hand-maintained table and now says so. |
-| A5-16 | partly fixed | `teardownPlugin` destroys the SDK (the only thing that clears its flush-retry timer) before stopping the mock, which removed the cross-file zombie-SDK hazard — the part that could actually flake. Some in-flight-request noise remains in the per-test-lifecycle files. |
+| A5-15 | **fixed on web; native still open** | `@vitest/coverage-v8` instruments `src/web.ts` via `npm --prefix test/web run test:coverage`, with ratcheted thresholds that fail the run on a regression and a CI step in `test-web`. Measured at `0.2.0`: 97.38% statements/lines, 90.66% branches, 100% functions; the three remaining uncovered regions are documented as unreachable without stubbing the SDK module. It paid for itself immediately, surfacing three branches the hand-maintained table had made look covered — a valid `sessionTimeoutInSeconds` (the spread that forwards it to the SDK had never executed), `logPurchase`'s missing-`currency` rejection, and `requestContentCardsRefresh`'s failure callback. **Still open:** no instrumentation on the native tiers (JaCoCo / `-enableCodeCoverage`). |
+| A5-16 | **fixed** | `teardownPlugin` destroys the SDK (the only thing that clears its flush-retry timer) before stopping the mock, which removed the cross-file zombie-SDK hazard. The residual noise is gone too: `MockServer.stop()` now drops idle sockets and bounds the drain rather than waiting indefinitely on an abandoned keep-alive connection (one teardown had been taking ~6 s; it now runs in ~250 ms), and a narrow `onConsoleLog` filter drops jsdom's XHR `ECONNREFUSED` / `socket hang up` teardown stacks. Occurrences in a passing run: **0**, from ~20. |
 | A5-17 | fixed | JDK 21, and `:capacitor-braze:lintDebug` with `abortOnError true`. See [A3-16](./A3-android.md). |
-| A5-18 | **open — deliberate** | The mock server was not changed; no new response shapes were needed, and the scripted `auth_error` body went through its existing `respondTo` hook. Deeper endpoint modelling remains a follow-up. |
+| A5-18 | **fixed** | The mock server now validates `/api/v3/data/` POST shape — JSON object body, non-empty `api_key`, non-empty `device_id` — recording violations on `mock.violations` and asserting the list is empty at teardown, so a bridge that stopped sending `api_key` fails the test that broke it. Violations are recorded rather than answered with a 4xx, which would push the SDK into retry/backoff and surface ten seconds later in an unrelated test. It also gained `delayMs` for deterministic ordering tests and grew real trigger-envelope modelling for A5-10. `mock-server.test.ts` (12 tests) drives the harness itself. |
 | A5-19 | fixed | The test that made a live outbound call to Braze production (and left the SDK singleton pointed there) is gone; cluster-warning behaviour is now driven through the synchronous validator. |
-| A5-20 | partly fixed | The `pack-check` tarball job was added. Bundle-size budgets and a scheduled spec-drift job were **not** added — both are new capabilities, and the docs that claimed a spec-drift job existed were corrected instead. |
+| A5-20 | **mostly fixed** | The `pack-check` tarball job was added, and a **bundle-size budget is now enforced**: `.github/scripts/assert-size.mjs` runs in `build-plugin` and fails the build if the gzipped `dist/esm/**/*.js` tree exceeds 20,480 B (measured 16,180 B at `0.2.0`). Its failure path was exercised on purpose before the budget was set from the measurement. **Still not added:** a scheduled spec-drift job — the docs that claimed one existed were corrected instead, and the only scheduled workflow is CodeQL's weekly re-analysis. |
 | A5-21 | **maintainer action — not done** | See [A4-22](./A4-security.md); triage in CONTRIBUTING. |
 | A5-22 | fixed | The click/impression wire assertions are separate `it()` blocks behind a shared fixture. |
 | A5-23 | fixed | `"q":3` and `"pr"` are asserted, plus a non-integer-quantity rejection. |

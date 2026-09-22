@@ -11,8 +11,8 @@
 > gap in the project.
 
 This is the gate to the first **validated** release claim. Everything shipped so far rests on
-mock-verified wire format: 154 vitest tests drive the real `@braze/web-sdk` against an in-process
-Fastify mock, and 74 Robolectric + 26 XCTest cover the native bridges' translation against real
+mock-verified wire format: 205 vitest tests drive the real `@braze/web-sdk` against an in-process
+Fastify mock, and 91 Robolectric + 35 XCTest cover the native bridges' translation against real
 Braze model objects. What none of that can prove is that **Braze's backend accepts and processes
 what the three platforms actually send** — that is this playbook's job.
 
@@ -197,4 +197,4 @@ Once merged, work through the [maintainer pre-tag checklist](../CONTRIBUTING.md#
 
 The 53 web behavioral tests catch wire-format regressions on a real PR. The compile-only iOS + Android CI gates catch SDK API drift. **What neither catches is what Braze's backend actually accepts** — and what its dashboard renders for each platform. That's only validable against a real account.
 
-Doing this smoke once establishes the cross-platform wire-format ground truth. [C11](./mdcs/C11-NATIVE-TEST-HARNESSES.md)'s native **unit** tiers already lock in the bridge translation (74 Robolectric + 26 XCTest, both in CI); its **integration** tier — URLProtocol on iOS, MockWebServer on Android — would then lock in the HTTP itself, and that tier is still design-only precisely because there is no captured ground truth to write it against.
+Doing this smoke once establishes the cross-platform wire-format ground truth. [C11](./mdcs/C11-NATIVE-TEST-HARNESSES.md)'s native **unit** tiers already lock in the bridge translation (91 Robolectric + 35 XCTest, both in CI); its **integration** tier — URLProtocol on iOS, MockWebServer on Android — would then lock in the HTTP itself, and that tier is still design-only precisely because there is no captured ground truth to write it against.

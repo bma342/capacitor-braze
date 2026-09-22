@@ -51,10 +51,11 @@ checklist is the control.
 ## Verification
 
 - [ ] `npm run build` clean, and the README docgen block regenerated if `src/definitions.ts` changed
-- [ ] `npm test` passes (154 web tests)
+- [ ] `npm test` passes (205 web tests), and `npm --prefix test/web run test:coverage` still meets the `src/web.ts` thresholds
 - [ ] `./gradlew :capacitor-braze:testDebugUnitTest` passes (if Android-affecting)
 - [ ] `xcodebuild test` passes (if iOS-affecting)
-- [ ] `npm run lint` and `npm run typecheck:tests` clean
+- [ ] `npm run lint` and `npm run typecheck:tests` clean (ESLint runs with `--max-warnings=0`)
+- [ ] `node .github/scripts/assert-size.mjs` passes after a build, if `src/**` changed
 - [ ] CI green (linked in this PR)
 - [ ] Tested by hand in the example app (`cd example && npm run dev`)
 - [ ] Tested against a real Braze trial — **or stated in the Summary that you could not**, which is currently the normal case: no release has been validated against a live Braze backend

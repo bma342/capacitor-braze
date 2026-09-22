@@ -12,14 +12,15 @@ standard to aim at; this block is what is true.
 | | |
 |---|---|
 | **Version** | `0.2.0` (unreleased on this branch). `0.1.0` is on npm since 2026-05-22 |
-| **Public surface** | 35 methods + 4 listener events (`featureFlagsUpdated`, `contentCardsUpdated`, `inAppMessageReceived`, `sdkAuthError`) |
-| **Web tests** | **154** vitest across **14 files**, ~3s, against an in-process Fastify mock |
-| **Android tests** | **74** Robolectric/JUnit — run in CI |
-| **iOS tests** | **26** XCTest — run in CI via a generated target (`scripts/ios-add-test-target.rb`) |
+| **Public surface** | 35 methods + 5 listener events (`featureFlagsUpdated`, `contentCardsUpdated`, `inAppMessageReceived`, `sdkAuthError`, `deepLinkReceived`) |
+| **Web tests** | **205** vitest across **18 files**, ~3.4s, against an in-process Fastify mock |
+| **Android tests** | **91** Robolectric/JUnit — run in CI |
+| **iOS tests** | **35** XCTest — run in CI via a generated target (`scripts/ios-add-test-target.rb`) |
 | **CI jobs** | **9** in `test.yml` + **2** CodeQL analyses in `codeql.yml`, all actions SHA-pinned, per-job least-privilege permissions |
+| **Lint** | **ESLint 10** flat config (`eslint.config.cjs`) on `@ionic/eslint-config` 0.5.0, run with `--max-warnings=0`; Prettier 3.9; SwiftLint `--strict`; Android Lint `abortOnError true`. `npm audit` including dev deps: **0 vulnerabilities** |
 | **Native pins** | BrazeKit/BrazeUI **18.2.1** (Xcode 26+), `com.braze:android-sdk-ui` **43.2.0**, `@braze/web-sdk` peer **`^6.13.0`** (security floor) |
 | **Capacitor** | `^6.0.0 \|\| ^7.0.0`. **Capacitor 8: not supported**, tracked follow-up |
-| **Coverage instrumentation** | none — `docs/TEST-COVERAGE-AUDIT.md` is hand-maintained |
+| **Coverage instrumentation** | **web only**: `src/web.ts` measured at 97.38% statements/lines, 90.66% branches, 100% functions, with ratcheted thresholds enforced in the `test-web` job. **Native: none** — the Android and iOS numbers are test counts. `docs/TEST-COVERAGE-AUDIT.md` reports the measurement |
 | **Layer 4 (real Braze)** | **never run.** No release is validated against a live Braze backend |
 | **e2e runner (Maestro/Detox)** | **none, and none planned** — decided against; see `PLAN.md` §14 |
 | **Perf / bundle budgets in CI** | **one, enforced**: gzipped ESM bundle ≤ 20,480 B (measured 16,180 B). The other budgets in §2 were unmeasured guesses and are gone |
@@ -145,7 +146,7 @@ Note item 6: there is no `enableAutomaticPushHandling` option and never was — 
 > Layer 4 smoke has never been run.** They are the Layer 4 checklist, and they stay unchecked until
 > someone walks [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) against a real trial
 > and commits the capture files. Note what this does *not* mean: the bridge translation for each of
-> these paths is covered by the 154 + 74 + 26 automated tests. What is unverified is the round trip
+> these paths is covered by the 205 + 91 + 35 automated tests. What is unverified is the round trip
 > to Braze's backend.
 
 - [ ] App initializes Braze, identifies user, logs an event → event appears in Braze dashboard.
@@ -258,10 +259,10 @@ Concrete things a senior Braze SDK engineer would look for when deciding whether
 
 ### Testing rigor
 
-- **⚠️** Layers 1–3 exist and run in CI (154 vitest against the Fastify mock, 74 Robolectric, 26 XCTest). **Layer 4 has never been run.** The HTTP-intercept native integration tier designed in C11 is also unbuilt.
+- **⚠️** Layers 1–3 exist and run in CI (205 vitest against the Fastify mock, 91 Robolectric, 35 XCTest). **Layer 4 has never been run.** The HTTP-intercept native integration tier designed in C11 is also unbuilt.
 - **⚠️** iOS simulator: yes (`xcodebuild test`). Android: **JVM/Robolectric, not an emulator** — deliberate, per C11, because emulator startup is a 5-minute tax per job. Web: jsdom, not headless Chrome — also deliberate; the assertions are on outbound HTTP, not on rendering.
 - **[ ]** **Does not exist, and is deliberately deferred.** No workflow is scheduled and no Braze credential exists in CI. Drift is caught by a human reading Braze's release notes (C08).
-- **[ ]** No coverage instrumentation on any platform. `docs/TEST-COVERAGE-AUDIT.md` is a hand-maintained method-by-method table, and says so.
+- **⚠️** Coverage instrumentation exists on **web only** — `@vitest/coverage-v8` over `src/web.ts`, with ratcheted thresholds enforced in the `test-web` job (97.38% statements/lines, 90.66% branches, 100% functions at `0.2.0`). The Android and iOS suites report test counts, not coverage; JaCoCo / `xcodebuild -enableCodeCoverage` is the open gap. `docs/TEST-COVERAGE-AUDIT.md` records both.
 - [x] No tests that depend on real Braze for every PR.
 
 ### Documentation completeness
@@ -370,7 +371,7 @@ Items marked **[manual]** are yours. §6 grades the current state of each.
 - **[CI]** Lint clean: ESLint, Prettier, SwiftLint, Android Lint (**no ktlint** — see C09)
 - **[manual]** Layer 4 smoke against a real Braze trial. **Never yet done.** If you ship without it, say so in the release notes, as `0.2.0` does
 - **[manual]** No `any`, no `!`, no `TODO`, no `@Suppress` (without a documented reason)
-- ~~Code coverage targets met~~ — no coverage instrumentation exists; nothing to check
+- **[CI]** Web coverage thresholds met — `test-web` runs `npm --prefix test/web run test:coverage`, which fails on a regression below the ratchet in `test/web/vitest.config.ts`. **Native coverage is still unmeasured**, so there is nothing to check there
 - **[CI]** Bundle size budget met — `assert-size.mjs` in `build-plugin` fails above 20,480 B gzipped ESM; see §2
 
 ### Docs
@@ -422,14 +423,14 @@ Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open ·
 | Checkbox | Status | Evidence |
 |---|---|---|
 | TS types pass `tsc --strict --noEmit` | ✓ | `build-plugin` CI job |
-| `npm test` passes | ✓ | `test-web` CI job — **154 tests across 14 files in ~3s**, all 35 methods covered. Hand-maintained map in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) |
-| Android native tests pass in CI | ✓ | `verify-android` compiles the bridge against `com.braze:android-sdk-ui` 43.2.0, runs **74** Robolectric tests, and runs Android Lint with `abortOnError true`. The HTTP-intercept tier (C11) is still design-only |
-| iOS native tests pass in CI | ✓ | `verify-ios` compiles against BrazeKit 18.2.1 and runs **26** XCTests via a generated target. Until `0.2.0` the suite had no target and had never been compiled |
+| `npm test` passes | ✓ | `test-web` CI job — **205 tests across 18 files in ~3.4s**, all 35 methods covered, followed by a coverage-threshold run. Map + measured numbers in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) |
+| Android native tests pass in CI | ✓ | `verify-android` compiles the bridge against `com.braze:android-sdk-ui` 43.2.0, runs **91** Robolectric tests, and runs Android Lint with `abortOnError true`. The HTTP-intercept tier (C11) is still design-only |
+| iOS native tests pass in CI | ✓ | `verify-ios` compiles against BrazeKit 18.2.1 and runs **35** XCTests via a generated target. Until `0.2.0` the suite had no target and had never been compiled |
 | Web Layer 3 passes in CI | ✓ | `test-web` runs the vitest + Fastify-mock harness |
 | Layer 4 manual smoke against real Braze | ◌ | **Never run.** `0.1.0` and `0.2.0` both ship on mock-verified wire format only, and say so |
 | No `any`, no `!`, no `TODO`, no `@Suppress` (without docs) | ✓ | Re-verified 2026-09-22 by grep over `src/`, `ios/Plugin/`, `android/src/main/`: no TODO/FIXME, no `@Suppress`, no Swift force-unwraps / `try!` / `as!` / `fatalError`, no `any` |
-| Lint clean | ✓ | ESLint + Prettier in `lint`; **SwiftLint `--strict`, 0 violations** in `verify-ios` — the binary is now installed and asserted, having previously been absent, which made the gate a silent no-op; **Android Lint** `abortOnError true` in `verify-android`. **ktlint deliberately not used** per [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md) |
-| Code coverage targets met | ○ | **No coverage instrumentation on any platform**, so there is no number to compare. 254 tests across three platforms; the per-method map in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) is hand-maintained and says so |
+| Lint clean | ✓ | **ESLint 10** (flat config, `--max-warnings=0`) + Prettier 3.9 in `lint`; **SwiftLint `--strict`, 0 violations** in `verify-ios` — the binary is now installed and asserted, having previously been absent, which made the gate a silent no-op; **Android Lint** `abortOnError true` in `verify-android`. **ktlint deliberately not used** per [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md) |
+| Code coverage targets met | ⚠️ | **Web only.** `src/web.ts` is measured at 97.38% statements/lines, 90.66% branches, 100% functions, with thresholds that fail the `test-web` job on a regression. The 91 Android and 35 iOS tests are counts, not coverage — no JaCoCo, no `-enableCodeCoverage`. 331 tests across three platforms; [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) reports both halves |
 | Bundle size budget met | ✓ | **Measured and enforced** as of `0.2.0`: `node .github/scripts/assert-size.mjs` runs in `build-plugin` and fails above **20,480 B** gzipped for `dist/esm/**/*.js`; the measured total is **16,180 B**. The four unmeasurable budgets (`.aar`, `.framework`, init time, round-trip) were deleted from §2 rather than left as aspirations |
 
 ### Docs (§5)
@@ -437,11 +438,11 @@ Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open ·
 | Checkbox | Status | Evidence |
 |---|---|---|
 | README quick-start works on a fresh `cap init` project | ✓ | Validated 2026-05-20 on a fresh `cap-init` install in `/tmp/capbraze-freshtest-tLWX`. Surfaced an iOS Podfile-edit requirement (per C10) that was missing from the quick-start; now inlined |
-| Every public method has JSDoc + `@capacitor/docgen` render | ✓ | All 35 methods + 4 listener overloads carry JSDoc with `@example`. **TypeDoc deliberately not used** per [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md). The README API section is regenerated by `npm run build` and asserted by CI |
+| Every public method has JSDoc + `@capacitor/docgen` render | ✓ | All 35 methods + 5 listener overloads carry JSDoc with `@example`. **TypeDoc deliberately not used** per [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md). The README API section is regenerated by `npm run build` and asserted by CI |
 | Platform parity matrix updated | ✓ | `SDK_SURFACE.md` §1 rebuilt against `src/definitions.ts` with explicit ✅ shipped / ⏳ roadmap markers, and §3's divergence list rewritten to describe only divergences that exist |
 | CHANGELOG entry written (human-readable) | ✓ | Every phase commit ships a CHANGELOG entry |
 | Migration notes if any breaking changes (pre-1.0) | ✓ | `0.2.0` has a dedicated `Breaking` section: Xcode 26, the web-sdk security floor, three BrazeKit behaviour changes, logging semantics, Android second-`initialize`, unknown-variant drops, the `sdkAuthError.userId` sentinel, and a renamed internal Swift symbol |
-| All `SDK_SURFACE.md` coverage flags updated | ✓ | "Currently shipped (as of `0.2.0`)" enumerates 35 methods + 4 listener events, and is declared authoritative over the matrix rows |
+| All `SDK_SURFACE.md` coverage flags updated | ✓ | "Currently shipped (as of `0.2.0`)" enumerates 35 methods + 5 listener events, and is declared authoritative over the matrix rows |
 
 ### Security (§5)
 
@@ -495,10 +496,10 @@ Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open ·
 
 | Checkbox | Status | Evidence |
 |---|---|---|
-| Four-layer test pyramid | ⚠️ | Layers 1–3 exist and run in CI: 154 vitest against the Fastify mock, 74 Robolectric, 26 XCTest. **Layer 4 has never been run.** C11's native HTTP-intercept tier is also unbuilt |
+| Four-layer test pyramid | ⚠️ | Layers 1–3 exist and run in CI: 205 vitest against the Fastify mock, 91 Robolectric, 35 XCTest. **Layer 4 has never been run.** C11's native HTTP-intercept tier is also unbuilt |
 | CI runs the local tiers across iOS sim + Android + jsdom | ⚠️ | iOS: real simulator via `xcodebuild test`. Android: **JVM/Robolectric, not an emulator** — deliberate per C11 (emulator startup is a 5-minute tax per job). Web: jsdom, not headless Chrome — also deliberate, since the assertions are on outbound HTTP |
 | Daily spec-drift job against real Braze trial | ○ | **Does not exist, deliberately.** No workflow is scheduled and no Braze credential exists in CI. Five documents claimed otherwise until `0.2.0`. Drift is caught by reading Braze's release notes (C08) |
-| Code coverage >80% TS, >70% native | ○ | Targets not enforced. See "Code coverage" row above for rationale |
+| Code coverage >80% TS, >70% native | ⚠️ | TS: **met and enforced** — `src/web.ts` at 97.38% statements/lines against a 97 threshold. Native: **not measured**, so the >70% target is neither met nor refuted. See the "Code coverage" row above |
 | No tests that depend on real Braze for every PR | ✓ | Mock-server harness is self-contained |
 
 ### Adoption / trust signals (§3)
@@ -524,7 +525,7 @@ Everything §7 previously listed as a `0.1.0` blocker, plus what `0.2.0` closed:
 - ✅ **`SDK_SURFACE.md` §1 coverage table** — rebuilt mechanically against `src/definitions.ts` in `0.2.0` after the 2026-09 audit found nine wrong rows.
 - ✅ **README quick-start fresh-`cap-init` validation** — surfaced the iOS Podfile requirement, which the quick-start now inlines alongside the three Android Gradle edits.
 - ✅ **Branch protection on `main`** — required status checks (strict), signed commits, no force pushes, no deletions, conversation resolution.
-- ✅ **Native test harnesses (C11)** — 74 Robolectric + 26 XCTest, both running in CI. The iOS suite had no Xcode target until `0.2.0` and had never been compiled.
+- ✅ **Native test harnesses (C11)** — 91 Robolectric + 35 XCTest, both running in CI. The iOS suite had no Xcode target until `0.2.0` and had never been compiled.
 - ✅ **Release pipeline gated on CI**, with a not-already-published guard, a dry run, `--provenance` and an attestation check.
 
 ### Before tagging `0.2.0`
@@ -532,21 +533,25 @@ Everything §7 previously listed as a `0.1.0` blocker, plus what `0.2.0` closed:
 Maintainer actions, none of which a code change can perform. Exact `gh api` commands are in
 [CONTRIBUTING → Maintainer pre-tag checklist](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020).
 
+Numbered to match CONTRIBUTING's checklist, so the two documents can be read side by side.
+
 1. ☐ **Enable private vulnerability reporting.** `SECURITY.md` §14 documents the advisory channel; it is switched off, so a non-collaborator cannot file through it. §14 carries a warning banner until this lands.
-2. ☐ **Enable `enforce_admins`** so the required checks bind the admin too, and enable linear history.
-3. ☐ **Create a `v*` tag ruleset** (deletion + non-fast-forward + required signatures).
-4. ☐ **Create the `npm-publish` GitHub environment** with a required reviewer and a `v*` tag deployment-branch policy — `release.yml` already references it.
-5. ☐ **Configure npm Trusted Publishing** (web UI only), then delete `NODE_AUTH_TOKEN` from `release.yml` and revoke `NPM_TOKEN`. Until then the publish uses a 2FA-bypassing automation token, and `SECURITY.md` §13 says so.
-6. ☐ **Enable Dependabot security updates** (distinct from the version updates already configured).
-7. ☐ **Triage the six open Dependabot PRs** — three are superseded by the SHA pins and should be closed; three need a rebase onto this branch.
-8. ☐ **Make CodeQL a required status check** (`Analyze (javascript-typescript)`, `Analyze (actions)`) once the first run on `main` is green. Nothing to provision — CodeQL needs no token on a public repo, and the Snyk step, whose token was never provisioned, has been removed.
+2. ☐ **Enable `enforce_admins`** so the required checks bind the admin too.
+3. ☐ **Require linear history** (you already squash-merge).
+4. ☐ **Enable Dependabot security updates** (distinct from the version updates already configured).
+5. ☐ **Create a `v*` tag ruleset** (deletion + non-fast-forward + required signatures).
+6. ☐ **Create the `npm-publish` GitHub environment** with a required reviewer and a `v*` tag deployment-branch policy — `release.yml` already references it.
+7. ☐ **Configure npm Trusted Publishing** (web UI only), then delete `NODE_AUTH_TOKEN` from `release.yml` and revoke `NPM_TOKEN`. Until then the publish uses a 2FA-bypassing automation token, and `SECURITY.md` §13 says so.
+8. ☐ **Make CodeQL a required status check** (`Analyze (javascript-typescript)`, `Analyze (actions)`) once the first run on `main` is green. Nothing to provision — CodeQL needs no token on a public repo, and `SNYK_TOKEN` is no longer referenced by any workflow.
+
+Plus, before tagging: ☐ **triage the six open Dependabot PRs** — the per-PR verdicts are in [CONTRIBUTING → Dependabot PR triage](./CONTRIBUTING.md#dependabot-pr-triage-before-tagging). Note **#22 is now a close**, not a rebase: six of its seven dev-dependency bumps were absorbed by the ESLint 10 flat-config migration on this branch.
 
 ### Still open, and honestly so
 
 - ☐ **Layer 4 manual smoke.** Walk [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) on all three platforms against a real trial and commit the captures. **Neither `0.1.0` nor `0.2.0` is validated against a live Braze backend**, and the README, CHANGELOG and C08 all say so rather than implying otherwise. This is the single largest gap in the project.
 - ☐ **Capacitor 8 support** and ☐ **SPM packaging** — see `SDK_SURFACE.md`'s roadmap. Related: Capacitor 8's CLI generates SPM projects by default.
 - ☐ **C11's integration tier** — URLProtocol on iOS, MockWebServer on Android, asserting real HTTP rather than DTO shape.
-- ☐ **`inAppMessageReceived` delivery-path coverage** on any platform.
+- ☐ **`inAppMessageReceived` delivery-path coverage on iOS and Android.** Web is covered end to end as of `0.2.0` (the mock server returns real trigger envelopes); the native tiers still cover the DTO only, at the serializer level.
 - ☐ **Setter return values** (audit A1-10): `setEmail('nonsense')` resolves everywhere. Deferred as a cross-platform contract change.
 
 ### Deliberately deferred — documented exclusions
@@ -556,7 +561,7 @@ absence as an oversight.
 
 - **TypeDoc rendering** — replaced by `@capacitor/docgen` into the README, per C09.
 - **ktlint** — not in Capacitor's standard toolchain, per C09. Android Lint covers Kotlin *static analysis*; Kotlin *formatting* is reviewed by hand.
-- **Numeric code-coverage budgets** — no instrumentation on any platform, so there is no number to gate. (Bundle size is no longer on this list: §2's gzipped-ESM budget is measured and enforced as of `0.2.0`.)
+- **Numeric code-coverage budgets on the native bridges** — no instrumentation there, so there is no number to gate. (The web bridge *is* instrumented and ratcheted as of `0.2.0`.) (Bundle size is no longer on this list: §2's gzipped-ESM budget is measured and enforced as of `0.2.0`.)
 - **CodeQL for Swift and Kotlin** — both need a full native compile inside the CodeQL tracer, duplicating `verify-ios` / `verify-android` and roughly doubling their runtime. The `javascript-typescript` and `actions` analyses do run. Reasoning in the header of `.github/workflows/codeql.yml`.
 - **A daily spec-drift job against real Braze** — the Fastify mock covers the bulk, and drift is caught by reading Braze's release notes (C08). Five documents described this job as existing; none of them was right.
 - **Maestro / Detox e2e** — decided against outright, not merely deferred. See `PLAN.md` §14 item 3.

@@ -52,7 +52,7 @@ a pointer to where it is now tracked.
 | L3-02 | MAJOR | **0.1.0** | Per-field DOB messages everywhere (same fix as L2-07). |
 | L3-03 | MAJOR | **0.2.0** | Android silently dropped non-scalar event/purchase property values. All three platforms now reject with ``Braze.<method>: `properties.<key>` must be string, number, or boolean.`` |
 | L3-04 | MAJOR | **open — deliberate** | Property-key length/emptiness is still left to the Braze backend. Pushing a length ceiling client-side would encode a backend limit the plugin cannot keep in sync; tracked as a contract decision, not a bug. |
-| L3-05 | MINOR | **0.2.0** | Native validation is no longer untested: 74 Robolectric tests assert every Android `@PluginMethod` branch byte-exact against `src/web.ts`, and 26 XCTests cover the iOS classifiers and C04 strings. |
+| L3-05 | MINOR | **0.2.0** | Native validation is no longer untested: 91 Robolectric tests assert every Android `@PluginMethod` branch byte-exact against `src/web.ts`, and 35 XCTests cover the iOS classifiers and C04 strings. |
 | L3-06 | MINOR | **0.1.0** | Subsumed by L3-02 — natives emit the per-field message, so the failing field is named. |
 | L3-07 | MINOR | clean bill | The extra iOS "invalid date components" path is unreachable behind the range checks; documented as an accepted platform extra. |
 | L3-08, L3-09, L3-10 | NIT | clean bill | No action required. |
@@ -83,7 +83,7 @@ a pointer to where it is now tracked.
 | L5-02 | Low | **0.1.0** | The phantom `enableAutomaticPushHandling` option was removed from SECURITY.md §5. 0.2.0 added a real iOS equivalent, `enablePushAutomation`. |
 | L5-03 | Low | **0.1.0 → completed 0.2.0** | 0.1.0 added URL parsing on all three platforms and the cluster warning on web only. 0.2.0 ported the cluster check to iOS and Android and stopped it logging the endpoint value. |
 | L5-04 | Low | **0.1.0 → really 0.2.0 on iOS** | The `sdkAuthError` listener shipped in 0.1.0, but on iOS it was attached to `BrazeDelegate`, which does not declare the callback — it never fired until 0.2.0 moved it to `braze.sdkAuthDelegate`. |
-| L5-05 | Low | **partly 0.1.0, completed 0.2.0** | gitleaks + Snyk steps and signed commits landed in 0.1.0. The Snyk step could never execute (fixed 0.2.0) and SHA-pinning of Actions landed in 0.2.0. |
+| L5-05 | Low | **partly 0.1.0, completed 0.2.0** | gitleaks + Snyk steps and signed commits landed in 0.1.0. The Snyk step could never execute; in 0.2.0 it was first repaired and then **removed** (its token was never provisioned), with CodeQL added in its place. SHA-pinning of Actions landed in 0.2.0. |
 | L5-06 | Low | **0.1.0 → corrected 0.2.0** | Dependabot gained `/demo` and `/test/mock-server` in 0.1.0, but the mock-server entry declared `gradle` for an npm project and was inert; fixed in 0.2.0, which also added `/test/web`. |
 | L5-07 | Trivial | **0.1.0** | Disclosure placeholder replaced with the GitHub private-advisory pointer. Note that **private vulnerability reporting still has to be switched on by the maintainer** — see [CONTRIBUTING → Maintainer pre-tag checklist](../../../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020). |
 | L5-08 | Trivial | **0.1.0** | See L4-K04. |
@@ -110,7 +110,7 @@ a pointer to where it is now tracked.
 | L7-04 | MINOR | **0.2.0** | `release.yml` now calls `test.yml` as a reusable workflow, so publish waits on the entire suite including both native verify jobs. |
 | L7-05 | MINOR | **0.2.0** | Dependabot covers `/test/web` and `/test/mock-server`. |
 | L7-06 | MINOR | **0.2.0** | The release workflow greps `CHANGELOG.md` for the version being released and fails without it. |
-| L7-07 | NIT | **open — deliberate** | `npm audit --omit=dev` is still the CI gate. Dev-dependency advisories are visible through Dependabot; gating on them would block on an EOL ESLint 8 chain that only affects the dev tree. |
+| L7-07 | NIT | **open — deliberate**, but moot in practice | `npm audit --omit=dev` is still the CI gate. The EOL ESLint 8 chain that motivated the carve-out is gone (ESLint 10 flat config; see 2026-09 A4-21), so a full `npm audit` including dev now reports 0 vulnerabilities anyway. |
 
 ### L8 — Consumer surface
 

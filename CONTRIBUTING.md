@@ -67,17 +67,23 @@ same commit, with the reason.
 Three tiers run locally and in CI. A fourth, against a real Braze account, has never been run.
 
 ```bash
-# Web — 154 vitest tests across 14 files, ~3s, against an in-process Fastify mock.
+# Web — 205 vitest tests across 18 files, ~3.4s, against an in-process Fastify mock.
 # The mock is started by the tests themselves; nothing to launch first.
 npm test
 
-# Android — 74 Robolectric/JUnit tests. Needs JDK 21 and an Android SDK with
+# Same suite with V8 coverage over src/web.ts, against the ratcheted thresholds
+# in test/web/vitest.config.ts. Plain `npm test` stays uninstrumented so the fast
+# loop stays fast; CI runs both in the test-web job. The report lands in
+# test/web/coverage/, which is gitignored and listed in .prettierignore.
+cd test/web && npm run test:coverage
+
+# Android — 91 Robolectric/JUnit tests. Needs JDK 21 and an Android SDK with
 # platforms;android-35 + build-tools;35.0.0. Export ANDROID_HOME if the Gradle
 # build can't find it, e.g.:
 #   export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
 cd demo/android && ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon
 
-# iOS — 26 XCTests. Needs Xcode 26+ (BrazeKit 18.x) and CocoaPods.
+# iOS — 35 XCTests. Needs Xcode 26+ (BrazeKit 18.x) and CocoaPods.
 # The test target is generated into the demo's Xcode project; the script is
 # idempotent and its output is committed, so CI re-runs it as a staleness check.
 ruby scripts/ios-add-test-target.rb
@@ -87,9 +93,10 @@ xcodebuild test -workspace App.xcworkspace -scheme App \
   CODE_SIGNING_ALLOWED=NO
 
 # Supporting gates
-npm run lint              # eslint + prettier --check + swiftlint
+npm run lint              # eslint (10, flat config) + prettier --check + swiftlint
 npm run typecheck:tests   # vitest never type-checks; this does
 npm run pack:check        # assert the npm tarball's contents
+npm run build && node .github/scripts/assert-size.mjs   # gzipped ESM <= 20,480 B
 ```
 
 Two gotchas worth knowing before you file a bug against the tooling:

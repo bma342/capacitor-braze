@@ -14,7 +14,7 @@ Per-subsystem design contracts that codify the load-bearing patterns this plugin
 | [C08](./C08-NATIVE-SDK-PINNING.md) | Native SDK pin policy (exact on iOS/Android, caret on Web peer dep) and the bump protocol | Updating the version of BrazeKit, `com.braze:android-sdk-ui`, or `@braze/web-sdk` |
 | [C09](./C09-TOOLING-QUALITY-GATES.md) | ESLint + Prettier + SwiftLint + `@capacitor/docgen` — Capacitor's official toolchain, locked-in | Touching `package.json` scripts, lint configs, or the README API section |
 | [C10](./C10-CONSUMER-INTEGRATION-REQUIREMENTS.md) | Consumer-side config the plugin's SDK pins force (Podfile linkage / deployment target, Android Gradle, Web peer dep) | Bumping a native SDK pin (per C08); adding a method that needs new permissions or entitlements |
-| [C11](./C11-NATIVE-TEST-HARNESSES.md) | iOS XCTest + Android Robolectric harnesses. **Unit tier implemented** (74 Android + 26 iOS, both in CI); the HTTP-intercept integration tier is still design-only | Wiring or extending native tests; reviewing `ios/PluginTests/` or `android/src/test/` |
+| [C11](./C11-NATIVE-TEST-HARNESSES.md) | iOS XCTest + Android Robolectric harnesses. **Unit tier implemented** (91 Android + 35 iOS, both in CI); the HTTP-intercept integration tier is still design-only, and neither native tier is coverage-instrumented | Wiring or extending native tests; reviewing `ios/PluginTests/` or `android/src/test/` |
 
 ## How to use this set
 
