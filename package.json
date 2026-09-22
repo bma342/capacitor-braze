@@ -1,19 +1,19 @@
 {
   "name": "capacitor-braze",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Unofficial, community-maintained Capacitor 6+ plugin wrapping the official Braze SDKs for Android, iOS, and Web. Not affiliated with or endorsed by Braze, Inc.",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
-  "unpkg": "dist/plugin.js",
   "files": [
     "android/src/main/",
     "android/build.gradle",
-    "android/proguard-rules.pro",
     "android/consumer-rules.pro",
     "dist/",
     "ios/Plugin/",
-    "CapacitorBraze.podspec"
+    "CapacitorBraze.podspec",
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
   "author": "Bryce Aspinwall <bryce.aspinwall@gmail.com>",
   "license": "MIT",
@@ -52,6 +52,8 @@
     "watch": "tsc --watch",
     "test": "cd test/web && npm test",
     "test:watch": "cd test/web && npm run test:watch",
+    "typecheck:tests": "cd test/mock-server && npx tsc --noEmit -p tsconfig.json && cd ../web && npx tsc --noEmit -p tsconfig.json",
+    "pack:check": "node .github/scripts/assert-pack.mjs",
     "smoke:web": "bash scripts/smoke-web.sh",
     "smoke:ios": "bash scripts/smoke-ios.sh",
     "smoke:android": "bash scripts/smoke-android.sh",
@@ -59,6 +61,7 @@
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
+    "@braze/web-sdk": "^6.13.0",
     "@capacitor/android": "^6.0.0",
     "@capacitor/core": "^6.0.0",
     "@capacitor/docgen": "^0.3.0",
@@ -75,7 +78,7 @@
     "typescript": "~5.4.2"
   },
   "peerDependencies": {
-    "@braze/web-sdk": "^6.0.0",
+    "@braze/web-sdk": "^6.13.0",
     "@capacitor/core": "^6.0.0 || ^7.0.0"
   },
   "peerDependenciesMeta": {

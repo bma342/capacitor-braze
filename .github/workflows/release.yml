@@ -1,36 +1,88 @@
 name: Release
 
-# Triggered when a `vX.Y.Z` tag is pushed. Builds, publishes to npm with
-# provenance attestation, and creates a GitHub Release.
+# Triggered when a `vX.Y.Z` tag is pushed. Gates on the full CI suite, then
+# publishes to npm with a provenance attestation and creates a GitHub Release.
 #
-# Required repo secret:
-#   NPM_TOKEN — npm automation token with publish permission for `capacitor-braze`
+# ---------------------------------------------------------------------------
+# Why the `ci` job exists (A4-06 / A5-03)
+# ---------------------------------------------------------------------------
+# Until now this workflow ran `npm ci && npm run build && npm publish` — no
+# tests, no lint, no native verify. A tag pointing at a commit that never
+# landed on main published with zero coverage. `ci` calls test.yml as a
+# reusable workflow (`workflow_call`), so the publish job waits on every gate
+# a PR waits on, including verify-ios and verify-android compiling the bridges
+# against the real pinned Braze SDKs. That is the whole point of choosing
+# workflow_call over re-running a subset of the checks inline here: a
+# hand-rolled `npm test` gate would silently drop the two native jobs, which
+# are the highest-value checks for a bridge library.
+#
+# ---------------------------------------------------------------------------
+# npm Trusted Publishing (OIDC) — the intended end state (A4-01 / A4-06)
+# ---------------------------------------------------------------------------
+# `NPM_TOKEN` is an npm *automation* token, which by design bypasses the
+# account's 2FA. A stolen token publishes a malicious version regardless of
+# how the account is configured, which makes SECURITY.md §13's "npm publish
+# requires 2FA" claim untrue in the CI path.
+#
+# The fix is npm Trusted Publishing: on npmjs.com, Package settings ->
+# "Trusted publisher" -> GitHub Actions, with repository `bma342/capacitor-braze`
+# and workflow `release.yml`. npm then mints short-lived credentials from the
+# `id-token: write` OIDC token this job already holds, provenance becomes
+# mandatory rather than a flag, and there is no long-lived secret to steal.
+#
+# Once that is configured on npmjs.com, delete the `NODE_AUTH_TOKEN` line from
+# the publish step and revoke `NPM_TOKEN` in repo secrets. Do NOT delete it
+# before the trusted publisher exists — the publish would fail with E401.
+#
+# ---------------------------------------------------------------------------
+# `environment: npm-publish`
+# ---------------------------------------------------------------------------
+# The publish job runs in the `npm-publish` environment so the maintainer can
+# attach a required reviewer (Settings -> Environments -> npm-publish ->
+# "Required reviewers") and restrict it to `v*` tags. Until that environment
+# is created, GitHub auto-creates it on first use WITHOUT protection rules, so
+# this line is inert-but-harmless today and becomes a human checkpoint the
+# moment the environment is configured.
 #
 # Manual release flow:
 #   1. Bump version in package.json
-#   2. Update CHANGELOG.md with the new section
+#   2. Update CHANGELOG.md with a `## [X.Y.Z]` section
 #   3. Commit + push: `git push origin main`
 #   4. Tag: `git tag v0.X.Y && git push origin v0.X.Y`
-#   5. This workflow runs and publishes.
+#   5. This workflow runs: CI -> guard -> dry-run -> publish -> GitHub Release.
 
 on:
   push:
     tags:
       - 'v*'
 
+# A4-06: least privilege at the top; each job widens only what it needs.
 permissions:
-  contents: write     # for creating GitHub Releases
-  id-token: write     # for npm provenance attestation
+  contents: read
 
 jobs:
+  # Full CI suite (lint, build, pack-check, example, demo, web tests, audit,
+  # verify-ios, verify-android) as the publish gate.
+  ci:
+    name: CI gate
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+
   publish:
-    name: Publish to npm + create GitHub Release
+    name: Publish to npm
     runs-on: ubuntu-latest
+    needs: ci
+    environment: npm-publish
+    permissions:
+      contents: read # checkout only
+      id-token: write # npm provenance attestation / Trusted Publishing OIDC
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -44,6 +96,7 @@ jobs:
 
       - name: Verify package.json version matches tag
         run: |
+          set -euo pipefail
           PKG_VERSION=$(node -p "require('./package.json').version")
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
@@ -51,14 +104,74 @@ jobs:
             exit 1
           fi
           echo "Version match: $PKG_VERSION"
+          echo "VERSION=$PKG_VERSION" >> "$GITHUB_ENV"
+
+      # A5-03 / L7-06: a release without a changelog section is a release
+      # nobody can read. Cheap grep, catches the "tagged before writing the
+      # notes" mistake.
+      - name: Verify CHANGELOG has a section for this version
+        run: |
+          set -euo pipefail
+          if ! grep -qE "^## \[?${VERSION}\]?" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [${VERSION}]' section. Write the release notes before tagging."
+            exit 1
+          fi
+          echo "CHANGELOG section for ${VERSION} found."
+
+      # A4-01: 0.1.0 was published by hand five hours before the tag existed,
+      # and the workflow run then failed at publish (EPUBLISHCONFLICT) —
+      # masking the bypass as a generic red run. Fail loudly and specifically
+      # instead: if the registry already knows this version, the tag is
+      # re-publishing something that exists.
+      - name: Guard — version must not already be on npm
+        run: |
+          set -euo pipefail
+          if npm view "capacitor-braze@${VERSION}" version >/dev/null 2>&1; then
+            echo "::error::capacitor-braze@${VERSION} is already published on npm. Bump the version in package.json, retag, and push again. (If this version was published by hand, that bypassed provenance — see SECURITY.md §13.)"
+            exit 1
+          fi
+          echo "capacitor-braze@${VERSION} is not on the registry yet."
+
+      # Catches manifest/tarball problems (bad `files`, missing dist) before
+      # anything irreversible happens. `--provenance` is deliberately omitted
+      # here: attestation generation is a publish-time concern and adds an
+      # OIDC round trip with nothing to verify in a dry run.
+      - name: Publish dry run
+        run: npm publish --dry-run --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish to npm with provenance
         run: npm publish --provenance --access public
         env:
+          # Delete this line once npm Trusted Publishing is configured (see
+          # the header). Keep it until then or the publish 401s.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Verify the attestation landed
+        run: |
+          set -euo pipefail
+          # The registry needs a moment to surface dist.attestations.
+          for i in 1 2 3 4 5; do
+            if [ "$(npm view "capacitor-braze@${VERSION}" dist.attestations --json 2>/dev/null)" != "" ]; then
+              echo "Provenance attestation present for ${VERSION}."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::No dist.attestations visible for ${VERSION} yet. Re-check with 'npm view capacitor-braze@${VERSION} dist.attestations' and 'npm audit signatures'."
+
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: publish
+    permissions:
+      contents: write # creating a Release is the only write this workflow needs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           generate_release_notes: true
           body: |

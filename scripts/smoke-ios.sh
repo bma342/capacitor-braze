@@ -7,7 +7,7 @@
 # install) so the manual steps that follow are reproducible.
 #
 # Usage:
-#   BRAZE_API_KEY=<ios-sdk-key> BRAZE_ENDPOINT=sdk.us-01.braze.com \
+#   BRAZE_API_KEY=<ios-sdk-key> BRAZE_ENDPOINT=sdk.iad-03.braze.com \
 #     npm run smoke:ios
 #
 # Optional env:
@@ -18,6 +18,9 @@
 # docs/smoke-tests/ios-YYYY-MM-DD.md.
 
 set -euo pipefail
+
+# Run from the repo root regardless of where the script was invoked from.
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 if [ -z "${BRAZE_API_KEY:-}" ]; then
   echo "Error: BRAZE_API_KEY env var is required for the iOS smoke run." >&2
@@ -34,6 +37,10 @@ echo "→ Preparing demo iOS smoke against $ENDPOINT"
 echo "→ Note: the demo's AppDelegate.swift wires the iOS-specific key separately;"
 echo "  edit demo/ios/App/App/AppDelegate.swift if you haven't already (one-time)."
 echo
+
+# Build the plugin first: demo/ links it via `file:..`, so without this
+# the smoke run exercises whatever is already in dist/, not your source.
+npm run build
 
 cd demo
 npm install --silent

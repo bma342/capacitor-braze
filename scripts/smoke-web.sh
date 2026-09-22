@@ -8,7 +8,7 @@
 # they meant to hit real Braze.
 #
 # Usage:
-#   BRAZE_API_KEY=<web-sdk-key> BRAZE_ENDPOINT=sdk.us-01.braze.com \
+#   BRAZE_API_KEY=<web-sdk-key> BRAZE_ENDPOINT=sdk.iad-03.braze.com \
 #     npm run smoke:web
 #
 # Optional env:
@@ -16,6 +16,9 @@
 #                   Override to match your trial workspace's cluster.
 
 set -euo pipefail
+
+# Run from the repo root regardless of where the script was invoked from.
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 if [ -z "${BRAZE_API_KEY:-}" ]; then
   echo "Error: BRAZE_API_KEY env var is required for the web smoke run." >&2
@@ -34,6 +37,10 @@ echo "→ Starting demo web smoke against $ENDPOINT"
 echo "→ Walk docs/SMOKE-TEST-PLAYBOOK.md §3 to capture wire format."
 echo "→ Stop with Ctrl+C when done; results go in docs/smoke-tests/web-$(date -u +%Y-%m-%d).md"
 echo
+
+# Build the plugin first: demo/ links it via `file:..`, so without this
+# the smoke run exercises whatever is already in dist/, not your source.
+npm run build
 
 cd demo
 npm install --silent
