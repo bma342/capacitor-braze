@@ -239,6 +239,12 @@ jobs:
         working-directory: test/web
         run: npm test
 
+      # Coverage ratchet for src/web.ts (thresholds in test/web/vitest.config.ts
+      # sit just below the measured numbers and may only move up).
+      - name: Web coverage thresholds
+        working-directory: test/web
+        run: npm run test:coverage
+
   # Dependency + secret hygiene. Static analysis of the code itself lives in
   # the separate CodeQL workflow (.github/workflows/codeql.yml), which needs
   # `security-events: write` and a language matrix this job has no use for.
