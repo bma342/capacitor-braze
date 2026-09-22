@@ -1,7 +1,7 @@
 {
   "name": "capacitor-braze",
-  "version": "0.2.0",
-  "description": "Unofficial, community-maintained Capacitor 6+ plugin wrapping the official Braze SDKs for Android, iOS, and Web. Not affiliated with or endorsed by Braze, Inc.",
+  "version": "0.3.0",
+  "description": "Unofficial, community-maintained Capacitor 6/7/8 plugin wrapping the official Braze SDKs for Android, iOS, and Web. Not affiliated with or endorsed by Braze, Inc.",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
@@ -10,7 +10,8 @@
     "android/build.gradle",
     "android/consumer-rules.pro",
     "dist/",
-    "ios/Plugin/",
+    "ios/Sources/",
+    "Package.swift",
     "CapacitorBraze.podspec",
     "CHANGELOG.md",
     "SECURITY.md"
@@ -62,10 +63,10 @@
   },
   "devDependencies": {
     "@braze/web-sdk": "^6.13.0",
-    "@capacitor/android": "^6.0.0",
-    "@capacitor/core": "^6.0.0",
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
     "@capacitor/docgen": "^0.3.1",
-    "@capacitor/ios": "^6.0.0",
+    "@capacitor/ios": "^8.5.2",
     "@ionic/eslint-config": "^0.5.0",
     "@ionic/prettier-config": "^4.0.0",
     "@ionic/swiftlint-config": "^2.0.0",
@@ -79,7 +80,7 @@
   },
   "peerDependencies": {
     "@braze/web-sdk": "^6.13.0",
-    "@capacitor/core": "^6.0.0 || ^7.0.0"
+    "@capacitor/core": "^6.0.0 || ^7.0.0 || ^8.0.0"
   },
   "peerDependenciesMeta": {
     "@braze/web-sdk": {

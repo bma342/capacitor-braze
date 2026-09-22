@@ -69,7 +69,100 @@ import UserNotifications
 ///
 /// See PLAN.md, SDK_SURFACE.md, and SECURITY.md for design context.
 @objc(BrazePlugin)
-public class BrazePlugin: CAPPlugin {
+public class BrazePlugin: CAPPlugin, CAPBridgedPlugin {
+
+    // MARK: - Capacitor bridge registration (CAPBridgedPlugin)
+    //
+    // These three properties replace what `ios/Plugin/BrazePlugin.m`'s
+    // `CAP_PLUGIN` / `CAP_PLUGIN_METHOD` macros used to emit. The Obj-C file
+    // was removed in 0.3.0 because a Swift Package Manager target cannot mix
+    // Swift and Objective-C sources, and SPM is how Capacitor 8's CLI
+    // generates iOS projects by default.
+    //
+    // This is not a Capacitor 8-only mechanism: the `CAPBridgedPlugin`
+    // protocol and `CapacitorBridge.registerPlugins()`'s
+    // `plugin as? (CAPPlugin & CAPBridgedPlugin).Type` check are **byte
+    // identical** in the Capacitor 6.2.2, 7.6.9 and 8.5.2 runtimes, and the
+    // CLI's `findPluginClasses` discovers the class from the `@objc(...)`
+    // attribute above in all three. So one registration mechanism serves
+    // Capacitor 6, 7 and 8, under both CocoaPods and SPM. See C01 + C10.
+    //
+    // Keep this list ordered by category to match the method bodies below:
+    //   Bridge sanity → Configuration → User identity → User attributes →
+    //   Custom events → Feature flags → Content cards → Push →
+    //   Privacy/lifecycle
+    //
+    // `addListener` / `removeAllListeners` are deliberately absent: the
+    // Capacitor bridge implements those on `CAPPlugin` itself and rejects a
+    // plugin that re-declares them.
+    public let identifier = "BrazePlugin"
+    public let jsName = "Braze"
+    public let pluginMethods: [CAPPluginMethod] = [
+        // Bridge sanity
+        CAPPluginMethod(name: "echo", returnType: CAPPluginReturnPromise),
+
+        // Configuration
+        CAPPluginMethod(name: "initialize", returnType: CAPPluginReturnPromise),
+
+        // User identity
+        CAPPluginMethod(name: "changeUser", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getUserId", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setSdkAuthenticationSignature", returnType: CAPPluginReturnPromise),
+
+        // User attributes (standard)
+        CAPPluginMethod(name: "setEmail", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setPhoneNumber", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setFirstName", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setLastName", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setLanguage", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setCountry", returnType: CAPPluginReturnPromise),
+
+        // User attributes (demographics)
+        CAPPluginMethod(name: "setDateOfBirth", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setGender", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setHomeCity", returnType: CAPPluginReturnPromise),
+
+        // User attributes (custom)
+        CAPPluginMethod(name: "setCustomUserAttribute", returnType: CAPPluginReturnPromise),
+
+        // Subscription groups
+        CAPPluginMethod(name: "addToSubscriptionGroup", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "removeFromSubscriptionGroup", returnType: CAPPluginReturnPromise),
+
+        // Aliases
+        CAPPluginMethod(name: "addAlias", returnType: CAPPluginReturnPromise),
+
+        // Device ID
+        CAPPluginMethod(name: "getDeviceId", returnType: CAPPluginReturnPromise),
+
+        // Custom events
+        CAPPluginMethod(name: "logCustomEvent", returnType: CAPPluginReturnPromise),
+
+        // Purchases
+        CAPPluginMethod(name: "logPurchase", returnType: CAPPluginReturnPromise),
+
+        // Feature flags
+        CAPPluginMethod(name: "getFeatureFlag", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getAllFeatureFlags", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "refreshFeatureFlags", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "logFeatureFlagImpression", returnType: CAPPluginReturnPromise),
+
+        // Content cards
+        CAPPluginMethod(name: "getContentCards", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "requestContentCardsRefresh", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "logContentCardClick", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "logContentCardImpression", returnType: CAPPluginReturnPromise),
+
+        // Push token registration
+        CAPPluginMethod(name: "registerPushToken", returnType: CAPPluginReturnPromise),
+
+        // Privacy / lifecycle
+        CAPPluginMethod(name: "wipeData", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "disableSDK", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "enableSDK", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "isDisabled", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "requestImmediateDataFlush", returnType: CAPPluginReturnPromise)
+    ]
 
     // MARK: - Plugin state (main-actor isolated)
 

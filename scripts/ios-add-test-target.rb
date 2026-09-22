@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Wires `ios/PluginTests/*.swift` into a runnable XCTest bundle.
+# Wires `ios/Tests/BrazePluginTests/*.swift` into a runnable XCTest bundle.
 #
 # A Capacitor plugin ships as a Pod (and, later, an SPM package) with no host
 # app, so its XCTest bundle has nowhere to live. Rather than ask every
@@ -48,7 +48,7 @@ end
 
 REPO_ROOT = File.expand_path('..', __dir__)
 PROJECT_PATH = File.join(REPO_ROOT, 'demo/ios/App/App.xcodeproj')
-TESTS_DIR = File.join(REPO_ROOT, 'ios/PluginTests')
+TESTS_DIR = File.join(REPO_ROOT, 'ios/Tests/BrazePluginTests')
 APP_TARGET_NAME = 'App'
 TEST_TARGET_NAME = 'CapacitorBrazeTests'
 DEPLOYMENT_TARGET = '15.0'

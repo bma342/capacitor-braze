@@ -13,13 +13,13 @@
 # missing, which turns `--strict` into a silent no-op.
 
 included:
-  - ios/Plugin
+  - ios/Sources/BrazePlugin
   # The XCTest bundle is linted too: it is real source that ships in the repo
   # and is built by `xcodebuild test` (see scripts/ios-add-test-target.rb).
-  - ios/PluginTests
+  - ios/Tests/BrazePluginTests
 
 excluded:
-  - ios/Plugin/build
+  - ios/Sources/BrazePlugin/build
 
 # Inlined from @ionic/swiftlint-config@2.0.0 (index.js).
 opt_in_rules:

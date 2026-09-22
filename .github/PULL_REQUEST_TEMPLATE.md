@@ -26,12 +26,11 @@ checklist is the control.
 
 - [ ] `src/definitions.ts` — type signature + JSDoc with `@example`
 - [ ] `src/web.ts` — web implementation wrapping `@braze/web-sdk`
-- [ ] `ios/Plugin/BrazePlugin.swift` — iOS bridge via BrazeKit
-- [ ] `ios/Plugin/BrazePlugin.m` — `CAP_PLUGIN_METHOD` registration
+- [ ] `ios/Sources/BrazePlugin/BrazePlugin.swift` — iOS bridge via BrazeKit, **and** its `pluginMethods` entry (`CAPBridgedPlugin`; there is no longer a `.m`)
 - [ ] `android/src/main/java/com/bma342/braze/BrazePlugin.kt` — Android bridge
 - [ ] `test/web/src/<area>.test.ts` — asserts the **wire output** and the validation rejections, not just that the call resolved
 - [ ] `android/src/test/.../BrazePluginContractTest.kt` — validation branches byte-exact against `src/web.ts`
-- [ ] `ios/PluginTests/BrazePluginContractTests.swift` — the XCTest equivalent (re-run `ruby scripts/ios-add-test-target.rb` and commit the project if you added a *file*)
+- [ ] `ios/Tests/BrazePluginTests/BrazePluginContractTests.swift` — the XCTest equivalent (re-run `ruby scripts/ios-add-test-target.rb` and commit the project if you added a *file*)
 - [ ] `example/index.html` + `example/src/main.ts` — UI and handler dispatch
 - [ ] `SDK_SURFACE.md` — shipped list + coverage matrix updated
 - [ ] `CHANGELOG.md` — entry under `[Unreleased]`

@@ -21,7 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 // Consumer-required artifacts. Each entry is an exact published path.
-//   - CapacitorBraze.podspec + ios/Plugin/PrivacyInfo.xcprivacy: the podspec
+//   - CapacitorBraze.podspec + ios/Sources/BrazePlugin/PrivacyInfo.xcprivacy: the podspec
 //     declares the manifest via resource_bundles; a missing manifest is an
 //     App Store review problem, not a build error, so it must be asserted.
 //   - android/consumer-rules.pro: referenced by consumerProguardFiles; absent,
@@ -33,7 +33,8 @@ const MUST_CONTAIN = [
   'CHANGELOG.md',
   'SECURITY.md',
   'CapacitorBraze.podspec',
-  'ios/Plugin/PrivacyInfo.xcprivacy',
+  'Package.swift',
+  'ios/Sources/BrazePlugin/PrivacyInfo.xcprivacy',
   'android/consumer-rules.pro',
   'dist/esm/index.d.ts',
 ];

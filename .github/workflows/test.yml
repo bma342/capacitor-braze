@@ -380,7 +380,7 @@ jobs:
           xcrun simctl list runtimes
           xcrun simctl list devices available | grep -E 'iPhone 1[6-9]' || true
 
-      # A5-01 / C11: the plugin's XCTest bundle (ios/PluginTests) is hosted by
+      # A5-01 / C11: the plugin's XCTest bundle (ios/Tests/BrazePluginTests) is hosted by
       # the demo app. The generated target + shared scheme are committed; the
       # script is idempotent, so running it here is a consistency check that
       # fails loudly if a new test file was added without regenerating.
