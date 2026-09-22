@@ -2,13 +2,43 @@
 
 > An independent, MIT-licensed Capacitor 6+ plugin wrapping the Braze native SDKs (Android, iOS, Web). A personal open-source project by Bryce Aspinwall. **Not affiliated with, endorsed by, or supported by Braze, Inc.** "Braze" is a trademark of Braze, Inc.; the name appears here only to describe what this plugin wraps. For first-party SDKs and official support, see [braze.com](https://www.braze.com/) or the [`braze-inc`](https://github.com/braze-inc) GitHub organization.
 
-**Status:** Planning → scaffold next
+> ## ⚠️ This is the original plan, kept as history — not a description of the shipped plugin
+>
+> **Written 2026-05-20, before any code existed. Superseded by the code itself.** Where this document
+> disagrees with the repo, **the code wins** — and it disagrees in a lot of places, because the plan
+> was largely executed and then overtaken.
+>
+> The headline divergences, so you don't have to discover them one at a time:
+>
+> | This plan says | What actually shipped |
+> |---|---|
+> | "~15 public methods" for v0.1 | **35 methods + 4 listener events**, by `0.1.0` |
+> | Jest for the TS tests | **vitest**, 154 tests across 14 files |
+> | A Ktor mock server (~150 LOC) | **Fastify + TypeScript**, in-process, ephemeral port |
+> | Detox or Maestro for e2e | **Neither.** No e2e runner exists; the native tiers are Robolectric (74) and XCTest (26) |
+> | `test/ts/`, `test/e2e/`, Ktor `test/mock-server/` | `test/web/` (vitest) and `test/mock-server/` (Fastify) |
+> | A daily `spec-drift.yml` CI job hitting real Braze | **Does not exist.** No workflow is scheduled and none talks to Braze |
+> | `com.braze:android-sdk-ui:34.x`, `BrazeKit ~> 12.x` (ranges) | **43.2.0** and **18.2.1**, exact pins — ranges are now forbidden by [C08](./docs/mdcs/C08-NATIVE-SDK-PINNING.md) |
+> | `@bma342/capacitor-braze` (five places) | **`capacitor-braze`**, unscoped — §14 item 1 below records that decision correctly; the other references were never updated |
+> | `CODE_OF_CONDUCT.md` as a file | A section inside `CONTRIBUTING.md` |
+> | Unchecked `[ ]` boxes through §11 | Most of that work is done; see the CHANGELOG |
+>
+> For the live picture: [`CHANGELOG.md`](./CHANGELOG.md) for what shipped,
+> [`SDK_SURFACE.md` §2](./SDK_SURFACE.md#2-plugin-version-roadmap) for what is next,
+> [`REVIEW_READINESS.md`](./REVIEW_READINESS.md) for a dated readiness snapshot, and
+> [`README.md`](./README.md#status) for the one-screen status.
+>
+> Kept rather than rewritten because the strategic case in §1–§3 — *why* a Capacitor Braze plugin
+> should exist, and why the Cordova compat path is not it — is still the argument, and it is worth
+> being able to see what was predicted against what happened.
+
+**Status:** historical planning document (see banner above). Shipped state: `0.2.0`.
 **License:** MIT
-**npm:** `capacitor-braze` (unscoped, slot confirmed available)
-**Lighthouse customer:** Aromo customer app (Capacitor + Next.js)
+**npm:** [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) (unscoped) — published
+**Lighthouse customer:** Aromo customer app (Capacitor + Next.js) — *aspirational; the integration has not shipped*
 **Owner:** Bryce Aspinwall (`bma342`)
 **Affiliation with Braze, Inc.:** None. Community-maintained, offered as-is.
-**Last updated:** 2026-05-20
+**Last updated:** 2026-05-20 (banner added 2026-09-22)
 
 **Companion docs:**
 - [`SDK_SURFACE.md`](./SDK_SURFACE.md) — complete Braze SDK capability catalog + plugin coverage roadmap
@@ -477,13 +507,16 @@ The README cites Aromo as a production user once `0.1.0` ships and is integrated
 
 ## 14. Open decisions
 
-1. **npm name:** ~~`@bma342/capacitor-braze`~~ → **`capacitor-braze` (unscoped)**. Confirmed available on npm (different word order from the abandoned `braze-capacitor` stub). Cleaner install (`npm i capacitor-braze`); matches `capacitor-secure-storage-plugin` and similar community plugin conventions.
-2. **Mock server language:** Ktor (matches Aromo, you know it deeply) vs. Express (more accessible to the JS-native Capacitor community). **Default: Ktor for first build, document alt path.**
-3. **E2E test runner:** Detox (mature, RN heritage) vs. Maestro (newer, simpler YAML flows). **Default: Maestro — lower setup cost, faster feedback.**
-4. **Min Capacitor version supported:** v6.0 (current) or v5.0 (broader audience). **Default: v6.0 — v5 is sunsetting and supporting it adds bridge complexity.**
-5. **Min Android API / iOS version:** match Braze SDK's own minimums (Android API 26+, iOS 15+). **Default: yes, match.**
-6. **Should Aromo be the lighthouse on day 1, or wait for v0.2?** Day 1 = real production validation but locks the v0.1 surface to Aromo's actual usage. v0.2 = cleaner first release. **Default: day 1 — better story, real bugs found faster.**
-7. **SDK Authentication default:** opt-in via `enableSdkAuthentication: true` in v0.1, with README pushing hard for production use. See [`SECURITY.md §2`](./SECURITY.md#2-sdk-authentication-signed-jwt).
+**All seven are now closed.** Recorded here with their actual outcomes, which in three cases are
+the opposite of the defaults this section proposed.
+
+1. **npm name:** ~~`@bma342/capacitor-braze`~~ → **`capacitor-braze` (unscoped)**. ✅ **Shipped as decided.** Cleaner install; matches `capacitor-secure-storage-plugin` and similar community conventions. (Five other lines in this document still say the scoped name; they were never updated.)
+2. **Mock server language:** proposed Ktor. ❌ **Decided the other way: Fastify + TypeScript.** It runs in-process inside vitest on an ephemeral port, which removes the "start the server first" step entirely and lets each test bind its own instance. A JVM server would have meant a second toolchain in CI for the JS test tier. The Ktor framing survived in five documents for four months after the decision and caused real confusion — including a Dependabot entry declaring a `gradle` ecosystem for an npm project, which failed weekly from July until 0.2.0.
+3. **E2E test runner:** proposed Maestro. ❌ **Decided against both.** No e2e runner exists and none is planned. The three test tiers that shipped — 154 vitest against the mock, 74 Robolectric, 26 XCTest — cover the bridge translation layer, which is what this plugin actually owns; an e2e runner would mostly re-test Braze's SDKs and the demo app's React code. Layer 4 (manual, against a real Braze trial) is the intended top of the pyramid, and it has not been run. `REVIEW_READINESS.md` §7 records this as a deliberate deferral.
+4. **Min Capacitor version supported:** ✅ **v6.0**, later widened to `^6.0.0 || ^7.0.0`. Capacitor 8 is out of range and is a tracked follow-up (see `SDK_SURFACE.md`).
+5. **Min Android API / iOS version:** ⚠️ **Decided, but not as stated.** The plugin's Android default is `minSdkVersion 22` (matching Capacitor's stock template), not 26; and the iOS 15 floor is **the plugin's own choice**, not Braze's — BrazeKit declares iOS 12 at every version this plugin has pinned. See [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md).
+6. **Aromo as lighthouse on day 1:** ❌ **Not done.** The plugin shipped `0.1.0` and `0.2.0` with no production consumer, and no document claims otherwise — including the README, which deliberately does not cite Aromo. The cost is visible: without a production integration, nothing has run against a real Braze backend at all.
+7. **SDK Authentication default:** ✅ **Shipped as decided** — opt-in via `enableSdkAuthentication: true`, with client-side enforcement on all three bridges when it is on. See [`SECURITY.md §2`](./SECURITY.md#2-sdk-authentication-signed-jwt).
 
 ---
 

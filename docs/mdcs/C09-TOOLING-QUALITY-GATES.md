@@ -89,34 +89,63 @@ The rules ARE the design contract. If a contributor wants to deviate, the deviat
 
 ## What lint does NOT catch
 
-- **Kotlin formatting.** Capacitor's official template targets Java (via `prettier-plugin-java`), not Kotlin. The Kotlin ecosystem's de-facto formatter is `ktlint`; we don't run it today. Kotlin style is reviewed by hand. Add `ktlint` if/when Kotlin diff churn becomes a real cost.
-- **Cross-file consistency** (e.g. "did you add this method to all 8 files"). That's [C01](./C01-METHOD-ANATOMY.md) discipline and PR review, not lint.
-- **Behavior correctness.** Lint is shape-level. Behavior is caught by the example app and Layer 4 smoke testing.
+- **Kotlin *formatting*.** Capacitor's official template targets Java (via `prettier-plugin-java`), not Kotlin. The Kotlin ecosystem's de-facto formatter is `ktlint`; we don't run it. Kotlin style is reviewed by hand. Add `ktlint` if/when Kotlin diff churn becomes a real cost.
+- **`.mjs` files.** The prettier glob is `**/*.{css,html,ts,js}`, so `rollup.config.mjs` and `.github/scripts/assert-pack.mjs` are unformatted by design. Widening the glob is an MDC change (see "Rules for extending").
+- **Cross-file consistency** (e.g. "did you touch every artifact in the lockstep"). That is [C01](./C01-METHOD-ANATOMY.md) discipline and PR review, not lint. Worth being blunt: **nothing in CI fails when a method ships without a native implementation or without tests.**
+- **Behavior correctness.** Lint is shape-level. Behaviour is caught by the three test tiers (154 vitest / 74 Robolectric / 26 XCTest), the example app, and — in principle — Layer 4 smoke testing, which has not been run.
+
+**Kotlin static analysis is covered**, separately from formatting: Android Lint runs on the library
+module with `abortOnError true`, which is what catches e.g. a call above the `minSdkVersion` floor.
+It is in the table below.
 
 ## CI integration
 
 The `.github/workflows/test.yml` workflow runs the following jobs on every push to `main` and every PR targeting `main`:
 
-| Job | Runner | What it does | Cost (approx) |
-|---|---|---|---|
-| `lint` | ubuntu-latest | `npm run eslint` + `npm run prettier -- --check` | ~30s |
-| `build-plugin` | ubuntu-latest | `npm run build` + asserts dist artifacts and README docgen markers | ~20s |
-| `build-example` | ubuntu-latest | Builds the `example/` testbed app against the freshly built plugin | ~30s |
-| `build-demo` | ubuntu-latest | Builds the `demo/` reference app's web assets against the freshly built plugin | ~45s |
-| `audit` | ubuntu-latest | `npm audit --audit-level=high --omit=dev` against runtime deps | ~15s |
-| `verify-ios` | macos-latest | `xcodebuild` against `demo/ios/App` — compiles the Swift bridge against real BrazeKit 14.1.0 | ~8-12 min |
-| `verify-android` | ubuntu-latest | `./gradlew :app:assembleDebug` against `demo/android` — compiles the Kotlin bridge against real `com.braze:android-sdk-ui` 42.2.0 | ~5-8 min |
+**Nine jobs.** `test.yml` also runs on a `v*` tag push and is invoked by `release.yml` via
+`workflow_call`, which is what puts every one of these gates in front of `npm publish`.
+
+| Job | Runner | What it does |
+|---|---|---|
+| `lint` | ubuntu-latest | `npm run eslint` + `npm run prettier -- --check`. **Not SwiftLint** — see below |
+| `build-plugin` | ubuntu-latest | `npm run build`, then asserts the dist artifacts (`dist/esm/index.js`, `dist/esm/index.d.ts`, `dist/plugin.cjs.js`, `dist/docs.json`) exist and the README docgen block is populated |
+| `pack-check` | ubuntu-latest | `npm run pack:check` → `.github/scripts/assert-pack.mjs`: asserts every consumer-required path is in the tarball and that nothing from `test/ example/ demo/ docs/ .claude/` leaked |
+| `build-example` | ubuntu-latest | Builds the `example/` testbed app against the freshly built plugin |
+| `build-demo` | ubuntu-latest | Builds the `demo/` reference app's web assets against the freshly built plugin |
+| `test-web` | ubuntu-latest | Type-checks `test/mock-server` and `test/web` (vitest never type-checks), then runs the **154** behavioral tests |
+| `audit` | ubuntu-latest | `npm audit --audit-level=high --omit=dev`, gitleaks over full history, and Snyk when `SNYK_TOKEN` is set |
+| `verify-ios` | macos-latest | Pins `DEVELOPER_DIR` to an Xcode 26.x, installs SwiftLint, runs `swiftlint lint --strict`, regenerates the XCTest target and fails if the committed project is stale, then **one** `xcodebuild test` that builds the demo against BrazeKit 18.2.1 and runs the **26** XCTests |
+| `verify-android` | ubuntu-latest | JDK 21. `:app:assembleDebug` against `com.braze:android-sdk-ui` 43.2.0, then `:capacitor-braze:testDebugUnitTest` (**74** Robolectric tests), then `:capacitor-braze:lintDebug` (Android Lint, `abortOnError true`) |
+
+No job talks to a real Braze backend, and no Braze credential exists in CI. The whole suite is
+self-contained against the in-process Fastify mock.
 
 **Why the verify-ios + verify-android jobs are non-negotiable now.** Phase N's commit had to be amended twice in Phase O once the iOS bridge was finally compiled against real BrazeKit — methods I'd inferred from documentation didn't exist; cases I'd assumed existed had different names. Same exercise for Android in the follow-up phase. These two slow jobs eliminate the "discover bugs by manual compile attempts every few weeks" pattern by running them on every PR. The cost is ~13-20 extra CI minutes per push; the savings are unbounded.
 
-SwiftLint runs inside `verify-ios` (the macOS runner ships with it; ubuntu does not). The `lint` job's SwiftLint step is skipped silently on Ubuntu.
+**SwiftLint runs inside `verify-ios`, and the runner does *not* ship it.** This matters more than it
+sounds: `node-swiftlint` warns and exits `0` when the binary is absent, so for as long as the job
+assumed the image provided it, the `--strict` gate was a silent no-op that had never enforced a
+single rule. `verify-ios` now installs the binary and asserts `swiftlint version` answers before
+linting. The `lint` job on Ubuntu deliberately runs ESLint and Prettier only.
+
+A related trap, same shape: `.swiftlint.yml` pointed `parent_config` at
+`node_modules/@ionic/swiftlint-config/.swiftlint.yml`, which does not exist — that package ships a
+JS module, not YAML. SwiftLint silently ignored the missing parent and ran with no Ionic rules. The
+ruleset is now inlined. **When a linter can be configured to lint nothing, prove it fails on
+purpose**; the same applies to Android Lint, which was verified by a throwaway file that deliberately
+tripped `[NewApi]`.
 
 ## Rules for extending
 
 When you add a new file type that should be formatted:
 
-1. Add the extension to the `prettier` script glob.
+1. Add the extension to the `prettier` script glob in `package.json`.
 2. If it needs a non-default prettier plugin, add the plugin to devDeps and document it here.
+3. Update the "What lint does NOT catch" list above if the addition closes one of its gaps.
+
+Adding `.mjs` is the obvious candidate and is deliberately not done: it is a two-file gain
+(`rollup.config.mjs`, `.github/scripts/assert-pack.mjs`) against a glob change that also sweeps in
+anything a future dependency drops at the repo root.
 
 When you discover a new lint rule that should fire:
 
@@ -137,4 +166,5 @@ When you upgrade Capacitor major versions:
 - **Hand-edited README content inside `<docgen-api>` / `<docgen-index>` markers.** Will be overwritten next docgen run.
 - **`prepare`-script tooling that runs on consumer installs.** Our scripts run for developers, not consumers. A consumer running `npm install capacitor-braze` does not get ESLint installed in their tree.
 - **Project-local linting tools** (markdownlint, stylelint, etc.) without an MDC update. The set above is intentionally small; expanding requires a deliberate decision.
-- **Skipping the lint job in CI** because "the change is small." The lint job is fast (~10s); skipping is more expensive than running.
+- **Skipping the lint job in CI** because "the change is small." The lint job is fast; skipping is more expensive than running.
+- **A gate that cannot fail.** A linter whose config points at a missing file, a `node-swiftlint` with no binary, an `abortOnError false` — all three of these shipped here and all three read as green. When you add or change a gate, break something on purpose and confirm it goes red before you trust it.

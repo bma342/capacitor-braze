@@ -1,9 +1,25 @@
 # Test coverage audit (web bridge)
 
-**Audited:** 2026-05-20, post defensive-validation pass.
-**Test count:** **92 tests** = 75 behavioral + 17 serializer across 14 files. ~2.4s total.
-**Methods on the surface:** 37 (per [`src/definitions.ts`](../src/definitions.ts)).
-**Directly covered:** **37 of 37**, plus dedicated rejection coverage for every input-validation branch in `src/web.ts` ([`validation.test.ts`](../test/web/src/validation.test.ts)).
+> ⚠️ **This table is maintained by hand.** There is no coverage instrumentation on any platform, so
+> nothing verifies it. Treat it as a map of intent, re-derived when the suite changes, and check
+> `git log` on `test/web/src/` if a row looks stale. The per-method detail below was last re-derived
+> for `0.2.0`; the header numbers are from a live run.
+
+**Audited:** 2026-09-22 (`0.2.0`).
+**Web test count:** **154 tests across 14 files, ~3s** (`npm test`).
+**Native:** 74 Robolectric/JUnit (`android/src/test/`) + 26 XCTest (`ios/PluginTests/`), both in CI.
+**Methods on the surface:** 35, plus `addListener` (4 event overloads) and `removeAllListeners`.
+**Directly covered:** **35 of 35**, plus dedicated rejection coverage for every input-validation
+branch in `src/web.ts` ([`validation.test.ts`](../test/web/src/validation.test.ts)).
+
+**What 0.2.0 changed here.** The 2026-09 audit found that breadth was real but depth was not:
+eleven tests would have passed with their implementation replaced by `return;`, and swapping
+`setFirstName` with `setLastName` broke nothing. Every attribute setter now asserts its Braze wire
+key, subscription groups assert `status`, `setGender` asserts the mapped wire value for all six
+genders, `logPurchase` asserts `q` and `pr`, and `serializeInAppMessage` is covered for the first
+time against real SDK message classes. Two listener events (`inAppMessageReceived`, `sdkAuthError`)
+had zero coverage anywhere; `sdkAuthError` is now covered end-to-end on web and at payload level on
+both natives.
 
 ## What's directly covered
 
@@ -75,24 +91,47 @@ The populated-cache gap that this section originally tracked is **closed**. Two 
 | `addListener('contentCardsUpdated', cb)` | ✅ asserts callback fires after `requestContentCardsRefresh` with the canonical `{ cards: BrazeContentCard[], lastUpdated: number \| null }` payload |
 | `removeAllListeners` | ✅ asserts no further callback invocations after removal, even when a subsequent refresh fires |
 
-### Gaps blocked on platform-native test harness ([C11](./mdcs/C11-NATIVE-TEST-HARNESSES.md))
+### Native coverage — what the unit tiers now cover
+
+[C11](./mdcs/C11-NATIVE-TEST-HARNESSES.md)'s unit tiers landed in `0.2.0` and run in CI. On Android,
+74 Robolectric tests cover every `@PluginMethod` validation branch byte-exact against `src/web.ts`,
+an init-guard sweep over all 29 guarded methods, and every serializer against real Braze model
+objects parsed from Braze's own wire JSON. On iOS, 26 XCTests cover the attribute-value classifier
+(including the `0`/`1`-as-boolean regression), `dataFromHex` for `registerPushToken`, the C04 error
+strings, extras stringification, and the `sdkAuthError` payload. The iOS `enableSDK` / `isDisabled`
+asymmetry this table used to list is gone — the plugin now tracks that state itself.
+
+### Remaining gaps
 
 | Surface | What's untested today | Plan |
 |---|---|---|
-| iOS bridge wire format | Whether BrazeKit 14.1.0 emits the same wire shape this file's web tests validate | Smoke-test playbook captures it once, C11 implementation locks it in for every PR |
-| Android bridge wire format | Same for `com.braze:android-sdk-ui` 42.2.0 | Same |
-| iOS hex decode for `registerPushToken` | `dataFromHex` against a real APNs-style hex token | C11 implementation |
-| iOS-specific privacy/lifecycle asymmetry per [C07](./mdcs/C07-INIT-INDEPENDENT-METHODS.md) | `enableSDK` post-init requirement | C11 implementation |
+| iOS / Android bridge **wire format** | Whether BrazeKit 18.2.1 and `com.braze:android-sdk-ui` 43.2.0 emit the same HTTP this file's web tests validate. The native tiers assert the bridge's *translation* against SDK model objects, not the bytes the SDK then sends | C11's integration tier (URLProtocol / MockWebServer), still design-only. The Layer 4 smoke would capture the ground truth to write it against |
+| `inAppMessageReceived` delivery | The DTO is covered at the serializer level on all three platforms; nothing reproduces Braze's trigger-delivery envelope end to end | Mock-server modelling of trigger definitions |
+| `contentCardsUpdated` after a second `initialize` on web | The SDK does not appear to publish to a fresh content-cards subscriber after destroy + re-init; feature flags do | Possible upstream issue; first-init delivery is covered |
+| Coverage percentages | No instrumentation on any platform | Unblocked whenever someone wires it; this table is the substitute |
 
-## Sufficient for tagging 0.1.0?
+## Is this enough to ship?
 
-Yes. The 74 behavioral + 17 serializer tests cover the consumer-visible contract for **all 37 surface methods** directly. There are no remaining web-bridge coverage gaps. The 0.1.0 release notes will reference this doc so adopters know what is proven before they consume the plugin.
+For the **web bridge**, yes: all 35 methods and every validation branch are covered, and as of
+`0.2.0` the assertions are on the wire output rather than on "did not throw" — the 2026-09 audit
+found eleven tests that would have survived their implementation being replaced with `return;`.
 
-## Next moves (remaining work is platform-native, not web)
+For the **native bridges**, the translation layer is covered and the HTTP is not.
 
-The web-side audit is closed. The two remaining outside-of-audit gaps live on the native platforms:
+For **anything against a real Braze backend**, no: the Layer 4 smoke has never been run, for `0.1.0`
+or `0.2.0`. That is stated in the README, the CHANGELOG, C08's bump protocol and
+`REVIEW_READINESS.md` §7.
 
-1. **C11 native harness implementation** (post-trial-smoke, ~1-2 days). Once the trial smoke produces the iOS + Android wire-format ground truth, C11's URLProtocol intercept (iOS) + MockWebServer/Robolectric (Android) lock that contract in for every PR. Until C11 lands, iOS + Android bridges have compile-only CI coverage via `verify-ios` and `verify-android`.
-2. **Trial smoke** (your hands, ~2-3 hrs). Walk [`SMOKE-TEST-PLAYBOOK.md`](./SMOKE-TEST-PLAYBOOK.md) against your Braze trial; pre-staged capture templates in [`smoke-tests/`](./smoke-tests/).
+## Next moves
 
-Estimate: with the trial smoke + C11 + the two web-side enhancements above, the plugin reaches "every method has at least one end-to-end behavioral test on the platform it runs on." That is the bar this doc tracks against.
+1. **C11's integration tier** — URLProtocol intercept on iOS, MockWebServer on Android, asserting
+   real HTTP rather than DTO shape. Still design-only, and deliberately so: writing it well needs
+   captured ground truth from a real Braze backend to assert against, which is what the smoke run
+   would produce. The unit tiers (74 + 26) already lock in the bridge translation on every PR.
+2. **Layer 4 smoke** (maintainer, ~2–3 hrs). Walk [`SMOKE-TEST-PLAYBOOK.md`](./SMOKE-TEST-PLAYBOOK.md)
+   against a Braze trial; capture templates are pre-staged in [`smoke-tests/`](./smoke-tests/).
+   Nothing in this repo has ever been run against a live Braze backend.
+3. **Coverage instrumentation**, which would let this table stop being hand-maintained.
+
+With (1) and (2), the plugin reaches "every method has at least one end-to-end behavioral test on
+the platform it runs on." That is the bar this doc tracks against, and it is not met yet.

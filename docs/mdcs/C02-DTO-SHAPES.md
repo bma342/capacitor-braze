@@ -28,7 +28,7 @@ If we'd picked iOS or Android as canonical, the Web bridge would have to invert 
 
 ## Worked example — `BrazeFeatureFlag`
 
-**TS contract** ([`src/definitions.ts:252`](../../src/definitions.ts)):
+**TS contract** (`BrazeFeatureFlagPropertyValue` in [`src/definitions.ts`](../../src/definitions.ts)):
 
 ```ts
 export type BrazeFeatureFlagPropertyValue =
@@ -46,7 +46,7 @@ export interface BrazeFeatureFlag {
 }
 ```
 
-This matches the Web SDK's `PropertiesJson` ([`node_modules/@braze/web-sdk/index.d.ts:1576`](../../node_modules/@braze/web-sdk/index.d.ts)) one-for-one:
+This matches the Web SDK's `PropertiesJson` (`PropertiesJson` in `node_modules/@braze/web-sdk/index.d.ts`) one-for-one:
 
 ```ts
 export type PropertiesJson = Partial<
@@ -54,11 +54,11 @@ export type PropertiesJson = Partial<
 >;
 ```
 
-**Web bridge** ([`src/web.ts:478`](../../src/web.ts)): walks `featureFlag.properties` and re-emits only entries with one of the six known type tags. Future SDK additions are dropped rather than guessed — see "Forbidden" below.
+**Web bridge** (`serializeFeatureFlag` in [`src/web.ts`](../../src/web.ts)): walks `featureFlag.properties` and re-emits only entries with one of the six known type tags. Future SDK additions are dropped rather than guessed — see "Forbidden" below.
 
-**iOS bridge** ([`ios/Plugin/BrazePlugin.swift:436`](../../ios/Plugin/BrazePlugin.swift)): pattern-matches `Braze.FeatureFlag.Property` enum cases (`.string(let v)`, `.number(let v)`, `.boolean(let v)`, `.timestamp(let v)`, `.image(let v)`, `.json(let v)`) and emits `[String: Any]` records matching the wire format. `.timestamp` → `type: 'datetime'` and `.json` → `type: 'jsonobject'` — these two name-mappings are required because BrazeKit's case names don't match the wire format vocabulary.
+**iOS bridge** (`serializeFeatureFlag` in [`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift)): pattern-matches `Braze.FeatureFlag.Property` enum cases (`.string(let v)`, `.number(let v)`, `.boolean(let v)`, `.timestamp(let v)`, `.image(let v)`, `.json(let v)`) and emits `[String: Any]` records matching the wire format. `.timestamp` → `type: 'datetime'` and `.json` → `type: 'jsonobject'` — these two name-mappings are required because BrazeKit's case names don't match the wire format vocabulary.
 
-**Android bridge** ([`android/.../BrazePlugin.kt:572`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)): `featureFlag.properties` is a `JSONObject` that Braze stores in the same wire format Braze ships, so the bridge uses `JSObject(jsonObject.toString())` to round-trip. This is the only platform where we use a string round-trip; on the other two platforms direct construction is type-safe.
+**Android bridge** (`serializeFeatureFlag` in [`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)): `featureFlag.properties` is a `JSONObject` that Braze stores in the same wire format Braze ships, so the bridge uses `JSObject(jsonObject.toString())` to round-trip. This is the only platform where we use a string round-trip; on the other two platforms direct construction is type-safe.
 
 ## Worked example — `BrazeContentCard` (discriminated union)
 

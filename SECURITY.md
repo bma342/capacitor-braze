@@ -4,7 +4,7 @@
 >
 > **Unofficial plugin.** This is an independent, community-maintained Capacitor wrapper. NOT affiliated with or endorsed by Braze, Inc. For Braze's own security disclosures and SDK-level guarantees, see [braze.com/security](https://www.braze.com/security). This document covers only the plugin-layer security posture; the underlying Braze SDKs are responsible for everything they document themselves.
 
-**Last updated:** 2026-05-20
+**Last updated:** 2026-09-22 (reconciled against the `0.2.0` implementation end to end — see [`docs/audits/2026-09/A4-security.md`](./docs/audits/2026-09/A4-security.md) for what changed and why).
 **Disclosure:** see [§14](#14-vulnerability-disclosure-policy) below.
 
 ---
@@ -17,14 +17,14 @@ The plugin sits between consumer Capacitor app code and Braze's native SDKs. The
 |---|---|---|
 | User identity spoofing (one user claims another's ID) | Identity layer | **High** — addressed via SDK Authentication |
 | API key extraction from app bundle | Distribution | **Low** — Braze SDK keys are public-by-design |
-| PII leakage via debug logs / crash reports | Plugin logging | **Medium** — addressed via prod-safe defaults |
+| PII leakage via debug logs / crash reports | Plugin logging | **Medium** — the bridge emits no log line containing user data at all (§3), and `enableLogging: false` puts the Braze SDK at errors-only on every platform (§8) |
 | Push token leaking to wrong endpoint | Push handoff | **Medium** — addressed via single-owner design |
-| XSS via HTML in-app messages | IAM rendering | **Medium** — inherited from Braze; documented |
-| Deep link redirection (open arbitrary URLs) | Push / IAM handlers | **Medium** — addressed via Capacitor URL allow-list |
+| XSS via HTML in-app messages | IAM rendering | **Medium** — inherited from Braze. The plugin's role is **disclosure only**; your WebView CSP and Braze dashboard hygiene are the controls (§6) |
+| Deep link redirection (open arbitrary URLs) | Push / IAM handlers | **Medium** — addressed via **Capacitor's** `server.allowNavigation` allow-list, which is Capacitor's control, not this plugin's. The plugin does not intercept deep links (§7) |
 | Man-in-the-middle on SDK traffic | Network | **Low** — TLS-only; pinning optional |
 | Background location abuse | Geofence module | **Medium** — opt-in only, not in v0.1 |
-| Supply-chain attack on the plugin itself | npm publish | **High** — addressed via npm 2FA + signed releases |
-| Insecure consumer integration patterns | Documentation | **High** (in aggregate) — addressed via README + this doc |
+| Supply-chain attack on the plugin itself | npm publish | **High** — CI-gated publish, SHA-pinned Actions, provenance attestation, tarball manifest gate (§13). Note that the npm automation token bypasses 2FA by design; Trusted Publishing is the intended end state and is not yet configured |
+| Insecure consumer integration patterns | Documentation | **High** (in aggregate) — addressed via the [README's Security section](./README.md#security) + this doc |
 
 **Out of scope:** Braze backend security (SOC 2 etc.), the consumer app's own auth system, network attacks against Braze's infra, jailbroken/rooted device defense beyond standard SDK behavior.
 
@@ -45,7 +45,7 @@ This distinction is load-bearing. Get it wrong and you ship a credential leak.
 
 - **The plugin accepts ONLY SDK API keys** in `initialize({ apiKey })`. SDK keys are designed to be embedded in client apps; this is normal Braze usage.
 - **The plugin must NEVER expose, accept, or transport REST API keys.** If a consumer somehow passes a REST key, it doesn't change behavior (the SDK won't validate it) but they've now leaked a secret. Documentation explicitly warns against this and provides server-side guidance.
-- README has a "**Which key do I use?**" section at the top, with a clear visual: SDK key → plugin; REST key → server.
+- The README's [Which API key do I use?](./README.md#which-api-key-do-i-use) section states this for consumers, and `src/definitions.ts`'s JSDoc on `apiKey` repeats it so it also lands in the generated API reference.
 
 ### What if SDK keys are extracted?
 
@@ -93,20 +93,25 @@ The primary defense against user-identity spoofing. Without it, anyone with the 
 
 ### Plugin design
 
-- **`Braze.initialize({ apiKey, endpoint, enableSdkAuthentication: true })`** — turns on signature requirement on the SDK side. Defaults to `false` in v0.1 (matches Braze's default) but README **strongly recommends** enabling for any production app with real users.
+- **`Braze.initialize({ apiKey, endpoint, enableSdkAuthentication: true })`** — turns on signature requirement on the SDK side. Defaults to `false` (matching Braze's own default). The [README's Security section](./README.md#should-i-enable-sdk-authentication) recommends enabling it for any production app with real users.
 - **`Braze.changeUser({ userId, sdkAuthSignature })`** — both params required when auth is enabled. Plugin validates `sdkAuthSignature` is non-empty string client-side before bridging.
 - **`Braze.addListener('sdkAuthError', listener)`** — fires when Braze rejects a signature (expired, malformed, etc.). Consumer should refresh the JWT via their backend and call `Braze.setSdkAuthenticationSignature({ signature })`. (Live in v0.1.)
 - **`Braze.setSdkAuthenticationSignature({ signature })`** — for in-session signature refresh. (Live in v0.1.)
 
-### Server-side guidance in README
+### Server-side signing is the consumer's responsibility
 
-The plugin can't sign JWTs — that requires the consumer's private key. README provides:
+The plugin cannot sign JWTs — that needs the consumer's private key, which must never be in an app
+bundle. The plugin therefore has no signing code, no key handling, and no opinion about your
+backend.
 
-- Reference implementations for Node.js, Python, Ruby, Go, and Kotlin/Ktor (since Aromo uses Ktor).
-- JWT claims structure: `{ sub: userId, exp: <now + 1h>, iss: "your-app" }`.
-- Key generation steps (RS256 keypair, upload public to Braze dashboard).
-- Key rotation guidance (Braze supports multiple active keys; rotate without downtime).
-- Token refresh pattern (refresh before expiry, not on failure).
+Braze documents the JWT claim structure, RS256 key generation, uploading the public key to the
+dashboard, and rotating keys without downtime in
+[SDK Authentication](https://www.braze.com/docs/developer_guide/sdk_authentication/). That is the
+authority; this repo deliberately does not maintain a second copy of it that can drift.
+
+What this repo does provide: the [README's Security section](./README.md#should-i-enable-sdk-authentication)
+explains when to enable it, what the plugin enforces client-side, and how to recover from an
+expired signature (`sdkAuthError` → fetch a new JWT → `setSdkAuthenticationSignature`).
 
 ### Failure modes
 
@@ -114,7 +119,7 @@ The plugin can't sign JWTs — that requires the consumer's private key. README 
 |---|---|
 | JWT expired | SDK enqueues retry, fires `sdkAuthError` event. Consumer refreshes. |
 | JWT signature invalid (key rotated, wrong key) | SDK rejects request, fires `sdkAuthError`. Consumer must regenerate. |
-| `enableSdkAuthentication: true` but `changeUser` called without signature | Plugin throws `BrazeAuthRequiredError` client-side before bridging. |
+| `enableSdkAuthentication: true` but `changeUser` called without signature | Rejected client-side before bridging, on all three platforms, with the byte-identical message ``Braze.changeUser: `sdkAuthSignature` is required (string) when SDK Authentication is enabled. See SECURITY.md §2.`` There is no plugin-specific error *class* — the plugin rejects with a plain `Error` carrying a C01-format message. Match on the message, not on a type. |
 | Network failure during auth | SDK retries with cached signature. |
 
 ---
@@ -130,14 +135,25 @@ The plugin can't sign JWTs — that requires the consumer's private key. README 
 
 ### Plugin rules
 
-1. **Never log PII at any log level**, even with `enableLogging: true`. Plugin's own log lines mask:
-   - Email → `j***@e***.com`
-   - Phone → `***-***-1234`
-   - User ID → first 4 chars + `***`
-   - Custom attributes → redact value, log key + type
-2. **Don't include PII in error messages** that may surface to consumer's error tracking (Sentry, etc.). Errors quote argument names, not values.
-3. **Don't echo PII back from native to JS** in resolved promise values. If the native SDK returns PII (e.g., `getUserId()`), pass it through as opaque string — but plugin must not transform, log, or persist it.
-4. **`wipeData()` is destructive and must be exposed clearly** — README's privacy section explicitly covers the right-to-be-forgotten use case.
+1. **The bridge layer emits no log output containing user data, on any platform.** This is stronger
+   than masking and easier to verify: there is no plugin-owned sink for PII to reach. The handful of
+   diagnostics the bridges do emit are a fixed set of non-PII strings — the endpoint cluster-shape
+   warning (which logs the *pattern*, never the endpoint), "dropped an unrecognized in-app message /
+   content card variant", a warning naming the *method* when the Braze SDK rejects an attribute
+   value, and a warning that the Android SDK kept its first configuration on a second `initialize`.
+   Masking helpers would be added alongside the first plugin-owned log line that could carry user
+   data; today there is none. Verified by grep over `src/`, `ios/Plugin/` and `android/src/main/`.
+2. **Errors quote argument names, not values.** `` Braze.setEmail: `email` is required (string). ``
+   — never the address. Enforced by the C01 message format and checked by the byte-exact
+   error-string tests on all three platforms.
+   *One deliberate exception:* a value drawn from a **closed, non-secret enum** may be echoed, because
+   naming the rejected value is the only way to make the error actionable — `` Braze.setGender:
+   unknown gender "<value>". `` The value is one of a fixed set the consumer chose from a documented
+   list; it is not user data. See [C06](./docs/mdcs/C06-SECURITY-DEFAULTS.md) §4.
+3. **Don't echo PII back from native to JS** beyond what the SDK returns. `getUserId()` passes the
+   SDK's string through unchanged; the plugin does not transform, log, or persist it.
+4. **`wipeData()` is destructive and is documented as such** — see the README's
+   [right-to-be-forgotten flow](./README.md#right-to-be-forgotten-gdpr--ccpa) and §10 below.
 
 ### What the plugin does NOT do
 
@@ -152,8 +168,8 @@ The plugin can't sign JWTs — that requires the consumer's private key. README 
 ### TLS
 
 - Braze SDKs default to TLS 1.2+ for all network traffic. Plugin does not change this.
-- Custom `endpoint` config accepts any URL — including `http://` — but only because that's required for mock-server testing. README explicitly warns: **never use `http://` in production**.
-- v0.5 adds a config gate: `allowInsecureEndpoint: false` (default), preventing accidental `http://` in production builds.
+- The `endpoint` option accepts `http://` **only** when `allowInsecureEndpoint: true` is also passed, which exists for mock-server testing. The rejection message says so in as many words: ``Braze.initialize: `endpoint` must use HTTPS. Set `allowInsecureEndpoint: true` only for local mock-server testing. See SECURITY.md §4.`` **Never ship `allowInsecureEndpoint: true`.**
+- `allowInsecureEndpoint` (default `false`) is the config gate, enforced on all three platforms with a strict `=== true` check. An `http://` endpoint is rejected at `initialize` unless it is explicitly set. Shipped in 0.1.0.
 
 ### Certificate pinning
 
@@ -163,14 +179,22 @@ The plugin can't sign JWTs — that requires the consumer's private key. README 
 
 ### Endpoint validation
 
-- Plugin parses `endpoint` URL client-side at `initialize` time. Rejects:
-  - Non-HTTPS in production builds (when `allowInsecureEndpoint: false`).
-  - Malformed URLs.
-  - Endpoints not in Braze's known cluster list (warning, not error — Braze adds clusters over time).
+The plugin parses the `endpoint` URL client-side at `initialize` on all three platforms and
+**rejects**:
 
-### Known cluster endpoints (for validation warnings)
+- a non-HTTPS endpoint, unless `allowInsecureEndpoint: true` was passed;
+- a malformed URL. (Swift's `URL(string:)` and Java's `java.net.URI` are laxer than the WHATWG
+  `URL` the web bridge uses, so native accepts a few strings web rejects. Cosmetic, not a
+  security difference.)
 
-`sdk.iad-01.braze.com`, `sdk.iad-02.braze.com`, `sdk.iad-03.braze.com`, `sdk.iad-04.braze.com`, `sdk.iad-05.braze.com`, `sdk.iad-06.braze.com`, `sdk.iad-07.braze.com`, `sdk.iad-08.braze.com`, `sdk.fra-01.braze.eu`, `sdk.fra-02.braze.eu`, `sdk.us-08.braze.com`, plus any Braze publishes in the future.
+It additionally **warns** — never errors — when the host does not look like a Braze cluster. As of
+0.2.0 this runs on all three platforms (web `console.warn`, iOS `os.Logger`, Android
+`BrazeLogger.w`), and it **does not log the endpoint value**, only the pattern it expected.
+
+Matching is by **pattern**, not by a hardcoded list: `sdk.<region>-NN.braze.com` or `.braze.eu`,
+with `localhost`, `127.0.0.1`, `*.test` and `*.local` exempt so mock-server testing is silent. A
+fixed cluster list would need updating every time Braze adds a cluster and would produce false
+warnings in the meantime; a pattern does not.
 
 ---
 
@@ -205,57 +229,107 @@ There is no `enableAutomaticPushHandling` flag — the plugin is intentionally a
 
 Braze supports **HTML In-App Messages** rendered inside a WebView. The HTML content comes from the Braze dashboard, where customer marketing teams author it. If a marketing user (or compromised dashboard account) injects malicious HTML/JS, it executes in the consumer app's WebView context.
 
-### Mitigation (mostly inherited from Braze)
+### What actually mitigates this
 
-- Braze's `allowUserSuppliedJavascript` config flag is **off by default**. Plugin's `initialize` exposes it explicitly; README warns about the threat model before enabling.
-- Plugin's `addListener('inAppMessageReceived')` fires **before** Braze renders, letting consumer inspect message content and return `'discard'` if suspicious (e.g., contains unexpected `<script>` tags).
-- README documents recommended Content Security Policy for the Capacitor WebView (`script-src 'self'` plus Braze's expected origins).
+**The plugin's role here is disclosure only.** Be precise about what that means, because an earlier
+version of this document claimed two controls the plugin does not have.
+
+1. **Braze's own `allowUserSuppliedJavascript` default of `false` applies.** The plugin does **not**
+   expose that flag at `initialize`, so it cannot be turned on through this plugin at all — which is
+   the safe direction. Exposing it is a roadmap item in [`SDK_SURFACE.md`](./SDK_SURFACE.md), and if
+   it ever ships it will default to `false` and carry this threat model in its JSDoc.
+2. **`@braze/web-sdk` is floored at `^6.13.0`, and that is a security floor.** Web SDK 6.12.1 fixed
+   a bug where an in-app message with multiple buttons could be displayed even when one of its
+   buttons used a `javascript:` or `data:` URI and `allowUserSuppliedJavascript` was disabled — a
+   bypass of exactly the toggle this section relies on. Do not pin below 6.13.0.
+3. **Your WebView's Content Security Policy** is the real preventive control, and it is yours to
+   set. A starting point is in the [README's Security section](./README.md#content-security-policy-for-the-capacitor-webview).
+4. **Braze dashboard account hygiene** — HTML in-app message content is authored by whoever can log
+   into your Braze workspace. SSO, least-privilege roles and campaign approval are the controls that
+   address the actual threat actor in this section's threat model.
 
 ### What the plugin does NOT do
 
-- Sanitize IAM HTML — that would break legitimate Braze templates with intentional inline styles, scripts, etc.
-- Block all HTML IAMs by default — that would break a core Braze feature.
-
-The plugin's role is **disclosure + opt-out hooks**, not preventive sanitization.
+- **`addListener('inAppMessageReceived')` cannot block display.** It is observational. Capacitor
+  listeners are fire-and-forget and have no return channel to native, so there is no way for a JS
+  listener to answer "discard". All three bridges hand the message straight to the SDK's presenter
+  (`.now` / `DISPLAY_NOW`) after notifying. `src/definitions.ts` says this on the listener itself.
+  If you need to present in-app messages yourself, pass `enableInAppMessageUI: false` to
+  `initialize` — the event still fires and the plugin draws nothing, so *you* decide what renders.
+  That is the closest thing to a discard hook the plugin offers, and it is an all-or-nothing switch,
+  not a per-message veto.
+- **Sanitize in-app message HTML** — that would break legitimate Braze templates.
+- **Block HTML in-app messages by default** — that would break a core Braze feature.
 
 ---
 
 ## 7. Deep link security
 
-Push notifications and in-app messages can contain URLs that, when tapped, open in the app. Without controls, this is an open redirect into the WebView.
+Push notifications and in-app messages can contain URLs that open when tapped. Without controls,
+that is an open redirect into the WebView.
 
-### Plugin design
+### What the plugin does
 
-- Plugin exposes `Braze.addListener('deepLinkReceived', listener)` that fires before the URL is opened.
-- Default behavior (no listener): plugin asks Capacitor to handle the URL via its standard router, which respects the app's allowed scheme list (`capacitor.config.ts → server.allowNavigation`).
-- Custom listener: consumer returns `{ allow: true | false, replaceWith?: string }`. Allows validation against an app-specific allow-list before opening.
-- Plugin **never** opens external URLs (`https://malicious.example`) without going through Capacitor's URL handler.
+**Nothing — and it is important to be clear about that.** The plugin does not intercept deep links.
+There is no `deepLinkReceived` listener; grep the bridges and you will find no deep-link code at
+all. URLs from push and in-app messages are handled by the Braze SDK's own default behaviour.
 
-### Recommended consumer pattern (documented)
+### What actually controls this
 
-```ts
-Braze.addListener('deepLinkReceived', ({ url }) => {
-  const parsed = new URL(url);
-  // Only allow same-origin or known partner domains
-  if (!ALLOWED_HOSTS.has(parsed.host)) {
-    return { allow: false };
-  }
-  return { allow: true };
-});
-```
+- **Capacitor's `server.allowNavigation`** allow-list in `capacitor.config.ts` governs which hosts
+  the WebView may navigate to. This is Capacitor's control, not this plugin's, and it applies
+  whether or not Braze is involved. Set it.
+- **`enablePushAutomation` (iOS) is off by default.** When you leave it off, BrazeKit does not take
+  over notification opens or deep links, and your own `UNUserNotificationCenter` delegate keeps
+  control of what a tap does. Turning it on is an explicit decision to let BrazeKit route them.
+- **Braze dashboard hygiene** — the URL in a campaign is authored by whoever can log into your
+  workspace, the same threat actor as §6.
+
+### Roadmap
+
+An interception listener with an allow/replace contract (`{ allow: boolean, replaceWith?: string }`)
+is a reasonable feature and is tracked in [`SDK_SURFACE.md`](./SDK_SURFACE.md)'s roadmap. It is
+**not** implemented, and until it is, treat this section as "Capacitor's allow-list is your control."
 
 ---
 
 ## 8. Logging — production-safe by default
 
-`enableLogging` in Braze's SDKs is **verbose**. Logs include request payloads (events, attributes, sometimes PII), response bodies, internal SDK state. Useful for development; dangerous in production.
+Braze's SDKs are verbose when logging is on: request payloads (events, attributes, sometimes PII),
+response bodies, internal SDK state. Useful in development; dangerous in production.
 
 ### Plugin policy
 
-- `initialize({ enableLogging })` defaults to `false`.
-- README's quick-start example uses `false` and explicitly notes "do not enable in production builds."
-- Plugin's own log lines (separate from Braze's) only fire in development mode (`process.env.NODE_ENV !== 'production'` for web; build-flavor check for native).
-- v0.5 adds custom log handler (`setLogger`) so consumers can route logs to their own observability stack without enabling Braze's verbose console output.
+`initialize({ enableLogging })` defaults to `false`, and as of 0.2.0 `false` genuinely means
+errors-only on every platform. It previously did not on either native platform: iOS set BrazeKit's
+`.info` level (the second-most-verbose) and Android only ever set the *verbose* branch, leaving the
+SDK at its INFO default.
+
+| `enableLogging` | web | iOS | Android |
+|---|---|---|---|
+| `false` (default) | Web SDK logging off | BrazeKit log level `.error` | `BrazeLogger.logLevel = Log.ERROR` |
+| `true` | Web SDK logging on | `.debug` | `BrazeLogger.VERBOSE` |
+
+Android sets the level in **both** branches, so the setting is reversible across a
+re-initialization; the older `enableVerboseLogging()` call it replaced was one-way for the process.
+
+### The plugin's own diagnostics
+
+The bridge emits a small fixed set of non-PII warnings (see §3). They are **not** gated on a build
+flavour or `NODE_ENV`: the endpoint cluster-shape warning in particular fires in production
+deliberately, because a misconfigured endpoint in a shipped app is worth one console line, and the
+line contains the expected *pattern*, never the endpoint the consumer typed.
+
+### Two caveats the plugin cannot close
+
+1. **Web: `?brazeLogging=true` in the page URL re-enables Web SDK logging** regardless of
+   `enableLogging: false`. This is a Braze Web SDK feature and the plugin has no hook to suppress
+   it. `braze.setLogger()` exists as a mitigation the plugin does not currently wire; if that
+   matters to your threat model, call it on the SDK directly after `initialize`.
+2. **Android: a device-level system property can raise `BrazeLogger`'s verbosity** independently of
+   this option (`BrazeLogger` reads a log-level system property, and exposes
+   `checkForSystemLogLevelProperty`). Relevant on rooted or developer devices and in MDM fleets.
+   "Production-safe by default" means *by default on a normal device*, not *unbypassable*.
 
 ---
 
@@ -270,7 +344,7 @@ The `BrazeLocation` / `android-sdk-location` modules require background location
 
 - Geofence support is **NOT in v0.1**. Deferred to v0.5 and gated behind opt-in install.
 - Consumer must explicitly install `capacitor-braze-location` (a separate sub-package, v0.5+) to pull the geofence module. Base plugin does not transitively depend on it.
-- README has a dedicated "Should I enable geofences?" section with the App Store / Play Store implications spelled out.
+- Geofences are **not shipped** in any version of this plugin, so there is no consumer-facing decision to document yet. If `capacitor-braze-location` is ever built, the README gains that section in the same release. The `android-sdk-ui` artifact this plugin depends on does not pull Braze's location module.
 
 This is intentional friction. Most consumers don't need geofences; defaulting to opt-in keeps everyone else free of the permission overhead.
 
@@ -289,12 +363,19 @@ Braze's SDKs provide three methods that map to legal privacy rights:
 
 ### Plugin policy
 
-- All four exposed in **v0.1** (`wipeData`, `disableSDK`, `enableSDK`) and **v0.2** (subscription groups).
-- README has a "**Right to be forgotten flow**" section showing the complete delete pattern:
-  1. `Braze.wipeData()` — removes local data
-  2. Consumer's backend calls Braze REST `/users/delete` — removes server data
-  3. Consumer's backend revokes SDK Authentication keys for that user
-- README documents what `wipeData()` does NOT delete: behavioral events (custom events, sessions, campaigns, purchases) on the Braze server side are retained per Braze policy. Customer's backend must call REST API to fully purge.
+- All of them shipped in **0.1.0**. `wipeData`, `disableSDK`, `enableSDK` and `isDisabled` are
+  **init-independent** per [C07](./docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md): a consent revocation
+  during app launch must not depend on the SDK having booted.
+- The README's [Right to be forgotten](./README.md#right-to-be-forgotten-gdpr--ccpa) section shows
+  the complete pattern: `wipeData()` locally, then the consumer's backend calling Braze's
+  `/users/delete` REST endpoint, then revoking that user's SDK Authentication signature.
+- **`wipeData()` is local only.** Behavioral events already delivered to Braze — custom events,
+  sessions, campaign interactions, purchases — are retained server-side per Braze's policy. The REST
+  delete is what purges them. Both the README and the `wipeData` JSDoc say so.
+- **Two platform caveats**, both documented in the `wipeData` JSDoc and C07: on iOS a `wipeData()`
+  called *before* `initialize` uses BrazeKit's `wipeDataAndDisableForAppRun()`, which disables the
+  SDK for the rest of the app run (a later `initialize` no-ops until relaunch); on web a pre-`initialize`
+  `wipeData()` has no storage manager to act on and returns without effect.
 
 ---
 
@@ -336,20 +417,39 @@ await Braze.wipeData();
 
 ### Plugin's own dependencies
 
-- **Direct deps:** Braze SDKs only (per platform). No additional runtime npm/Maven/CocoaPods packages.
-- **Dev deps:** Capacitor's standard scaffold (TS, Rollup, Jest), plus Ktor for the mock server, Maestro for e2e. All from reputable maintainers.
-- **Dependabot** enabled on the example app + mock server; not on the plugin's pinned Braze SDK versions (those bump manually per §4 of [SDK_SURFACE.md](./SDK_SURFACE.md)).
+- **Direct runtime deps:** Braze SDKs only, one per platform — `@braze/web-sdk` (peer, `^6.13.0`),
+  `com.braze:android-sdk-ui` (43.2.0, exact), `BrazeKit` + `BrazeUI` (18.2.1, exact). No other
+  runtime npm, Maven or CocoaPods package. `npm audit --omit=dev` is clean.
+- **Dev deps:** Capacitor's standard plugin scaffold — TypeScript, Rollup, ESLint, Prettier,
+  `@capacitor/docgen`, SwiftLint — plus **vitest** for the web behavioral tests and **Fastify** for
+  the in-process mock Braze server. There is no Jest, no Ktor and no Maestro anywhere in this repo,
+  despite what earlier versions of this document said.
+- **Dependabot** watches five directories on a weekly schedule: the plugin's own dev deps (`/`),
+  `/example`, `/demo`, `/test/web`, `/test/mock-server`, plus `github-actions`. It does **not**
+  bump the pinned Braze SDK versions — those move by hand under the
+  [C08](./docs/mdcs/C08-NATIVE-SDK-PINNING.md) bump protocol — and `@capacitor/*` majors are
+  ignored, because a Capacitor major is a deliberate migration.
 
-### Software Composition Analysis (SCA)
+### What actually scans this repo
 
-- GitHub Advanced Security (free for public repos) runs on every PR.
-- `npm audit` on every CI build; high/critical fail the build.
-- Snyk free tier as backup scanner.
+| Scanner | Where | Status |
+|---|---|---|
+| `npm audit --audit-level=high --omit=dev` | `audit` job, every push and PR | **Runs, and fails the build** on a high/critical advisory in the runtime tree |
+| **gitleaks** | `audit` job, full history (`fetch-depth: 0`) | **Runs.** Catches a committed Braze key before it reaches `main` |
+| **GitHub secret scanning + push protection** | Repository setting | **Enabled** |
+| **Dependabot version updates** | `.github/dependabot.yml` | **Enabled**, five ecosystems |
+| **Snyk** | `audit` job, `if: env.SNYK_TOKEN != ''` | Wired correctly as of 0.2.0, but **the secret is not provisioned**, so it skips. Until then, treat it as absent |
+| **Dependabot security updates** | Repository setting | **Not enabled** — a maintainer action, see [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
+| **CodeQL / SAST** | — | **Not present.** There is no CodeQL workflow. Adding one is a scope decision, not an omission to be papered over |
+
+There is no Renovate configuration in this repo; the grouped weekly updates come from Dependabot.
 
 ### Lockfile discipline
 
-- `package-lock.json` committed and reviewed in PRs.
-- Renovate bot configured for grouped weekly dep updates on the example app.
+- `package-lock.json` is committed at the root and in `example/`, `demo/`, `test/web/` and
+  `test/mock-server/`, and reviewed in PRs.
+- Every CI install is `npm ci`, not `npm install`, so each job builds the tree the committed
+  lockfiles describe rather than whatever resolves in range that day.
 
 ---
 
@@ -357,32 +457,74 @@ await Braze.wipeData();
 
 ### Secret management
 
-- No real Braze API keys in any committed file (including `.env.example`).
-- CI uses GitHub Actions encrypted secrets for: npm publish token, daily-spec-drift Braze trial key.
-- Trial Braze key has scope limited to a sandbox workspace; rotated quarterly.
+- No real Braze API key is in any committed file, including `demo/.env.example`; gitleaks scans the
+  full history on every run to keep it that way.
+- The only secrets any workflow references are `NPM_TOKEN` (publishing) and the optional
+  `SNYK_TOKEN`. There is no Braze credential in CI, because no CI job talks to Braze.
 
 ### Publishing
 
-- `npm publish` requires **2FA** on the npm account.
-- Provenance enabled (`npm publish --provenance`) — signed release attestation visible on npm.
-- Release process: PR → CI green → tag → GitHub Action publishes. No manual `npm publish` from local machines.
+- **`0.2.0` is the first release published by the workflow.** `0.1.0` was published **by hand** on
+  2026-05-22 and therefore carries **no provenance attestation** on npm. That is a fact about the
+  published artifact and cannot be changed retroactively; it is recorded here and in the CHANGELOG
+  rather than left for a reviewer to discover.
+- `release.yml` calls the full CI workflow as its gate, so `npm publish` waits on lint, build,
+  tarball verification, the web behavioral tests, the audit job, and both native verify jobs.
+- Before publishing it checks that `CHANGELOG.md` has a section for the version, that the version is
+  **not already on the registry**, and runs `npm publish --dry-run`. It publishes with
+  `--provenance` and then polls for the attestation.
+- The publish job runs in a GitHub `npm-publish` environment with `id-token: write` and no
+  `contents: write`; the GitHub Release is created by a separate job.
+- **The npm token is an automation token, which bypasses 2FA by design.** This is the standard
+  trade-off for CI publishing, not a 2FA claim. The intended end state is
+  [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers) (OIDC, no long-lived token),
+  which is configured in npm's web UI; once the first publish succeeds through it, the token is
+  deleted and revoked. **Not yet done.**
 
 ### Source verification
 
-- All commits to `main` require PR review.
-- Signed commits required (`git commit -S`).
-- `main` branch protected: no force-push, no direct push, required reviewers ≥1.
+The authoritative enumeration of branch protection lives in
+[`docs/REPO-HYGIENE.md`](./docs/REPO-HYGIENE.md). In force on `main` today:
+
+- required status checks (strict), signed commits, no force-push, no branch deletion,
+  conversation resolution required.
+
+Honestly **not** in force, and deliberately so or pending:
+
+- **Required reviewers ≥ 1** — not enabled. On a single-maintainer repository a review requirement
+  with a standing self-bypass is theatre, not a control. If a second maintainer joins, enable it.
+- **`enforce_admins`** — not enabled, so the required checks do not currently bind the admin.
+  This one *is* worth turning on, and the command is in
+  [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020).
+- **A ruleset restricting who may create `v*` tags** — not created yet; same checklist.
 
 ### Supply-chain hardening
 
-- `.github/dependabot.yml` watches GitHub Actions versions too (pinned by SHA, not tag).
-- No `postinstall` scripts in plugin's `package.json` (common supply-chain attack vector).
+- **Every GitHub Action is pinned to a full 40-character commit SHA**, with the version in a
+  trailing comment. Each pin was re-resolved from its tag through the GitHub API and matched.
+  `snyk/actions/node@master` — a mutable branch reference — was the worst offender and is now a
+  tagged release SHA. `.github/dependabot.yml` bumps the pins weekly.
+- **No `postinstall` script.** `package.json` has `prepare` and `prepublishOnly`, both of which run
+  the build. `prepare` executes on a **git-URL or local** install — the same arbitrary-code-on-install
+  surface — but is skipped for installs from the npm registry tarball, which is how the README now
+  tells consumers to install.
+- **A `pack-check` CI job asserts the tarball's contents**: every artifact a consumer's build needs
+  is present, and nothing from `test/`, `example/`, `demo/`, `docs/` or `.claude/` leaks in.
 
 ---
 
 ## 14. Vulnerability disclosure policy
 
-**Reporting a vulnerability:** open a private security advisory at <https://github.com/bma342/capacitor-braze/security/advisories/new>. GitHub's private vulnerability reporting is enabled on the repository, so the maintainer is notified without any public disclosure.
+**Reporting a vulnerability:** open a private security advisory at
+<https://github.com/bma342/capacitor-braze/security/advisories/new>.
+
+> ⚠️ **Status check before you rely on this.** GitHub's private vulnerability reporting must be
+> switched on per repository, and **as of this writing it has not been** — the enabling command is
+> in [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) and is on the pre-tag
+> checklist for `0.2.0`. Until that lands, the advisory form above will not accept a report from a
+> non-collaborator. If it refuses you, email the maintainer address in `package.json` with
+> `[SECURITY]` in the subject and **do not** open a public issue. This paragraph is removed once
+> the setting is verified enabled.
 
 **Do not** open a public issue or pull request for security findings — those are visible to the world the moment they land. The advisory channel keeps the disclosure private until a patch ships, with the option to publish a CVE alongside the fix when the advisory is closed.
 

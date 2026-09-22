@@ -2,7 +2,19 @@
 
 **Walks every shipped plugin method against a real Braze trial account, captures the wire format each platform actually produces, and verifies the dashboard receives the expected data. The Layer 4 step from `PLAN.md §5`.**
 
-This is the gate to tagging `0.1.0`. The web bridge has 53 vitest-mock tests proving its wire output; this playbook does the same job for iOS + Android, plus validates that Braze's backend processes the data correctly across all three platforms.
+> ## ⚠️ This has never been run
+>
+> Neither `0.1.0` nor `0.2.0` has been validated against a live Braze backend. `docs/smoke-tests/`
+> contains only `_template-*.md` files — no dated captures. This is stated in the README's Status
+> table, the CHANGELOG, [C08](./mdcs/C08-NATIVE-SDK-PINNING.md)'s bump protocol and
+> [`REVIEW_READINESS.md` §7](../REVIEW_READINESS.md#7-remaining-work), and it is the single largest
+> gap in the project.
+
+This is the gate to the first **validated** release claim. Everything shipped so far rests on
+mock-verified wire format: 154 vitest tests drive the real `@braze/web-sdk` against an in-process
+Fastify mock, and 74 Robolectric + 26 XCTest cover the native bridges' translation against real
+Braze model objects. What none of that can prove is that **Braze's backend accepts and processes
+what the three platforms actually send** — that is this playbook's job.
 
 Estimate: ~2-3 hours of focused work end-to-end. Less if your trial is already provisioned.
 
@@ -162,8 +174,8 @@ For each platform, fill in:
 - ...
 
 ### Verdict
-☐ All 12 steps passed; safe to tag 0.1.0
-☐ N issues filed; gate to 0.1.0 once they close
+☐ All 12 steps passed; safe to tag the release
+☐ N issues filed; gate the release once they close
 ```
 
 Drop the filled-in log into `docs/smoke-tests/<platform>-YYYY-MM-DD.md`. These build up over time as a regression timeline.
@@ -172,12 +184,12 @@ Drop the filled-in log into `docs/smoke-tests/<platform>-YYYY-MM-DD.md`. These b
 
 ## 7. After all three platforms green
 
-Open a PR titled `chore: smoke-test pass for v0.1.0`. The PR description includes:
+Open a PR titled `chore: smoke-test pass for vX.Y.Z`. The PR description includes:
 - Links to the three capture logs
 - Summary of any field-shape drift discovered (and what was fixed)
 - The verdict line from each platform
 
-Once merged, tag `v0.1.0` and the release.yml workflow handles the npm publish.
+Once merged, work through the [maintainer pre-tag checklist](../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020), tag `vX.Y.Z`, and `release.yml` runs the full CI suite before publishing.
 
 ---
 
@@ -185,4 +197,4 @@ Once merged, tag `v0.1.0` and the release.yml workflow handles the npm publish.
 
 The 53 web behavioral tests catch wire-format regressions on a real PR. The compile-only iOS + Android CI gates catch SDK API drift. **What neither catches is what Braze's backend actually accepts** — and what its dashboard renders for each platform. That's only validable against a real account.
 
-Doing this smoke once (now, before 0.1.0) establishes the cross-platform wire-format ground truth. After 0.1.0 ships, [C11](./mdcs/C11-NATIVE-TEST-HARNESSES.md)'s native mock harnesses lock that ground truth in for every future PR.
+Doing this smoke once establishes the cross-platform wire-format ground truth. [C11](./mdcs/C11-NATIVE-TEST-HARNESSES.md)'s native **unit** tiers already lock in the bridge translation (74 Robolectric + 26 XCTest, both in CI); its **integration** tier — URLProtocol on iOS, MockWebServer on Android — would then lock in the HTTP itself, and that tier is still design-only precisely because there is no captured ground truth to write it against.

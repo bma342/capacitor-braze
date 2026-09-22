@@ -3,17 +3,142 @@
 All notable changes to `capacitor-braze` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0: minor versions may include breaking changes (documented loudly here). Post-1.0: strict semver.
-
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.0] — 2026-09-22 — Native SDK bumps, real native test tiers, and an audited release pipeline
+
+The second full-repo self-audit ([`docs/audits/2026-09/`](./docs/audits/2026-09/)) went over the TypeScript contract, both native bridges, the security model, the test/CI surface, the docs, and the SDK drift since 0.1.0. This release closes what it found. Three themes:
+
+1. **The native SDKs moved a long way.** BrazeKit/BrazeUI 14.1.0 → 18.2.1 and `com.braze:android-sdk-ui` 42.2.0 → 43.2.0, plus a security floor on `@braze/web-sdk`.
+2. **Whole features were wired but dead.** iOS `sdkAuthError` was attached to the wrong delegate protocol and never fired. Android never opened a Braze session, so every event was logged outside one. `enableLogging: false` silenced nothing on either native platform.
+3. **The gates were softer than the docs claimed.** SwiftLint had never run, Android Lint could not fail a build, the iOS XCTests had no target, the Snyk step could never execute, and `npm publish` ran on a tag with no tests in front of it.
+
+### Pinned native SDK versions
+- `com.braze:android-sdk-ui` **43.2.0** (from 42.2.0)
+- `BrazeKit` / `BrazeUI` **18.2.1** (from 14.1.0) — **requires Xcode 26+**
+- `@braze/web-sdk` peer dep **`^6.13.0`** (from `^6.0.0`)
+
+### Capacitor compat
+- Peer dependency: `@capacitor/core` `^6.0.0 || ^7.0.0` — unchanged
+- Podspec dependency: `Capacitor` `>= 6.0, < 8.0` — unchanged
+- **Capacitor 8 is not supported yet.** It requires AGP 8.13.0, Gradle 8.14.3, Kotlin 2.2.20 and compileSdk 36, and its CLI generates SPM-based iOS projects by default while this plugin is CocoaPods-only. Tracked as a follow-up, not shipped here.
+
+### Security
+
+- **`@braze/web-sdk`'s peer floor is now `^6.13.0`, and this is a security floor.** Web SDK 6.12.1 fixed a bug where an in-app message with multiple buttons could be displayed even when one of its buttons used a `javascript:` or `data:` URI and the `allowUserSuppliedJavascript` initialization option was disabled — a bypass of an explicit safety toggle. Do not pin below 6.13.0.
+- **iOS: `enableLogging: false` now silences the Braze SDK.** It previously set BrazeKit's `.info` level — the second-most-verbose level, which logs session lifecycle, request dispatch and SDK state — contradicting `SECURITY.md` §8 and C06's default-deny posture. It now sets `.error`.
+- **Android: `enableLogging: false` did not silence the Braze SDK either.** The SDK's default log level is INFO and the plugin only ever set the verbose branch, so the "off" setting was a no-op. The level is now set in **both** branches (errors-only when off) and is reversible across re-initialization; the old one-way `enableVerboseLogging()` was not.
+- **iOS: the `sdkAuthError` listener works.** It was wired to `BrazeDelegate`, which does not declare `sdkAuthenticationFailedWithError` — that is `BrazeSDKAuthDelegate`, delivered via `braze.sdkAuthDelegate`. The conformance compiled and the event never fired, so the documented recovery path for an expired SDK Authentication signature did not exist on iOS.
+- **Android feature flags leaked an undeclared `fts` key** containing Braze's internal impression-attribution token, because the DTO was built from `FeatureFlag.forJsonPut()`. The DTO is now exactly `{ id, enabled, properties }`.
+- The endpoint cluster-sanity warning no longer logs the endpoint value on any platform, and now exists on **all three** (it was web-only).
+- `SECURITY.md` has been reconciled against the implementation end to end — §3 (PII), §6 (in-app message XSS), §7 (deep links), §8 (logging), §12 and §13 (scanners, branch protection, provenance) previously described controls the plugin does not have. See "Documentation" below.
+
+### Breaking
+
+Pre-1.0, breaking changes ship in a minor. Each of these can change behaviour in an existing app:
+
+- **iOS now requires Xcode 26.** BrazeKit 15.0.0 raised its Xcode floor to 26.0 and this release pins 18.2.1. Additionally, an Xcode 26 install whose iOS simulator *runtime* is older than its iOS SDK reports **no simulator destinations at all** rather than a version error — run `xcodebuild -downloadPlatform iOS` if you hit that.
+- **`@braze/web-sdk` below 6.13.0 will now fail peer-dependency resolution.** This is deliberate (see Security).
+- **iOS `getUserId` returns `null` after `wipeData`** (BrazeKit 17.0), matching Android and Web. Code relying on the old iOS-only behaviour will see `null`.
+- **iOS `contentCardsUpdated` now fires on `changeUser`** (BrazeKit 17.0 Android-parity change). Listeners that deduplicated by assuming it did not will see an extra event.
+- **iOS Content Cards reflect view/dismiss/click state immediately** (BrazeKit 16.0.0) instead of after the next sync.
+- **`enableLogging: false` now genuinely silences the SDK on iOS and Android.** If you were relying on Braze's log output while passing `false`, pass `true`.
+- **iOS `extras` values are stringified like the other platforms**: booleans as `"true"`/`"false"` (previously `"1"`/`"0"`) and containers as compact JSON (previously Swift debug descriptions). A visible output change for anyone reading `card.extras` / `message.extras` on iOS.
+- **`sdkAuthError.userId` is `null` for an anonymous user** on every platform, instead of an empty-string sentinel.
+- **Unrecognized in-app message and content-card variants are now dropped** with a single non-PII warning instead of being reshaped into a variant they are not (web previously emitted an empty slide-up). `getContentCards()` and `inAppMessageReceived` may therefore return/emit less than before where the SDK produced something the bridge cannot classify — by design, rather than emitting a fabricated shape.
+- **Android: a second `initialize()` in the same process resolves with a warning** rather than appearing to have applied the new options. `Braze.configure()` returns `false` once the SDK is configured, and the SDK keeps its first configuration for the process lifetime. (Activity recreation legitimately re-runs `initialize`, so rejecting would have been worse.) Note the residual: the plugin's own `sdkAuthenticationEnabled` flag follows the *second* call while the SDK keeps the first's — the warning names exactly that.
+- **iOS: `disableSDK()` before `initialize` is now honoured**, and `enableSDK()` works before `initialize` too. The previously documented iOS C07 asymmetry is gone; `isDisabled()` no longer reports `false` after a pre-init `disableSDK()`.
+- **Non-integer `quantity` and `sessionTimeoutInSeconds` are rejected on iOS and Android** instead of being silently coerced to the default.
+- **Event and purchase `properties` reject non-scalar values on all three platforms** with ``Braze.<method>: `properties.<key>` must be string, number, or boolean.`` — previously forwarded on web/iOS and silently dropped on Android.
+- **Swift API: `BrazeKitDelegate` is renamed `BrazeSdkAuthDelegate`** and now conforms to `BrazeSDKAuthDelegate`. This type is an implementation detail of the bridge; no JS API changes.
+
+### Added
+
+- `initialize` option **`enableInAppMessageUI`** (default `true`). Set `false` to present in-app messages yourself: `inAppMessageReceived` still fires and the plugin draws nothing. On iOS the plugin installs a non-rendering observer presenter (BrazeKit routes a message to exactly one presenter, so leaving the slot empty would kill the event); on Android it skips `registerInAppMessageManager`; on web it subscribes without calling `showInAppMessage`.
+- `initialize` option **`enablePushAutomation`** (default `false`, **iOS only**). Hands notification opens, deep links, rich push and background push to BrazeKit and registers Braze's notification categories. Without it, only push *token registration* reached Braze, so push campaigns recorded sends but no opens. Because `initialize` runs after app launch, a push that launched the app may not be attributed.
+- **Braze sessions are now opened and closed on Android.** The plugin registers `BrazeActivityLifecycleCallbackListener` once per process during `initialize` and opens a session for the host Activity, so session-scoped analytics (DAU/MAU, session length, sessions per user), session-start triggers and flush-on-background work. Previously no session was ever opened and every event was logged outside one. Do not register your own listener as well.
+- `BrazeSlideupInAppMessage.icon` — the Font Awesome icon for icon-graphic slide-ups, which iOS and Android previously dropped entirely.
+- `BrazeClassicContentCard.aspectRatio` — always present, `null` where the SDK supplies none.
+- Android emits `imageAltText` on every non-control in-app message variant.
+- The endpoint cluster-sanity warning now runs on iOS (`os.Logger`) and Android (`BrazeLogger.w`) as well as web, and never logs the endpoint value.
+- Web: `echo` and `setGender` validate required inputs with the same messages the native bridges already used.
+- **A runnable iOS unit-test target.** `ruby scripts/ios-add-test-target.rb` adds `CapacitorBrazeTests` to the demo app's Xcode project (idempotent; the generated target and shared scheme are committed) and `xcodebuild test` runs the **26** tests in `ios/PluginTests/`. The suite had previously never been compiled, let alone run.
+- **Tarball manifest gate in CI.** A new `pack-check` job asserts that the published package contains every artifact a consumer's build needs (podspec, privacy manifest, consumer ProGuard rules, type declarations, license, changelog, security policy) and that no repo-internal directory leaks into it. Runnable locally with `npm run pack:check`.
+- **Publish safety rails.** The release workflow verifies the CHANGELOG has a section for the version being released, fails loudly if that version is already on the registry, performs a `--dry-run` publish first, and checks that the provenance attestation landed afterwards.
+- Type-checking for the test directories in CI (`npm run typecheck:tests`); vitest transpiles without type-checking, so `test/web`'s strict compiler settings had never been enforced.
+- Dependabot now covers `test/web` and `test/mock-server` npm dependencies.
+- A `## Security` section and a `## Troubleshooting` section in the README, and a "Privacy declarations you must make" section in C10.
+
 ### Changed
-- **`tsconfig.json` forward-compat for TypeScript 5.6+.** Switched `moduleResolution` from the deprecated implicit `node`/`node10` to `bundler` (matches our Rollup build pipeline), and added explicit `rootDir: "./src"`. Both changes are no-ops on TS 5.4 (the current pinned version) but unblock upcoming Dependabot bumps that raise TS to 5.6+.
-- **Dependabot:** ignore `@capacitor/*` major bumps across the plugin, example, and demo. Capacitor 8 raised the AGP/JDK minimum to 21 (our CI runs JDK 17) and falls outside the plugin's `^6 \|\| ^7` peer-dep range. Capacitor majors land via deliberate maintainer-driven migration.
-- **Maintenance bumps:** `actions/setup-java@4 → @5`, `android-actions/setup-android@3 → @4`, example dev-deps refresh.
+
+- **Release pipeline now gates on the full CI suite.** `release.yml` calls `test.yml` as a reusable workflow, so `npm publish` waits on lint, build, tarball verification, the web behavioral tests, the security audit, and both native verify jobs (iOS/Xcode and Android/Gradle compiling and testing the bridges against the pinned Braze SDKs). Previously a tag published whatever was at that commit with no tests at all. `0.2.0` is the **first release published by the workflow**; `0.1.0` was published by hand and therefore carries no provenance attestation.
+- **All GitHub Actions are pinned to full commit SHAs** with a trailing version comment, replacing floating major tags. `snyk/actions/node@master` — a moving branch — is now a tagged release SHA. Actions moved to current majors in the same pass (checkout v7, setup-node v7, gitleaks-action v3).
+- Workflow `GITHUB_TOKEN` permissions are declared per file and per job at least privilege, rather than inherited from a repository setting.
+- CI installs sub-project dependencies with `npm ci` instead of `npm install`, so every job builds the tree the committed lockfiles describe.
+- `verify-android` runs on JDK 21 and now runs Android Lint on the library module; Lint is configured `abortOnError true`, so it can fail a build for the first time.
+- `verify-ios` pins an Xcode 26.x toolchain, installs SwiftLint explicitly, builds once instead of twice, and runs `xcodebuild test`.
+- The npm tarball now ships `CHANGELOG.md` and `SECURITY.md`.
+- **The whole iOS bridge runs in a single main-actor isolation domain.** `initialize` and `wipeData` are strictly ordered with respect to each other, and the in-app-message presenter and delegates can no longer be attached to an SDK instance a concurrent `wipeData` already disowned.
+- iOS `getUserId` / `getDeviceId` use BrazeKit's asynchronous accessors (added in 17.0); the synchronous properties block until the SDK settles.
+- iOS reports itself to Braze with `addSDKMetadata([.npm, .cocoapods])`. `sdkFlavor` is deliberately left unset: BrazeKit has no Capacitor case and reporting `.cordova` would misattribute the wrapper.
+- Android `consumer-rules.pro` no longer widens Braze's own deliberate `-keepnames` rules to `-keep … { *; }` across ~910 SDK classes, and the dead `com.appboy.**` rules are gone. The inert `android/proguard-rules.pro` was deleted.
+- The plugin's default Android `minSdkVersion` drops from 26 to 22 to match Capacitor 6's stock template and C10; your `variables.gradle` always wins.
+- Android unit tests: 7 → **74**, now covering every `@PluginMethod` validation branch and every serializer against real Braze model objects parsed from Braze's own wire JSON. `initialize` now runs end-to-end under Robolectric, which is what made the post-init branches reachable.
+- Web tests: 108 → **154** across 14 files, adding wire-key assertions for every user attribute and subscription-group call, the full `serializeInAppMessage` surface against real SDK message classes, an end-to-end `sdkAuthError` test, and the disable → enable → initialize GDPR consent round-trip.
+- SwiftLint actually runs: the config pointed `parent_config` at a file that does not exist (`@ionic/swiftlint-config` ships a JS module, not YAML), so none of the Ionic rules were enforced. The ruleset is inlined, `ios/PluginTests` is now linted, and CI installs the binary instead of assuming the runner image provides it. Result: 0 violations under `--strict`.
+- **`tsconfig.json` forward-compat for TypeScript 5.6+.** `moduleResolution` moved from the deprecated implicit `node`/`node10` to `bundler` (matching the Rollup pipeline), plus an explicit `rootDir: "./src"`. No-ops on the pinned TS 5.4.
+- Dependabot ignores `@capacitor/*` major bumps across the plugin, example, and demo; Capacitor majors land via deliberate maintainer-driven migration.
+- Maintenance bumps: `actions/setup-java@4 → @5`, `android-actions/setup-android@3 → @4`, example dev-deps refresh.
+
+### Removed
+
+- **The IIFE browser bundle and the `unpkg` package field.** `dist/plugin.js` was an IIFE intended for a `<script>` tag, but the web bridge loads `@braze/web-sdk` through `await import('@braze/web-sdk')` — a bare specifier no browser can resolve without an import map — so the artifact could never have worked standalone. The package now ships ESM (`dist/esm`) and CJS (`dist/plugin.cjs.js`) only, which is what Capacitor consumers actually use.
+
+### Fixed
+
+- **Web: `initialize` no longer reports success when the Braze Web SDK declines to initialize.** The SDK's success flag was discarded, so a bad API key left every listener silently dead for the page lifetime.
+- **Web: `openSession()` now runs after the event subscriptions**, as the Braze Web SDK documents. Previously the session that `initialize` opened never triggered a content-card refresh and any session-start in-app message was dropped before the plugin subscribed.
+- **Web: listener subscriptions are cancelled and re-created instead of guarded by booleans.** `wipeData` + `initialize` no longer stacks duplicate subscriptions (events fired N times after N cycles), and `disableSDK` → `enableSDK` → `initialize` no longer leaves every listener dead.
+- **Web: `disableSDK` and `enableSDK` clear the plugin's initialized state**, matching the SDK, which destroys its instance in both. A call after either now fails with the init-required error instead of an internal "getUser() returned null" message.
+- **Web: a second `initialize` re-initializes the SDK** (destroy + re-init) instead of silently keeping the first API key and endpoint.
+- **Web: `getDeviceId` is init-gated**, matching iOS, Android, and its own documentation. (0.1.0 claimed to have fixed this — finding L1-01 — but only the JSDoc changed; the guard is now genuinely there.)
+- Web: `requestImmediateDataFlush` resolves when the flush completes and rejects when the SDK reports it failed, instead of resolving on dispatch.
+- Web: in-app message button `useWebView` reflects the campaign's open target instead of being hard-coded `true` for every button.
+- Web: feature-flag properties and content-card extras are copied, so consumer mutations no longer reach into the SDK's cache.
+- Web: a failed `@braze/web-sdk` import is no longer reported as a missing peer dependency; the underlying error is included as the `cause`.
+- **iOS: `setCustomUserAttribute` wrote booleans for the numbers `0` and `1`.** `getBool` succeeds for any `NSNumber` whose value is 0 or 1, so `{ key: 'lifetime_orders', value: 1 }` set `true` on the Braze profile — silently, permanently, and only on iOS. The bridge now discriminates with `CFGetTypeID`.
+- **iOS: `registerPushToken` accepted `"<>"` and `"  "`**, hex-decoded them to zero bytes and registered an empty APNs token — a silent push outage. Whitespace and newlines are stripped and zero-byte / over-length tokens are rejected.
+- iOS: unrecognized in-app-message, content-card and feature-flag-property variants are reported with a diagnostic instead of vanishing.
+- iOS: the HTTPS and content-card-not-found error strings are byte-identical to the web bridge again; both had lost their actionable second sentence.
+- iOS: `braze.delegate` is no longer assigned at all, leaving the slot free for host apps.
+- **Android in-app messages reported `id: null` and `slideFrom: 'bottom'` for every message.** Both are real SDK accessors (`InAppMessageBase.getTriggerId()`, `InAppMessageSlideup.getSlideFrom()`); a top-anchored campaign now correctly reports `'top'`, and analytics keyed on `message.id` work.
+- **Android content cards always reported `clicked: false`.** Now read from `Card.isClicked()`.
+- **Android leaked the Activity and WebView on every Activity recreation.** The three Braze event subscriptions created at `initialize` are removed in `handleOnDestroy`, with an identity check so tearing down the outgoing Activity cannot silently kill the incoming one's in-app message listener.
+- Android listener events are delivered to the WebView on the main thread instead of Braze's dispatcher thread, where a failed post was swallowed silently.
+- Android surfaces a warning when the Braze SDK rejects a user-attribute value (the SDK's boolean return was previously discarded); the value itself is never logged.
+- Android's HTTPS and `getDeviceId` error strings are byte-identical to the web bridge again.
+- **The Snyk CI step could never execute:** its `if: env.SNYK_TOKEN != ''` condition read a variable defined in the step's own `env:` block, which binds after the condition is evaluated. The secret is now declared at job level.
+- **The SwiftLint CI gate could pass without SwiftLint ever running** — `node-swiftlint` warns and exits 0 when the binary is absent, and the macOS runner image does not ship it.
+- **The `test/mock-server` Dependabot entry declared the wrong ecosystem** (`gradle`, a leftover from an abandoned Ktor plan) and had been failing on every weekly run since July; its dependencies were unmonitored.
+- `npm run smoke:{web,ios,android}` build the plugin before the demo consumes it, run correctly from any working directory, and document the cluster they actually default to.
+- **Documentation:** the docs have been reconciled against the code repo-wide. The README no longer says the plugin is unpublished, advertises the right test counts and listener events, documents the Android Gradle requirements it previously said were unnecessary, and gained Security and Troubleshooting sections. `CLAUDE.md`'s test stack (Jest/Ktor/Maestro) and commands were fiction and are now real. `SECURITY.md` §§3, 6, 7, 8, 12, 13 described controls that do not exist. `SDK_SURFACE.md`'s version matrix contradicted the shipped surface. `REVIEW_READINESS.md` had 130 unchecked boxes for work that was done. Every `file:line` reference in C01–C11 pointed at the wrong line. The May 2026 audit is archived at [`docs/audits/2026-05/`](./docs/audits/2026-05/) with a resolution status per finding, joined by [`docs/audits/2026-09/`](./docs/audits/2026-09/).
+
+### Deliberately not fixed in 0.2.0
+
+Stated so they are not mistaken for oversights:
+
+- **Setter return values are still discarded (audit A1-10).** `setEmail('nonsense')` resolves on every platform. iOS and Android now log a non-PII warning when the SDK rejects a value; the Web SDK exposes no equivalent signal for most setters, so making rejection a promise rejection would break cross-platform parity. Deferred as a contract change.
+- **No Layer 4 smoke capture.** Nothing in this release has been verified against a live Braze backend.
+- **`-strict-concurrency=complete` is not clean on iOS** (~40 warnings), because `CAPPlugin` / `CAPPluginCall` are non-`Sendable` in Capacitor 6/7 and any correct main-actor hop trips the checker. Swift 5 mode — what the podspec builds with — is clean apart from one deliberate deprecation warning at the pre-init `wipeData` branch, where `Braze.wipeDataAndDisableForAppRun()` remains the only class-level wipe BrazeKit 18.2.1 offers.
+- **No CodeQL workflow.** `npm audit`, gitleaks and (once its token exists) Snyk are the scanners that run.
+- **Content-card `useWebView` is still not emitted**, a known asymmetry with the in-app message click action, which does carry it.
+
 
 ## [0.1.0] — 2026-05-22 — Audit cleanup + first credible npm tag
 
-This is the first release the project's own audit ([`findings/SUMMARY.md`](./findings/SUMMARY.md)) judges credible to publish. 17 phases of cleanup close the BLOCKER + MAJOR findings across contract integrity, cross-platform translation, native code quality, security, CI/tooling, and documentation. The plugin is now consumable from npm as `npm install capacitor-braze` (Capacitor 6 or 7), with iOS in-app message rendering wired out of the box, SDK Authentication enforced client-side, and `inAppMessageReceived` / `sdkAuthError` listener events on every platform.
+This is the first release the project's own audit ([`docs/audits/2026-05/SUMMARY.md`](./docs/audits/2026-05/SUMMARY.md), archived) judges credible to publish. 17 phases of cleanup close the BLOCKER + MAJOR findings across contract integrity, cross-platform translation, native code quality, security, CI/tooling, and documentation. The plugin is now consumable from npm as `npm install capacitor-braze` (Capacitor 6 or 7), with iOS in-app message rendering wired out of the box, SDK Authentication enforced client-side, and `inAppMessageReceived` / `sdkAuthError` listener events on every platform.
 
 ### Pinned native SDK versions
 - `com.braze:android-sdk-ui` **42.2.0**
@@ -74,7 +199,11 @@ This is the first release the project's own audit ([`findings/SUMMARY.md`](./fin
 - C11 native test harness coverage expansion beyond the contract surface this PR covers.
 - iOS XCTest target wiring inside the demo's Xcode workspace (the test files live in `ios/PluginTests/` ready to add as a Unit Testing Bundle target — one-time maintainer setup).
 
-## [0.0.12] earlier `[Unreleased]` items, now rolled into `0.1.0`
+## Pre-0.1.0 staging notes
+
+These entries were staged under `[Unreleased]` before `0.1.0` and shipped as part of it.
+Kept for detail; they are not a separate release. (Historically this heading read
+`## [0.0.12] earlier [Unreleased] items…`, which made two `0.0.12` sections in one file.)
 
 ### Fixed — `PrivacyInfo.xcprivacy` now actually ships (Phase S, App Store gate)
 
@@ -950,3 +1079,20 @@ Initial scaffold. Not published to npm yet.
 
 ### Notes
 - This is a scaffolding release. Functional Braze methods (`changeUser`, `logCustomEvent`, etc.) ship in 0.1.0 per [`PLAN.md` §7](./PLAN.md#7-phased-roadmap).
+
+<!-- Keep a Changelog link references -->
+[Unreleased]: https://github.com/bma342/capacitor-braze/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/bma342/capacitor-braze/releases/tag/v0.2.0
+[0.1.0]: https://github.com/bma342/capacitor-braze/releases/tag/v0.1.0
+[0.0.12]: https://github.com/bma342/capacitor-braze/blob/main/CHANGELOG.md
+[0.0.11]: https://github.com/bma342/capacitor-braze/blob/main/CHANGELOG.md
+[0.0.10]: https://github.com/bma342/capacitor-braze/blob/main/CHANGELOG.md
+[0.0.9]: https://github.com/bma342/capacitor-braze/blob/main/CHANGELOG.md
+[0.0.8]: https://github.com/bma342/capacitor-braze/blob/main/CHANGELOG.md
+[0.0.7]: https://github.com/bma342/capacitor-braze/blob/main/CHANGELOG.md
+[0.0.6]: https://github.com/bma342/capacitor-braze/blob/main/CHANGELOG.md
+[0.0.5]: https://github.com/bma342/capacitor-braze/blob/main/CHANGELOG.md
+[0.0.4]: https://github.com/bma342/capacitor-braze/blob/main/CHANGELOG.md
+[0.0.3]: https://github.com/bma342/capacitor-braze/blob/main/CHANGELOG.md
+[0.0.2]: https://github.com/bma342/capacitor-braze/blob/main/CHANGELOG.md
+[0.0.1]: https://github.com/bma342/capacitor-braze/blob/main/CHANGELOG.md
