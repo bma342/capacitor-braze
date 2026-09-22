@@ -1,5 +1,6 @@
 import BrazeKit
 import BrazeUI
+import Capacitor
 import XCTest
 
 @testable import CapacitorBraze
@@ -333,5 +334,171 @@ final class BrazeSdkAuthDelegateTests: XCTestCase {
             Set(payload.keys),
             ["userId", "errorCode", "errorReason", "signature", "errorEventId"]
         )
+    }
+}
+
+/// `deepLinkReceived` — the `deepLinkHandling: "app"` interception path.
+///
+/// The security-relevant behaviour is the return value: `BrazeDelegate`'s
+/// `braze(_:shouldOpenURL:)` returning `false` is what stops BrazeKit opening
+/// the URL. Everything else (payload shape, channel mapping) hangs off that.
+@MainActor
+final class BrazeDeepLinkDelegateTests: XCTestCase {
+
+    /// Captures `notifyListeners` so the delegate's emission can be asserted
+    /// without a live Capacitor bridge. `CAPPlugin` is an Objective-C class,
+    /// so the method is overridable from Swift.
+    final class SpyPlugin: CAPPlugin {
+        var events: [(name: String, data: [String: Any])] = []
+
+        override func notifyListeners(_ eventName: String, data: [String: Any]?) {
+            events.append((eventName, data ?? [:]))
+        }
+    }
+
+    /// A configured `Braze` instance for the one delegate method that
+    /// requires one. It is created disabled and never opens a session, so
+    /// nothing is logged or sent; the delegate ignores the argument entirely.
+    private func quietBraze() -> Braze {
+        let configuration = Braze.Configuration(apiKey: "test-api-key", endpoint: "sdk.us-01.braze.com")
+        configuration.logger.level = .disabled
+        let braze = Braze(configuration: configuration)
+        braze.enabled = false
+        return braze
+    }
+
+    private func context(
+        url: String,
+        channel: Braze.Channel,
+        useWebView: Bool
+    ) throws -> Braze.URLContext {
+        return Braze.URLContext(
+            url: try XCTUnwrap(URL(string: url)),
+            useWebView: useWebView,
+            channel: channel,
+            extras: [:]
+        )
+    }
+
+    func testDelegateIsWiredToBrazeDelegateNotTheSdkAuthProtocol() {
+        // Mirror of the `sdkAuthError` type-relationship test. `shouldOpenURL`
+        // lives on `BrazeDelegate` / `braze.delegate`; `sdkAuthError` lives on
+        // `BrazeSDKAuthDelegate` / `braze.sdkAuthDelegate`. Both protocols
+        // supply defaults, so a conformance to the wrong one compiles and
+        // silently never fires (A2-01). The two delegates must not drift into
+        // each other's slot.
+        let delegate = BrazeDeepLinkDelegate()
+        XCTAssertTrue((delegate as AnyObject) is BrazeDelegate)
+        XCTAssertFalse((delegate as AnyObject) is BrazeSDKAuthDelegate)
+    }
+
+    func testShouldOpenURLReturnsFalseSoTheSdkDoesNotNavigate() throws {
+        // The decisive assertion: `false` is the suppression. If this ever
+        // returns `true`, `deepLinkHandling: "app"` silently degrades to
+        // "notify AND open", which is strictly worse than not shipping it.
+        let delegate = BrazeDeepLinkDelegate()
+        let spy = SpyPlugin()
+        delegate.plugin = spy
+
+        let shouldOpen = delegate.braze(
+            quietBraze(),
+            shouldOpenURL: try context(
+                url: "https://example.com/promo?x=1",
+                channel: .inAppMessage,
+                useWebView: true
+            )
+        )
+
+        XCTAssertFalse(shouldOpen)
+        XCTAssertEqual(spy.events.count, 1)
+        XCTAssertEqual(spy.events[0].name, "deepLinkReceived")
+        XCTAssertEqual(spy.events[0].data["url"] as? String, "https://example.com/promo?x=1")
+        XCTAssertEqual(spy.events[0].data["source"] as? String, "inAppMessage")
+        XCTAssertEqual(spy.events[0].data["useWebView"] as? Bool, true)
+    }
+
+    func testStillDeclinesTheOpenWhenThePluginReferenceIsGone() throws {
+        // The back-reference is weak; a delegate that outlives its plugin must
+        // still decline the open rather than falling through to "let the SDK
+        // handle it".
+        let delegate = BrazeDeepLinkDelegate()
+        let shouldOpen = delegate.braze(
+            quietBraze(),
+            shouldOpenURL: try context(url: "https://example.com/x", channel: .notification, useWebView: false)
+        )
+        XCTAssertFalse(shouldOpen)
+    }
+
+    func testEveryBrazeKitChannelMapsToAContractSourceTag() {
+        // `notification` is renamed so the value matches Android's
+        // `Channel.PUSH`; the rest keep their own names rather than being
+        // coerced into a neighbouring channel.
+        XCTAssertEqual(BrazeDeepLinkDelegate.source(for: .notification), "push")
+        XCTAssertEqual(BrazeDeepLinkDelegate.source(for: .inAppMessage), "inAppMessage")
+        XCTAssertEqual(BrazeDeepLinkDelegate.source(for: .contentCard), "contentCard")
+        XCTAssertEqual(BrazeDeepLinkDelegate.source(for: .banner), "banner")
+    }
+
+    func testPayloadCarriesExactlyTheContractKeys() {
+        let payload = BrazeDeepLinkDelegate.payload(
+            url: "https://example.com/deep",
+            channel: .contentCard,
+            useWebView: false
+        )
+        XCTAssertEqual(Set(payload.keys), ["url", "source", "useWebView"])
+        XCTAssertEqual(payload["url"] as? String, "https://example.com/deep")
+        XCTAssertEqual(payload["source"] as? String, "contentCard")
+        XCTAssertEqual(payload["useWebView"] as? Bool, false)
+    }
+}
+
+/// Content-card `useWebView` (2026-09 audit, A2-15 item 2). BrazeKit's
+/// `ContentCard.ClickAction` has a single case, `.url(URL, useWebView:)`, so
+/// the hint exists on every card that has a click action — it used to be
+/// dropped here while the in-app-message DTO carried the same field.
+@MainActor
+final class BrazeContentCardUseWebViewTests: XCTestCase {
+
+    private func card(clickAction: Braze.ContentCard.ClickAction?) throws -> Braze.ContentCard {
+        let data = Braze.ContentCard.Data(id: "card-1", clickAction: clickAction, createdAt: 1_700_000_000)
+        return .captionedImage(
+            .init(
+                data: data,
+                image: try XCTUnwrap(URL(string: "https://cdn.example/i.png")),
+                title: "Title",
+                description: "Description"
+            )
+        )
+    }
+
+    func testInAppWebViewHintSurvivesToTheDto() throws {
+        let url = try XCTUnwrap(URL(string: "https://example.com/click"))
+        let dto = try XCTUnwrap(BrazePlugin.serializeContentCard(card(clickAction: .url(url, useWebView: true))))
+        XCTAssertEqual(dto["useWebView"] as? Bool, true)
+        XCTAssertEqual(dto["url"] as? String, "https://example.com/click")
+    }
+
+    func testSystemBrowserHintSurvivesToTheDto() throws {
+        let url = try XCTUnwrap(URL(string: "https://example.com/click"))
+        let dto = try XCTUnwrap(BrazePlugin.serializeContentCard(card(clickAction: .url(url, useWebView: false))))
+        XCTAssertEqual(dto["useWebView"] as? Bool, false)
+    }
+
+    func testACardWithNoClickActionOmitsTheKeyRatherThanGuessing() throws {
+        // The contract slot is optional precisely so a card with nothing to
+        // open reports no open-target preference (C03: no fabricated values).
+        let dto = try XCTUnwrap(BrazePlugin.serializeContentCard(card(clickAction: nil)))
+        XCTAssertNil(dto["useWebView"])
+        XCTAssertTrue(dto["url"] is NSNull)
+    }
+
+    func testAControlCardNeverCarriesUseWebView() throws {
+        let url = try XCTUnwrap(URL(string: "https://example.com/click"))
+        let control = Braze.ContentCard.control(
+            .init(data: .init(id: "control-1", clickAction: .url(url, useWebView: true)))
+        )
+        let dto = try XCTUnwrap(BrazePlugin.serializeContentCard(control))
+        XCTAssertEqual(dto["type"] as? String, "control")
+        XCTAssertNil(dto["useWebView"])
     }
 }

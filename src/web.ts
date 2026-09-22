@@ -6,6 +6,7 @@ import type {
   BrazeChangeUserOptions,
   BrazeContentCard,
   BrazeContentCardType,
+  BrazeDeepLinkHandling,
   BrazeEchoOptions,
   BrazeEchoResult,
   BrazeFeatureFlag,
@@ -124,6 +125,15 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    */
   private inAppMessageUiEnabled = true;
 
+  /**
+   * `initialize`'s `deepLinkHandling` mode. In `'app'` mode the in-app
+   * message subscription neutralizes each message's (and each button's)
+   * click action before handing it to the SDK's presenter, and emits
+   * `deepLinkReceived` from the SDK's own clicked-event subscribers
+   * instead. See {@link BrazeWeb.interceptDeepLinks}.
+   */
+  private deepLinkHandling: BrazeDeepLinkHandling = 'sdk';
+
   // ---------------------------------------------------------------------------
   // Bridge sanity check
   // ---------------------------------------------------------------------------
@@ -178,6 +188,11 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       baseUrl: options.endpoint,
       enableLogging: options.enableLogging ?? false,
       enableSdkAuthentication: options.enableSdkAuthentication ?? false,
+      // Web-only, and deliberately defaulted to `false` rather than left
+      // absent: the SDK's own default is `false` too, but pinning it here
+      // means a future SDK default flip can't silently enable dashboard
+      // JavaScript in consumers who never asked for it (C06).
+      allowUserSuppliedJavascript: options.allowUserSuppliedJavascript ?? false,
       ...(options.sessionTimeoutInSeconds !== undefined && {
         sessionTimeoutInSeconds: options.sessionTimeoutInSeconds,
       }),
@@ -192,6 +207,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     this.initialized = true;
     this.sdkAuthenticationEnabled = options.enableSdkAuthentication === true;
     this.inAppMessageUiEnabled = options.enableInAppMessageUI !== false;
+    this.deepLinkHandling = options.deepLinkHandling ?? 'sdk';
 
     this.featureFlagsSubscription =
       braze.subscribeToFeatureFlagsUpdates((flags) => {
@@ -210,9 +226,16 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
         // block display. Notify first so a consumer's analytics call
         // happens before the SDK paints, then hand the message to the
         // SDK's presenter unless the consumer opted out of the built-in UI.
+        //
+        // `serializeInAppMessage` runs BEFORE `interceptDeepLinks`, which
+        // mutates the SDK's in-memory click actions: the DTO must report
+        // the campaign as authored, not as the plugin neutralized it.
         const serialized = this.serializeInAppMessage(message, braze);
         if (serialized !== null) {
           this.notifyListeners('inAppMessageReceived', { message: serialized });
+        }
+        if (this.deepLinkHandling === 'app') {
+          this.interceptDeepLinks(message, braze);
         }
         if (this.inAppMessageUiEnabled) {
           braze.showInAppMessage(message);
@@ -275,32 +298,32 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
 
   async setEmail(options: BrazeSetEmailOptions): Promise<void> {
     const user = this.requireUser();
-    user.setEmail(options.email);
+    this.warnIfRejected(user.setEmail(options.email), 'setEmail');
   }
 
   async setPhoneNumber(options: BrazeSetPhoneNumberOptions): Promise<void> {
     const user = this.requireUser();
-    user.setPhoneNumber(options.phoneNumber);
+    this.warnIfRejected(user.setPhoneNumber(options.phoneNumber), 'setPhoneNumber');
   }
 
   async setFirstName(options: BrazeSetFirstNameOptions): Promise<void> {
     const user = this.requireUser();
-    user.setFirstName(options.firstName);
+    this.warnIfRejected(user.setFirstName(options.firstName), 'setFirstName');
   }
 
   async setLastName(options: BrazeSetLastNameOptions): Promise<void> {
     const user = this.requireUser();
-    user.setLastName(options.lastName);
+    this.warnIfRejected(user.setLastName(options.lastName), 'setLastName');
   }
 
   async setLanguage(options: BrazeSetLanguageOptions): Promise<void> {
     const user = this.requireUser();
-    user.setLanguage(options.language);
+    this.warnIfRejected(user.setLanguage(options.language), 'setLanguage');
   }
 
   async setCountry(options: BrazeSetCountryOptions): Promise<void> {
     const user = this.requireUser();
-    user.setCountry(options.country);
+    this.warnIfRejected(user.setCountry(options.country), 'setCountry');
   }
 
   // ---------------------------------------------------------------------------
@@ -321,7 +344,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     if (valueType !== 'string' && valueType !== 'number' && valueType !== 'boolean') {
       throw new Error('Braze.setCustomUserAttribute: `value` must be string, number, or boolean.');
     }
-    user.setCustomUserAttribute(options.key, options.value);
+    this.warnIfRejected(user.setCustomUserAttribute(options.key, options.value), 'setCustomUserAttribute');
   }
 
   // ---------------------------------------------------------------------------
@@ -331,13 +354,13 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   async addToSubscriptionGroup(options: BrazeSubscriptionGroupOptions): Promise<void> {
     const user = this.requireUser();
     this.requireGroupId(options.groupId, 'addToSubscriptionGroup');
-    user.addToSubscriptionGroup(options.groupId);
+    this.warnIfRejected(user.addToSubscriptionGroup(options.groupId), 'addToSubscriptionGroup');
   }
 
   async removeFromSubscriptionGroup(options: BrazeSubscriptionGroupOptions): Promise<void> {
     const user = this.requireUser();
     this.requireGroupId(options.groupId, 'removeFromSubscriptionGroup');
-    user.removeFromSubscriptionGroup(options.groupId);
+    this.warnIfRejected(user.removeFromSubscriptionGroup(options.groupId), 'removeFromSubscriptionGroup');
   }
 
   // ---------------------------------------------------------------------------
@@ -352,7 +375,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     if (!options.label || typeof options.label !== 'string') {
       throw new Error('Braze.addAlias: `label` is required (string).');
     }
-    user.addAlias(options.alias, options.label);
+    this.warnIfRejected(user.addAlias(options.alias, options.label), 'addAlias');
   }
 
   // ---------------------------------------------------------------------------
@@ -381,7 +404,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   async setDateOfBirth(options: BrazeSetDateOfBirthOptions): Promise<void> {
     const user = this.requireUser();
     this.validateDateOfBirth(options);
-    user.setDateOfBirth(options.year, options.month, options.day);
+    this.warnIfRejected(user.setDateOfBirth(options.year, options.month, options.day), 'setDateOfBirth');
   }
 
   async setGender(options: BrazeSetGenderOptions): Promise<void> {
@@ -395,12 +418,12 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
         `Braze.setGender: unknown gender "${options.gender}". ` + `Allowed: ${Object.keys(WEB_GENDER_MAP).join(', ')}.`,
       );
     }
-    user.setGender(code);
+    this.warnIfRejected(user.setGender(code), 'setGender');
   }
 
   async setHomeCity(options: BrazeSetHomeCityOptions): Promise<void> {
     const user = this.requireUser();
-    user.setHomeCity(options.homeCity);
+    this.warnIfRejected(user.setHomeCity(options.homeCity), 'setHomeCity');
   }
 
   // ---------------------------------------------------------------------------
@@ -413,7 +436,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       throw new Error('Braze.logCustomEvent: `name` is required (string).');
     }
     this.validateProperties(options.properties, 'logCustomEvent');
-    braze.logCustomEvent(options.name, options.properties);
+    this.warnIfRejected(braze.logCustomEvent(options.name, options.properties), 'logCustomEvent');
   }
 
   // ---------------------------------------------------------------------------
@@ -457,7 +480,10 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     if (!options.id || typeof options.id !== 'string') {
       throw new Error('Braze.logFeatureFlagImpression: `id` is required (string).');
     }
-    braze.logFeatureFlagImpression(options.id);
+    // `logFeatureFlagImpression` returns `boolean | undefined`; `undefined`
+    // means the SDK had nothing to report, not a rejection, so only an
+    // explicit `false` warns.
+    this.warnIfRejected(braze.logFeatureFlagImpression(options.id) !== false, 'logFeatureFlagImpression');
   }
 
   // ---------------------------------------------------------------------------
@@ -487,13 +513,13 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   async logContentCardClick(options: BrazeLogContentCardClickOptions): Promise<void> {
     const braze = this.requireInitialized();
     const card = this.requireContentCardById(braze, options.cardId, 'logContentCardClick');
-    braze.logContentCardClick(card);
+    this.warnIfRejected(braze.logContentCardClick(card), 'logContentCardClick');
   }
 
   async logContentCardImpression(options: BrazeLogContentCardImpressionOptions): Promise<void> {
     const braze = this.requireInitialized();
     const card = this.requireContentCardById(braze, options.cardId, 'logContentCardImpression');
-    braze.logContentCardImpressions([card]);
+    this.warnIfRejected(braze.logContentCardImpressions([card]), 'logContentCardImpression');
   }
 
   // ---------------------------------------------------------------------------
@@ -506,7 +532,10 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     this.validateProperties(options.properties, 'logPurchase');
     // Web SDK arg order: (productId, price, currencyCode?, quantity?, props?).
     // Currency is required on our contract; pass through unconditionally.
-    braze.logPurchase(options.productId, options.price, options.currency, options.quantity, options.properties);
+    this.warnIfRejected(
+      braze.logPurchase(options.productId, options.price, options.currency, options.quantity, options.properties),
+      'logPurchase',
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -540,6 +569,10 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     // previous run's enforcement.
     this.initialized = false;
     this.sdkAuthenticationEnabled = false;
+    // Deep-link mode is per-initialize, like the SDK-auth flag: a later
+    // `initialize` with no `deepLinkHandling` falls back to the 'sdk'
+    // default rather than inheriting the previous run's 'app' mode.
+    this.deepLinkHandling = 'sdk';
   }
 
   /**
@@ -554,6 +587,10 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     braze.disableSDK();
     this.initialized = false;
     this.sdkAuthenticationEnabled = false;
+    // Deep-link mode is per-initialize, like the SDK-auth flag: a later
+    // `initialize` with no `deepLinkHandling` falls back to the 'sdk'
+    // default rather than inheriting the previous run's 'app' mode.
+    this.deepLinkHandling = 'sdk';
   }
 
   /**
@@ -568,6 +605,10 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     braze.enableSDK();
     this.initialized = false;
     this.sdkAuthenticationEnabled = false;
+    // Deep-link mode is per-initialize, like the SDK-auth flag: a later
+    // `initialize` with no `deepLinkHandling` falls back to the 'sdk'
+    // default rather than inheriting the previous run's 'app' mode.
+    this.deepLinkHandling = 'sdk';
   }
 
   async isDisabled(): Promise<BrazeIsDisabledResult> {
@@ -706,6 +747,129 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     this.contentCardsSubscription = null;
     this.inAppMessageSubscription = null;
     this.sdkAuthErrorSubscription = null;
+  }
+
+  /**
+   * Surfaces a `false` return from a Braze Web SDK call.
+   *
+   * Nearly every SDK entry point the plugin forwards to answers "was this
+   * accepted?" with a boolean: every `User.set*`, `addAlias`,
+   * `addToSubscriptionGroup` / `removeFromSubscriptionGroup`,
+   * `logCustomEvent`, `logPurchase`, `logContentCardClick`,
+   * `logContentCardImpressions`, and `logFeatureFlagImpression`. `false`
+   * means Braze applied a validation rule of its own (RFC-5322 email,
+   * `$`-prefixed key, over-length string, unsupported currency) and stored
+   * nothing. The plugin discarded all of those before 0.2.0, so a rejected
+   * value was undiscoverable from JS (2026-09 audit, A1-10).
+   *
+   * The call still resolves — turning a `false` into a rejection is a
+   * cross-platform contract change, and iOS has no equivalent signal to
+   * reject on (BrazeKit's setters return `Void`) — but the method name is
+   * logged once at warn level. Per `SECURITY.md` §3 the rejected value
+   * itself is never logged; the message points at the SDK's own logs, which
+   * `enableLogging: true` turns on. The wording is byte-identical to
+   * Android's `warnIfRejected`.
+   */
+  private warnIfRejected(accepted: boolean, method: string): void {
+    if (accepted) return;
+    // eslint-disable-next-line no-console
+    console.warn(`Braze.${method}: the Braze SDK rejected the value (see SDK logs)`);
+  }
+
+  /**
+   * Rewires one about-to-be-shown in-app message so its URL click actions
+   * emit `deepLinkReceived` instead of navigating. Called from the IAM
+   * subscription when `initialize` ran with `deepLinkHandling: 'app'`.
+   *
+   * ## How suppression works on web
+   *
+   * The Web SDK decides whether to navigate by reading `clickAction` off the
+   * live message / button object *at click time*
+   * (`in-app-message-to-html.js`: `logInAppMessageClick(e), e.clickAction ===
+   * URI && Q(e.uri, …)`; `modal-utils.js` does the same per button). Both
+   * are plain, writable instance properties, so setting them to
+   * `InAppMessage.ClickAction.NONE` before `showInAppMessage` is what
+   * actually stops the navigation — there is no "cancel" hook to call.
+   *
+   * The `uri` field is deliberately left intact: it is what the event
+   * payload carries, the SDK never reads it once `clickAction` is `NONE`,
+   * and blanking it would corrupt the analytics the SDK logs alongside the
+   * click.
+   *
+   * `subscribeToClickedEvent` is the SDK's own click notification and fires
+   * from inside `logInAppMessageClick` / `logInAppMessageButtonClick`, i.e.
+   * on the same synchronous path and immediately *before* the (now
+   * suppressed) navigation would have happened. It takes a zero-argument
+   * callback, so the URL and open target are captured from the message at
+   * subscribe time rather than read off an event object.
+   *
+   * ## What this cannot cover
+   *
+   * `HtmlMessage` is rendered by a different code path
+   * (`html-message-to-html.js`) that never consults `clickAction`: links
+   * inside the campaign's own markup navigate through the iframe and
+   * Braze's `brazeBridge`, which the plugin is not in the path of. HTML
+   * in-app messages are also off by default on web (they require
+   * `allowUserSuppliedJavascript: true`). Documented in `SECURITY.md` §7
+   * rather than silently missing.
+   *
+   * @param message - The message the SDK is about to present.
+   * @param braze - The loaded SDK module, for the `ClickAction` constants.
+   */
+  private interceptDeepLinks(
+    message: BrazeWebSdkModule.InAppMessage | BrazeWebSdkModule.ControlMessage,
+    braze: BrazeWebSdk,
+  ): void {
+    // Narrowing mirrors `serializeInAppMessage`: `clickAction` / `uri` /
+    // `openTarget` are declared on the concrete subclasses, not on the
+    // abstract `InAppMessage` base, and `ControlMessage` isn't in the
+    // hierarchy at all. `HtmlMessage` is excluded deliberately — its
+    // renderer never reads `clickAction` (see the doc comment above).
+    const clickable =
+      message instanceof braze.SlideUpMessage ||
+      message instanceof braze.ModalMessage ||
+      message instanceof braze.FullScreenMessage
+        ? message
+        : null;
+    if (clickable === null) return;
+
+    const { URI, NONE } = braze.InAppMessage.ClickAction;
+    // The SDK's `InAppMessage` constructor defaults `openTarget` to
+    // `'NONE'`, so this is always a real boolean — same mapping as
+    // `serializeIamClickAction`, which is where the DTO's `useWebView`
+    // comes from.
+    const useWebView = clickable.openTarget !== 'BLANK';
+
+    const messageUri = clickable.uri;
+    if (clickable.clickAction === URI && typeof messageUri === 'string' && messageUri.length > 0) {
+      clickable.clickAction = NONE;
+      clickable.subscribeToClickedEvent(() => {
+        this.notifyListeners('deepLinkReceived', {
+          url: messageUri,
+          source: 'inAppMessage',
+          useWebView,
+        });
+      });
+    }
+
+    // Slide-ups carry no buttons; modals and full-screens carry up to two.
+    const buttons = clickable instanceof braze.SlideUpMessage ? [] : clickable.buttons;
+    for (const button of buttons ?? []) {
+      const buttonUri = button.uri;
+      if (button.clickAction !== URI || typeof buttonUri !== 'string' || buttonUri.length === 0) continue;
+      button.clickAction = NONE;
+      // Buttons have no `openTarget` of their own — the SDK passes the
+      // message's down at click time — so they inherit the message's hint,
+      // matching how `serializeImmersiveIam` derives a button's
+      // `useWebView`.
+      button.subscribeToClickedEvent(() => {
+        this.notifyListeners('deepLinkReceived', {
+          url: buttonUri,
+          source: 'inAppMessage',
+          useWebView,
+        });
+      });
+    }
   }
 
   /**
@@ -1170,6 +1334,17 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     if (options.sessionTimeoutInSeconds !== undefined) {
       if (!Number.isInteger(options.sessionTimeoutInSeconds) || options.sessionTimeoutInSeconds <= 0) {
         throw new Error('Braze.initialize: `sessionTimeoutInSeconds` must be a positive integer.');
+      }
+    }
+    // Closed enum, so the error names the offending value — the C06 §4
+    // closed-enum exemption, same as `setGender`. A mode the plugin doesn't
+    // recognise must not silently fall back to 'sdk': that would leave a
+    // consumer who typo'd 'App' believing deep links were being gated.
+    if (options.deepLinkHandling !== undefined) {
+      if (options.deepLinkHandling !== 'sdk' && options.deepLinkHandling !== 'app') {
+        throw new Error(
+          `Braze.initialize: unknown deepLinkHandling "${String(options.deepLinkHandling)}". Allowed: sdk, app.`,
+        );
       }
     }
   }

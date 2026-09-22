@@ -134,6 +134,87 @@ public final class BrazeSdkAuthDelegate: NSObject, BrazeSDKAuthDelegate {
     }
 }
 
+/// Bridges `BrazeDelegate.braze(_:shouldOpenURL:)` to the plugin's
+/// `deepLinkReceived` listener event, and — critically — is what actually
+/// *suppresses* the SDK's own URL opening.
+///
+/// Installed on `braze.delegate` only when `initialize` ran with
+/// `deepLinkHandling: 'app'`. In the default `'sdk'` mode the slot is left
+/// unassigned exactly as before, so a host app that wants
+/// `willPresentModalWithContext` / `noMatchingTriggerForEvent` can still take
+/// it (2026-09 audit, A2-08). Taking the slot is the cost of the feature and
+/// is documented in `SECURITY.md` §7; `sdkAuthError` is unaffected because it
+/// lives on the separate `sdkAuthDelegate` (A2-01).
+///
+/// `BrazeDelegate` supplies default implementations for all three of its
+/// methods, so conforming to it and implementing only `shouldOpenURL` is
+/// correct and leaves the other two at BrazeKit's defaults.
+///
+/// Held strongly by the plugin (`braze.delegate` is `weak`), same pattern as
+/// `BrazeIAMDelegate` and `BrazeSdkAuthDelegate`.
+@MainActor
+public final class BrazeDeepLinkDelegate: NSObject, BrazeDelegate {
+
+    /// Weak back-reference to the plugin, same cycle-avoidance pattern as
+    /// `BrazeIAMDelegate`.
+    public weak var plugin: CAPPlugin?
+
+    /// Returning `false` tells BrazeKit not to open the URL. The plugin
+    /// notifies first so the consumer's handler is queued before the SDK
+    /// unwinds, then declines — nothing navigates unless the consumer's
+    /// listener navigates.
+    ///
+    /// `Braze.URLContext` (BrazeKit 18.2.1) carries `url`, `useWebView`,
+    /// `isUniversalLink`, `channel` and `extras`; the event surfaces the
+    /// first three pieces the contract has slots for.
+    public func braze(_ braze: Braze, shouldOpenURL context: Braze.URLContext) -> Bool {
+        plugin?.notifyListeners(
+            "deepLinkReceived",
+            data: Self.payload(
+                url: context.url.absoluteString,
+                channel: context.channel,
+                useWebView: context.useWebView
+            )
+        )
+        return false
+    }
+
+    /// Builds the `BrazeDeepLinkReceivedEvent` wire shape.
+    ///
+    /// Split out from the delegate callback because `Braze.URLContext`'s
+    /// initializer needs a live `Braze.Channel` but not a `Braze` instance,
+    /// so this is the part a unit test can drive without booting the SDK.
+    static func payload(url: String, channel: Braze.Channel, useWebView: Bool) -> [String: Any] {
+        return [
+            "url": url,
+            "source": Self.source(for: channel),
+            "useWebView": useWebView
+        ]
+    }
+
+    /// Maps BrazeKit's `Braze.Channel` onto the contract's
+    /// `BrazeDeepLinkSource` union. `.notification` is renamed to `push` so
+    /// the value matches Android's `Channel.PUSH`; every other case keeps
+    /// its own name rather than being coerced into a neighbouring one.
+    static func source(for channel: Braze.Channel) -> String {
+        switch channel {
+        case .notification:
+            return "push"
+        case .inAppMessage:
+            return "inAppMessage"
+        case .contentCard:
+            return "contentCard"
+        case .banner:
+            return "banner"
+        @unknown default:
+            // A channel a future BrazeKit adds. The contract's `other` tag
+            // exists for exactly this: report the link rather than drop it,
+            // and never mislabel it as one of the known channels.
+            return "other"
+        }
+    }
+}
+
 /// Static serializer for `Braze.InAppMessage` → plugin DTO. Kept as a
 /// caseless enum so it has no instance state and can be called from
 /// any context. The DTO shape matches the `BrazeInAppMessage` tagged

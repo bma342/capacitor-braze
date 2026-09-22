@@ -27,10 +27,10 @@ Snapshot at **0.2.0** (2026-09-22). This table drifts — `package.json`, `git l
 
 | Surface | State |
 |---|---|
-| **TypeScript API** | 35 methods + `addListener` / `removeAllListeners` for **4 events** (`featureFlagsUpdated`, `contentCardsUpdated`, `inAppMessageReceived`, `sdkAuthError`) |
-| **iOS bridge** (`BrazeKit` / `BrazeUI` 18.2.1) | Compiles and runs **26 XCTests** on every PR via the `verify-ios` CI job; `PrivacyInfo.xcprivacy` shipped via podspec `resource_bundles`. **Requires Xcode 26+** |
-| **Android bridge** (`com.braze:android-sdk-ui` 43.2.0) | Compiles, runs **74 Robolectric/JUnit tests** and Android Lint on every PR via the `verify-android` CI job |
-| **Web bridge** (`@braze/web-sdk` peer `^6.13.0`) | **154 vitest tests across 14 files in ~3s** against an in-process Fastify mock Braze server; 35/35 methods and every validation branch covered — see [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md). One method (`registerPushToken`) is platform-divergent and throws on web by design (per [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md)) |
+| **TypeScript API** | 35 methods + `addListener` / `removeAllListeners` for **5 events** (`featureFlagsUpdated`, `contentCardsUpdated`, `inAppMessageReceived`, `sdkAuthError`, `deepLinkReceived`) |
+| **iOS bridge** (`BrazeKit` / `BrazeUI` 18.2.1) | Compiles and runs **35 XCTests** on every PR via the `verify-ios` CI job; `PrivacyInfo.xcprivacy` shipped via podspec `resource_bundles`. **Requires Xcode 26+** |
+| **Android bridge** (`com.braze:android-sdk-ui` 43.2.0) | Compiles, runs **90 Robolectric/JUnit tests** and Android Lint on every PR via the `verify-android` CI job |
+| **Web bridge** (`@braze/web-sdk` peer `^6.13.0`) | **179 vitest tests across 16 files in ~4s** against an in-process Fastify mock Braze server; 35/35 methods and every validation branch covered — see [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md). One method (`registerPushToken`) is platform-divergent and throws on web by design (per [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md)) |
 | **Developer testbed** (`example/`) | Every plugin method has a button; clicking invokes + logs |
 | **Reference app** (`demo/`) | React 19 + Tailwind 4 + TanStack Router; restaurant ordering + e-commerce flows; iOS + Android Capacitor projects committed |
 | **MDC design contracts** | [C01–C11](./docs/mdcs/) codify the patterns; CI gates enforce them |
@@ -40,14 +40,15 @@ Snapshot at **0.2.0** (2026-09-22). This table drifts — `package.json`, `git l
 | **Smoke-tested against real Braze** | ❌ **Not yet.** The Layer 4 playbook and capture templates are staged in [`docs/smoke-tests/`](./docs/smoke-tests/) but have never been run — no claim in this repo is backed by a live Braze backend |
 | **Capacitor 8** | ❌ Out of range. Peer dep is `^6.0.0 \|\| ^7.0.0` and the podspec is `>= 6.0, < 8.0`. Capacitor 8 needs AGP 8.13 / Gradle 8.14.3 / Kotlin 2.2.20 / compileSdk 36, and its CLI generates SPM iOS projects by default — a tracked follow-up, not a shipped capability |
 
-See [`SDK_SURFACE.md` §2](./SDK_SURFACE.md#2-plugin-version-roadmap) for the version roadmap and what is still unshipped (banners, push-permission helpers, geofences, deep-link interception, SPM, Capacitor 8).
+See [`SDK_SURFACE.md` §2](./SDK_SURFACE.md#2-plugin-version-roadmap) for the version roadmap and what is still unshipped (banners, push-permission helpers, geofences, SPM, Capacitor 8).
 
 ### Known gaps in 0.2.0
 
 Stated plainly so a reviewer does not have to find them:
 
 - **No release has been validated against a live Braze backend.** Everything is verified against the in-tree mock server and the real SDKs' compile/runtime surface.
-- **Setter return values are discarded on web.** `setEmail` / `setPhoneNumber` and friends resolve even when the Braze Web SDK rejects the value as malformed (audit finding A1-10). iOS and Android now log a non-PII warning when the SDK rejects a value; the web bridge does not, and no platform rejects the promise. Turning those into rejections is a cross-platform contract change deferred past 0.2.0.
+- **A value the Braze SDK rejects resolves rather than throwing.** `setEmail('nonsense')` resolves on every platform. Web and Android now log one non-PII warning — `Braze.<method>: the Braze SDK rejected the value (see SDK logs)`, byte-identical on both — and iOS reports nothing because BrazeKit 18.2.1's setters return `Void`. Turning a rejection into a thrown error is a cross-platform contract change deferred past 0.2.0, since iOS has no signal to reject on.
+- **`deepLinkReceived` cannot intercept HTML in-app message iframes on web.** Their renderer never consults the SDK's click-action path. iOS and Android cover that channel; the full per-channel matrix is in [`SECURITY.md` §7](./SECURITY.md#7-deep-link-security). Capacitor's `server.allowNavigation` is the backstop and you should keep it set.
 - **`inAppMessageReceived` has no end-to-end delivery test.** The DTO is covered at the serializer level against real SDK message classes on all three platforms; reproducing Braze's trigger-delivery envelope in the mock server is not done.
 - **No CodeQL / SAST.** `npm audit`, gitleaks and (once its token is provisioned) Snyk are the scanners that run.
 
@@ -92,12 +93,14 @@ await Braze.logCustomEvent({ name: 'app_opened' });
 | `sessionTimeoutInSeconds` | SDK default | Must be a positive integer; a non-integer is rejected, not coerced. |
 | `enableInAppMessageUI` | `true` | `false` keeps `inAppMessageReceived` firing but stops the plugin rendering, so you can present in-app messages yourself. |
 | `enablePushAutomation` | `false` | **iOS only** (ignored on Android/Web). `true` hands notification opens, deep links, rich push and background push to BrazeKit, and registers Braze's notification categories. Because `initialize` runs after launch, a push that *launched* the app may not be attributed — initialize as early as you can. |
+| `allowUserSuppliedJavascript` | `false` | **Web only** (ignored on iOS/Android — neither SDK has a counterpart). `true` lets Braze dashboard authors run JavaScript in your page **and** is what makes HTML in-app messages render on web. See [`SECURITY.md` §6](./SECURITY.md#6-in-app-message-xss-risk). |
+| `deepLinkHandling` | `'sdk'` | `'app'` suppresses the SDK's own URL opening and emits [`deepLinkReceived`](#deep-link-interception) instead, so you vet and route every Braze URL yourself. |
 
 The full reference, with `@example` blocks for every method and option, is in the [API reference](#api-reference) below.
 
 ## Security
 
-The full threat model, per-surface design decisions and disclosure policy live in [`SECURITY.md`](./SECURITY.md). The four things a consumer most needs to get right:
+The full threat model, per-surface design decisions and disclosure policy live in [`SECURITY.md`](./SECURITY.md). The five things a consumer most needs to get right:
 
 ### Which API key do I use?
 
@@ -115,7 +118,7 @@ Signing is **your backend's job** — the plugin never sees a signing key. Braze
 
 ### Content Security Policy for the Capacitor WebView
 
-HTML in-app messages render inside a WebView with content authored in your Braze dashboard. The plugin is **disclosure-only** here: `inAppMessageReceived` is observational and cannot block display, and `allowUserSuppliedJavascript` is not exposed by the plugin (Braze's own default of `false` applies). Your real controls are dashboard hygiene and a CSP on the Capacitor WebView. A workable starting point, to be tightened for your app:
+HTML in-app messages render inside a WebView with content authored in your Braze dashboard. The plugin's controls here are narrow and worth knowing exactly: `inAppMessageReceived` is observational and cannot block display, and `allowUserSuppliedJavascript` defaults to `false` — which on web means dashboard JavaScript cannot run in your page and HTML in-app messages do not render at all unless you pass `true`. iOS and Android ignore that option because neither SDK has a counterpart; their HTML campaigns render in a WebView the Braze SDK owns. Your real controls are dashboard hygiene and a CSP on the Capacitor WebView. A workable starting point, to be tightened for your app:
 
 ```html
 <meta
@@ -128,6 +131,41 @@ HTML in-app messages render inside a WebView with content authored in your Braze
 ```
 
 `@braze/web-sdk` **6.13.0 or newer is the peer floor for a security reason**: 6.12.1 fixed a bug where an in-app message with multiple buttons could display even when one button used a `javascript:` or `data:` URI and `allowUserSuppliedJavascript` was disabled. Do not pin below it. See [`SECURITY.md` §6](./SECURITY.md#6-in-app-message-xss-risk).
+
+### Deep link interception
+
+By default the Braze SDK opens URLs from push, in-app messages and content cards itself. Pass
+`deepLinkHandling: 'app'` and it doesn't — the plugin tells the SDK to stand down and hands you the
+URL instead, so **nothing navigates unless your code navigates**. Not acting on the event is a
+complete "deny"; there is no second call to make.
+
+```ts
+await Braze.initialize({ apiKey, endpoint, deepLinkHandling: 'app' });
+
+await Braze.addListener('deepLinkReceived', ({ url, source, useWebView }) => {
+  const target = new URL(url);
+  if (target.protocol !== 'https:' || !ALLOWED_HOSTS.has(target.host)) {
+    console.warn(`blocked a ${source} deep link`);
+    return; // nothing opened it
+  }
+  if (useWebView) router.push(target.pathname);
+  else window.open(url, '_blank');
+});
+```
+
+`source` is `'inAppMessage' | 'push' | 'contentCard' | 'banner' | 'other'`. The decision is the
+init-time mode rather than a per-URL veto because Capacitor listeners are fire-and-forget — a JS
+listener has no return channel to native and cannot answer "allow" while the SDK waits.
+
+Three things to know before you opt in, all of them in
+[`SECURITY.md` §7](./SECURITY.md#7-deep-link-security) in full:
+
+- **Opting in without a listener breaks every campaign CTA.** That is why the default is `'sdk'`.
+- **Coverage is not uniform.** Web cannot intercept links inside an HTML in-app message's iframe,
+  and Android content-card clicks are only covered when Braze's own feed UI renders the card.
+  Keep Capacitor's `server.allowNavigation` set as the backstop either way.
+- **On iOS the plugin takes `braze.delegate`**, which it otherwise leaves free for your app's
+  `willPresentModalWithContext` / `noMatchingTriggerForEvent`. `sdkAuthError` is unaffected.
 
 ### Right to be forgotten (GDPR / CCPA)
 
@@ -198,6 +236,7 @@ Two caveats the plugin cannot close: appending `?brazeLogging=true` to the page 
 * [`addListener('contentCardsUpdated', ...)`](#addlistenercontentcardsupdated-)
 * [`addListener('inAppMessageReceived', ...)`](#addlistenerinappmessagereceived-)
 * [`addListener('sdkAuthError', ...)`](#addlistenersdkautherror-)
+* [`addListener('deepLinkReceived', ...)`](#addlistenerdeeplinkreceived-)
 * [`removeAllListeners()`](#removealllisteners)
 * [`wipeData()`](#wipedata)
 * [`disableSDK()`](#disablesdk)
@@ -333,6 +372,16 @@ setEmail(options: BrazeSetEmailOptions) => Promise<void>
 
 Sets the current user's email.
 
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
+
 | Param         | Type                                                                  |
 | ------------- | --------------------------------------------------------------------- |
 | **`options`** | <code><a href="#brazesetemailoptions">BrazeSetEmailOptions</a></code> |
@@ -347,6 +396,16 @@ setPhoneNumber(options: BrazeSetPhoneNumberOptions) => Promise<void>
 ```
 
 Sets the current user's phone number. E.164 format recommended.
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
 
 | Param         | Type                                                                              |
 | ------------- | --------------------------------------------------------------------------------- |
@@ -363,6 +422,16 @@ setFirstName(options: BrazeSetFirstNameOptions) => Promise<void>
 
 Sets the current user's first name.
 
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
+
 | Param         | Type                                                                          |
 | ------------- | ----------------------------------------------------------------------------- |
 | **`options`** | <code><a href="#brazesetfirstnameoptions">BrazeSetFirstNameOptions</a></code> |
@@ -377,6 +446,16 @@ setLastName(options: BrazeSetLastNameOptions) => Promise<void>
 ```
 
 Sets the current user's last name.
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
 
 | Param         | Type                                                                        |
 | ------------- | --------------------------------------------------------------------------- |
@@ -393,6 +472,16 @@ setLanguage(options: BrazeSetLanguageOptions) => Promise<void>
 
 Sets the current user's language. Use ISO 639-1 codes.
 
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
+
 | Param         | Type                                                                        |
 | ------------- | --------------------------------------------------------------------------- |
 | **`options`** | <code><a href="#brazesetlanguageoptions">BrazeSetLanguageOptions</a></code> |
@@ -407,6 +496,16 @@ setCountry(options: BrazeSetCountryOptions) => Promise<void>
 ```
 
 Sets the current user's country. Use ISO 3166-1 alpha-2 codes.
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
 
 | Param         | Type                                                                      |
 | ------------- | ------------------------------------------------------------------------- |
@@ -425,6 +524,17 @@ Sets a custom user attribute. The native bridge dispatches based on the
 inferred type of `value` (string / number / boolean → matching Braze SDK
 overload).
 
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
+
 | Param         | Type                                                                                              |
 | ------------- | ------------------------------------------------------------------------------------------------- |
 | **`options`** | <code><a href="#brazesetcustomuserattributeoptions">BrazeSetCustomUserAttributeOptions</a></code> |
@@ -440,6 +550,17 @@ addToSubscriptionGroup(options: BrazeSubscriptionGroupOptions) => Promise<void>
 
 Adds the current user to an email or SMS subscription group.
 
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
+
 | Param         | Type                                                                                    |
 | ------------- | --------------------------------------------------------------------------------------- |
 | **`options`** | <code><a href="#brazesubscriptiongroupoptions">BrazeSubscriptionGroupOptions</a></code> |
@@ -454,6 +575,17 @@ removeFromSubscriptionGroup(options: BrazeSubscriptionGroupOptions) => Promise<v
 ```
 
 Removes the current user from a subscription group.
+
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
 
 | Param         | Type                                                                                    |
 | ------------- | --------------------------------------------------------------------------------------- |
@@ -471,6 +603,17 @@ addAlias(options: BrazeAddAliasOptions) => Promise<void>
 Adds an alias for the current user. (alias, label) pairs are unique across
 users — if another user already owns the pair, the alias is rejected by
 the Braze backend.
+
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
 
 | Param         | Type                                                                  |
 | ------------- | --------------------------------------------------------------------- |
@@ -516,6 +659,17 @@ in v0.1 — the three components are required. The underlying SDKs accept
 a null-out form; exposing it is a deliberate v0.2+ scope decision, not
 an oversight.
 
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
+
 | Param         | Type                                                                              |
 | ------------- | --------------------------------------------------------------------------------- |
 | **`options`** | <code><a href="#brazesetdateofbirthoptions">BrazeSetDateOfBirthOptions</a></code> |
@@ -536,6 +690,17 @@ Like {@link BrazePlugin.setDateOfBirth} and unlike the standard string
 setters, gender **cannot be cleared** in v0.1 — `null` is not accepted.
 Use `'prefer_not_to_say'` or `'unknown'` to express absence.
 
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
+
 | Param         | Type                                                                    |
 | ------------- | ----------------------------------------------------------------------- |
 | **`options`** | <code><a href="#brazesetgenderoptions">BrazeSetGenderOptions</a></code> |
@@ -551,6 +716,17 @@ setHomeCity(options: BrazeSetHomeCityOptions) => Promise<void>
 
 Sets the current user's home city. Pass `null` to clear.
 
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
+
 | Param         | Type                                                                        |
 | ------------- | --------------------------------------------------------------------------- |
 | **`options`** | <code><a href="#brazesethomecityoptions">BrazeSetHomeCityOptions</a></code> |
@@ -565,6 +741,17 @@ logCustomEvent(options: BrazeLogCustomEventOptions) => Promise<void>
 ```
 
 Logs a custom event for the current user.
+
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
 
 | Param         | Type                                                                              |
 | ------------- | --------------------------------------------------------------------------------- |
@@ -582,6 +769,17 @@ logPurchase(options: BrazeLogPurchaseOptions) => Promise<void>
 Logs a purchase. Required for Braze's revenue analytics. `currency` is
 required on this contract even though the Web SDK accepts it optionally,
 because revenue rolls up incorrectly when some events lack currency.
+
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
 
 | Param         | Type                                                                        |
 | ------------- | --------------------------------------------------------------------------- |
@@ -647,6 +845,17 @@ logFeatureFlagImpression(options: BrazeLogFeatureFlagImpressionOptions) => Promi
 Logs an impression for a feature flag. Per Braze, limited to one
 impression per session per flag id.
 
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
+
 | Param         | Type                                                                                                  |
 | ------------- | ----------------------------------------------------------------------------------------------------- |
 | **`options`** | <code><a href="#brazelogfeatureflagimpressionoptions">BrazeLogFeatureFlagImpressionOptions</a></code> |
@@ -696,6 +905,17 @@ Logs a click event for a content card. Call when the user taps a card
 in your UI. Per Braze: only call when bypassing Braze's built-in
 display module; the SDK's built-in renderer logs clicks automatically.
 
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
+
 | Param         | Type                                                                                        |
 | ------------- | ------------------------------------------------------------------------------------------- |
 | **`options`** | <code><a href="#brazelogcontentcardclickoptions">BrazeLogContentCardClickOptions</a></code> |
@@ -712,6 +932,17 @@ logContentCardImpression(options: BrazeLogContentCardImpressionOptions) => Promi
 Logs an impression for a content card. Call when a card scrolls into
 view in your UI. Per Braze: only call when bypassing Braze's built-in
 display module.
+
+
+Resolves once the call has been handed to the Braze SDK — not once the
+SDK accepted it. Braze validates server-side rules of its own (RFC-5322
+emails, `$`-prefixed attribute keys, length caps, ISO-4217 currencies)
+and silently drops what fails them. Where the SDK reports that, the web
+and Android bridges emit a single non-PII `Braze.&lt;method&gt;: the Braze SDK
+rejected the value (see SDK logs)` warning and still resolve; a rejected
+value is logged, not thrown. Enable `enableLogging` at `initialize` to
+see the SDK's own reason. iOS reports nothing at all — BrazeKit 18.2.1's
+setters return `Void`.
 
 | Param         | Type                                                                                                  |
 | ------------- | ----------------------------------------------------------------------------------------------------- |
@@ -849,6 +1080,36 @@ the consumer's backend and push it back into the SDK via
 | ------------------ | --------------------------------------------------------------------------------------------- |
 | **`eventName`**    | <code>'sdkAuthError'</code>                                                                   |
 | **`listenerFunc`** | <code>(event: <a href="#brazesdkautherrorevent">BrazeSdkAuthErrorEvent</a>) =&gt; void</code> |
+
+**Returns:** <code>Promise&lt;<a href="#pluginlistenerhandle">PluginListenerHandle</a>&gt;</code>
+
+--------------------
+
+
+### addListener('deepLinkReceived', ...)
+
+```typescript
+addListener(eventName: 'deepLinkReceived', listenerFunc: (event: BrazeDeepLinkReceivedEvent) => void) => Promise<PluginListenerHandle>
+```
+
+Subscribes to deep links the Braze SDK was about to open.
+
+**Only fires when `initialize` ran with `deepLinkHandling: 'app'`.** In
+that mode the plugin suppresses the SDK's own URL opening first and
+emits this event instead, so nothing navigates unless your handler
+navigates. In the default `'sdk'` mode this listener never fires — the
+SDK opens the URL directly and the plugin is not in the path.
+
+Like every Capacitor listener this one is fire-and-forget: it cannot
+return a decision to native. The decision is the init-time mode, and
+"deny" is simply not acting on the event. See `SECURITY.md` §7 for the
+per-platform, per-channel coverage matrix — notably, HTML in-app
+message iframes on web are not covered.
+
+| Param              | Type                                                                                                  |
+| ------------------ | ----------------------------------------------------------------------------------------------------- |
+| **`eventName`**    | <code>'deepLinkReceived'</code>                                                                       |
+| **`listenerFunc`** | <code>(event: <a href="#brazedeeplinkreceivedevent">BrazeDeepLinkReceivedEvent</a>) =&gt; void</code> |
 
 **Returns:** <code>Promise&lt;<a href="#pluginlistenerhandle">PluginListenerHandle</a>&gt;</code>
 
@@ -1022,16 +1283,18 @@ Options passed to {@link BrazePlugin.initialize}.
 `apiKey` is a **public Braze SDK API key** (the kind embedded in your app).
 Never pass a REST API key here — they are different things. See `SECURITY.md` §1.
 
-| Prop                          | Type                 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ----------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`apiKey`**                  | <code>string</code>  | Braze SDK API key (public).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| **`endpoint`**                | <code>string</code>  | Braze SDK endpoint, e.g. `sdk.iad-03.braze.com`. Must be HTTPS in production. For mock-server testing, set {@link <a href="#brazeinitializeoptions">BrazeInitializeOptions.allowInsecureEndpoint</a>}.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| **`enableLogging`**           | <code>boolean</code> | Enable verbose SDK logging. Defaults to `false`. Never enable in production builds — Braze SDK logs include event payloads which may contain PII. See `SECURITY.md` §8.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| **`enableSdkAuthentication`** | <code>boolean</code> | Enable SDK Authentication (signed JWT validation). **Strongly recommended for production.** Without it, anyone with the public SDK API key can spoof events for arbitrary user IDs. See `SECURITY.md` §2 for the full design.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| **`allowInsecureEndpoint`**   | <code>boolean</code> | Allow non-HTTPS `endpoint`. Defaults to `false` and should remain so in production. Only set `true` for local mock-server testing per `SECURITY.md` §4.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| **`sessionTimeoutInSeconds`** | <code>number</code>  | Session timeout in seconds. After this much inactivity, the SDK opens a new session on the next event. Braze's default across all three SDKs is 30 minutes (1800 seconds); supply a value here to override. Must be a positive integer; values ≤ 0 are rejected. Cross-platform note: the plugin contract uses seconds across all three platforms. iOS's underlying setter takes a `TimeInterval` (a `Double` of seconds); the iOS bridge casts. Android and Web take seconds directly with no conversion.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| **`enableInAppMessageUI`**    | <code>boolean</code> | Whether the plugin installs Braze's own in-app message UI so triggered messages render without any consumer code. Defaults to `true`. Set `false` when your app presents in-app messages itself — the `'inAppMessageReceived'` listener still fires with the full message DTO, but nothing is drawn on screen by the plugin. **Listeners are observational and cannot block or veto display.** With `enableInAppMessageUI: true` the SDK's presenter shows the message regardless of what a listener does; the event is for analytics, control-variant tracking, or mirroring the message into your own UI. Platform behavior: - **iOS:** skips Braze's `BrazeInAppMessageUI` renderer and installs a non-rendering presenter that only emits the listener event. To render the message yourself from native code instead, assign your own presenter to `BrazePlugin.braze?.inAppMessagePresenter` after `initialize` resolves; that replaces the plugin's observer, and `inAppMessageReceived` stops firing (your `present(message:)` is the equivalent hook). - **Android:** skips `BrazeInAppMessageManager` registration, so a host app owns registration for its own Activities. - **Web:** the plugin subscribes but does not call the SDK's `showInAppMessage`. |
-| **`enablePushAutomation`**    | <code>boolean</code> | Hands push handling (notification opens, deep links, rich push payloads, and background push) to BrazeKit's push automation. Defaults to `false`. **iOS only.** Android and Web ignore this option: on Android the Braze SDK's manifest-declared receiver already performs the equivalent work, and Web Push has no comparable concept. When `true`, the iOS bridge sets `configuration.push.automation = true` and registers Braze's notification categories with `UNUserNotificationCenter`. When `false` (the default) the plugin never touches the notification center, so an app with its own delegate keeps full control. **Attribution caveat:** `initialize` necessarily runs after app launch, so a push that *launched* the app may already have been delivered to the system before Braze is configured and may not be attributed. Call `initialize` as early as possible in your startup path.                                                                                                                                                                                                                                                                                                                                                             |
+| Prop                              | Type                                                                    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`apiKey`**                      | <code>string</code>                                                     | Braze SDK API key (public).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **`endpoint`**                    | <code>string</code>                                                     | Braze SDK endpoint, e.g. `sdk.iad-03.braze.com`. Must be HTTPS in production. For mock-server testing, set {@link <a href="#brazeinitializeoptions">BrazeInitializeOptions.allowInsecureEndpoint</a>}.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **`enableLogging`**               | <code>boolean</code>                                                    | Enable verbose SDK logging. Defaults to `false`. Never enable in production builds — Braze SDK logs include event payloads which may contain PII. See `SECURITY.md` §8.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **`enableSdkAuthentication`**     | <code>boolean</code>                                                    | Enable SDK Authentication (signed JWT validation). **Strongly recommended for production.** Without it, anyone with the public SDK API key can spoof events for arbitrary user IDs. See `SECURITY.md` §2 for the full design.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **`allowInsecureEndpoint`**       | <code>boolean</code>                                                    | Allow non-HTTPS `endpoint`. Defaults to `false` and should remain so in production. Only set `true` for local mock-server testing per `SECURITY.md` §4.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **`sessionTimeoutInSeconds`**     | <code>number</code>                                                     | Session timeout in seconds. After this much inactivity, the SDK opens a new session on the next event. Braze's default across all three SDKs is 30 minutes (1800 seconds); supply a value here to override. Must be a positive integer; values ≤ 0 are rejected. Cross-platform note: the plugin contract uses seconds across all three platforms. iOS's underlying setter takes a `TimeInterval` (a `Double` of seconds); the iOS bridge casts. Android and Web take seconds directly with no conversion.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **`enableInAppMessageUI`**        | <code>boolean</code>                                                    | Whether the plugin installs Braze's own in-app message UI so triggered messages render without any consumer code. Defaults to `true`. Set `false` when your app presents in-app messages itself — the `'inAppMessageReceived'` listener still fires with the full message DTO, but nothing is drawn on screen by the plugin. **Listeners are observational and cannot block or veto display.** With `enableInAppMessageUI: true` the SDK's presenter shows the message regardless of what a listener does; the event is for analytics, control-variant tracking, or mirroring the message into your own UI. Platform behavior: - **iOS:** skips Braze's `BrazeInAppMessageUI` renderer and installs a non-rendering presenter that only emits the listener event. To render the message yourself from native code instead, assign your own presenter to `BrazePlugin.braze?.inAppMessagePresenter` after `initialize` resolves; that replaces the plugin's observer, and `inAppMessageReceived` stops firing (your `present(message:)` is the equivalent hook). - **Android:** skips `BrazeInAppMessageManager` registration, so a host app owns registration for its own Activities. - **Web:** the plugin subscribes but does not call the SDK's `showInAppMessage`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **`enablePushAutomation`**        | <code>boolean</code>                                                    | Hands push handling (notification opens, deep links, rich push payloads, and background push) to BrazeKit's push automation. Defaults to `false`. **iOS only.** Android and Web ignore this option: on Android the Braze SDK's manifest-declared receiver already performs the equivalent work, and Web Push has no comparable concept. When `true`, the iOS bridge sets `configuration.push.automation = true` and registers Braze's notification categories with `UNUserNotificationCenter`. When `false` (the default) the plugin never touches the notification center, so an app with its own delegate keeps full control. **Attribution caveat:** `initialize` necessarily runs after app launch, so a push that *launched* the app may already have been delivered to the system before Braze is configured and may not be attributed. Call `initialize` as early as possible in your startup path.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **`allowUserSuppliedJavascript`** | <code>boolean</code>                                                    | Lets Braze dashboard users supply JavaScript that runs on your page. Defaults to `false`, and you should leave it there unless you have a specific reason not to. See `SECURITY.md` §6. **Web only.** The option maps 1:1 onto the Braze Web SDK's `InitializationOptions.allowUserSuppliedJavascript`, which the SDK documents as: *"By default, the Braze Web SDK does not allow user-supplied Javascript click actions, or enable HTML in-app messages and Banners"*. Turning it on therefore does two things at once: it permits `javascript:` / `data:` click-action URIs authored in the Braze dashboard, **and** it is what makes HTML in-app messages render on web at all (see {@link <a href="#brazehtmlinappmessage">BrazeHtmlInAppMessage</a>}). **iOS and Android ignore it**, and not because the plugin chose to drop it — neither native SDK has an equivalent switch. On iOS, `Braze.Configuration` at BrazeKit 18.2.1 exposes no such property (verified against the shipped `.swiftinterface`); HTML in-app messages are rendered by `BrazeInAppMessageUI` in a native `WKWebView` whose script bridge is BrazeKit's own, not arbitrary dashboard JavaScript injected into your app's WebView. On Android, `BrazeConfig.Builder` at `com.braze:android-sdk-ui` 43.2.0 likewise has no counterpart; HTML messages render in the SDK's own in-app-message HTML view. On both platforms the campaign HTML runs in a WebView the Braze SDK owns rather than in your Capacitor WebView, so the Web SDK's page-scope concern — dashboard JavaScript executing against your application's DOM and origin — has no native analogue to gate. The plugin passes the value straight through on web and never defaults it to `true` on your behalf. |
+| **`deepLinkHandling`**            | <code><a href="#brazedeeplinkhandling">BrazeDeepLinkHandling</a></code> | Who opens URLs that Braze content (in-app messages, push, content cards) points at. Defaults to `'sdk'`. - `'sdk'` — today's behaviour and the Braze default: the SDK opens the URL itself, in your WebView or the system browser depending on how the campaign was authored. - `'app'` — the plugin **suppresses** the SDK's own URL opening and emits {@link <a href="#brazedeeplinkreceivedevent">BrazeDeepLinkReceivedEvent</a>} on the `'deepLinkReceived'` listener instead. Nothing navigates until your code navigates, so you can vet the URL against an allow-list and route it through your own router, `@capacitor/browser`, or `@capacitor/app`. This is an **init-time** switch rather than a per-URL veto because Capacitor listeners are fire-and-forget: a JS listener has no return channel back to native, so it cannot answer "allow" or "deny" while the native SDK waits. Choosing the mode up front is the only shape that can actually gate navigation. Per-platform and per-channel coverage differs — see `SECURITY.md` §7 for the full matrix, and {@link <a href="#brazedeeplinksource">BrazeDeepLinkSource</a>} for what `source` can be. In particular, web `'app'` mode covers slideup / modal / full in-app message clicks (message-level and button-level) and **cannot** intercept navigation from inside an HTML in-app message's iframe.                                                                                                                                                                                                                                                                                                                                                                               |
 
 
 #### BrazeChangeUserOptions
@@ -1420,12 +1683,23 @@ Custom HTML rendered inside a WebView. `message` is the raw HTML; the
 Braze SDK already sandboxes the WebView (no JS bridge unless the host
 app opts in — see SECURITY.md §6).
 
-**Platform note:** this variant only occurs on iOS and Android. The Braze
-Web SDK gates HTML in-app messages behind its `allowUserSuppliedJavascript`
-initialization option, which lets Braze dashboard users execute JavaScript
-on your page. The plugin deliberately does not expose that option (C06:
-secure-by-default), so on web an HTML campaign never reaches the
-`'inAppMessageReceived'` listener.
+**Platform note:** on web this variant only occurs when you opted in. The
+Braze Web SDK gates HTML in-app messages behind its
+`allowUserSuppliedJavascript` initialization option, which also lets Braze
+dashboard users execute JavaScript on your page. The plugin exposes that
+option as {@link <a href="#brazeinitializeoptions">BrazeInitializeOptions.allowUserSuppliedJavascript</a>} and
+defaults it to `false` (C06: secure-by-default), so unless you pass
+`allowUserSuppliedJavascript: true` an HTML campaign never renders on web
+and never reaches the `'inAppMessageReceived'` listener. iOS and Android
+render HTML campaigns unconditionally — neither native SDK has an
+equivalent switch. See `SECURITY.md` §6.
+
+**Deep links:** navigation originating *inside* the HTML message's
+WebView / iframe is not covered by
+{@link <a href="#brazeinitializeoptions">BrazeInitializeOptions.deepLinkHandling</a>} `'app'` mode on web,
+because it never passes through the SDK's click-action path. It **is**
+covered on iOS and Android, where the SDK routes it through the same
+URL-opening hook as every other channel.
 
 | Prop          | Type                |
 | ------------- | ------------------- |
@@ -1464,6 +1738,23 @@ to the SDK via {@link BrazePlugin.setSdkAuthenticationSignature}.
 | **`errorEventId`** | <code>string \| null</code> | Reserved for a future support-correlation id. **Currently always `null` on every platform** — none of the three Braze SDKs surfaces such an id on their SDK-authentication error payloads. Declared now so populating it later isn't a breaking change. |
 
 
+#### BrazeDeepLinkReceivedEvent
+
+Payload delivered to `'deepLinkReceived'` listeners. Fires **only** when
+`initialize` ran with `deepLinkHandling: 'app'`; in the default `'sdk'`
+mode the SDK opens the URL itself and no event is emitted.
+
+By the time this fires the plugin has already told the SDK not to open the
+URL, so nothing will navigate unless your handler navigates. Dropping the
+event is a complete, safe "deny" — there is no second call to make.
+
+| Prop             | Type                                                                | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`url`**        | <code>string</code>                                                 | The URL the Braze SDK would have opened, verbatim.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **`source`**     | <code><a href="#brazedeeplinksource">BrazeDeepLinkSource</a></code> | Which Braze channel the click came from.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **`useWebView`** | <code>boolean</code>                                                | The SDK's in-app-WebView-vs-system-browser hint: `true` for an in-app WebView, `false` for the system browser. Non-nullable because every platform genuinely supplies it — this is not a default the plugin invented. iOS reads `Braze.URLContext.useWebView` (a non-optional `Bool`); Android reads `UriAction.useWebView` (a non-null `Boolean`); web derives it from the message's `openTarget`, which `@braze/web-sdk` 6.13.0 defaults to `'NONE'` in the `InAppMessage` constructor rather than leaving undefined, so `'BLANK'` → `false` and everything else → `true`. The mapping matches {@link <a href="#brazeinappmessageclickaction">BrazeInAppMessageClickAction</a>}'s `useWebView`. |
+
+
 #### BrazeIsDisabledResult
 
 | Prop           | Type                 | Description                                                                  |
@@ -1472,6 +1763,15 @@ to the SDK via {@link BrazePlugin.setSdkAuthenticationSignature}.
 
 
 ### Type Aliases
+
+
+#### BrazeDeepLinkHandling
+
+Who opens Braze-authored URLs: the Braze SDK (`'sdk'`, the default) or
+your app via the `'deepLinkReceived'` listener (`'app'`). See
+{@link <a href="#brazeinitializeoptions">BrazeInitializeOptions.deepLinkHandling</a>}.
+
+<code>'sdk' | 'app'</code>
 
 
 #### BrazeAttributeValue
@@ -1595,6 +1895,25 @@ Click action variants for an in-app message or button. A click action of
 embedded browser is preferred over the system browser).
 
 <code>{ type: 'none' } | { type: 'url'; uri: string; useWebView: boolean }</code>
+
+
+#### BrazeDeepLinkSource
+
+Which Braze channel a deep link came from.
+
+The set is the union of the two native SDKs' own channel enums —
+BrazeKit's `Braze.Channel` (`notification` / `inAppMessage` /
+`contentCard` / `banner`) and Braze Android's `com.braze.enums.Channel`
+(`PUSH` / `INAPP_MESSAGE` / `CONTENT_CARD` / `BANNER` / `UNKNOWN`). The
+plugin normalizes `notification` and `PUSH` to the same `'push'` value.
+
+`'banner'` is reachable even though the plugin does not expose banners as
+a DTO: if a host app renders a Braze banner through the native SDK, its
+click still routes through the same URL hook, and reporting the real
+channel beats coercing it into a wrong one. `'other'` covers Android's
+`UNKNOWN` and any channel a future SDK adds.
+
+<code>'inAppMessage' | 'push' | 'contentCard' | 'banner' | 'other'</code>
 
 </docgen-api>
 

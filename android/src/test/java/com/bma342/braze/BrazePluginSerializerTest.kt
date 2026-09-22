@@ -1,15 +1,19 @@
 package com.bma342.braze
 
+import android.net.Uri
 import com.bma342.braze.TestSupport.uninitializedPlugin
+import com.braze.enums.Channel
 import com.braze.models.FeatureFlag
 import com.braze.models.cards.CaptionedImageCard
 import com.braze.models.cards.Card
+import com.braze.models.cards.ControlCard
 import com.braze.models.cards.ImageOnlyCard
 import com.braze.models.cards.ShortNewsCard
 import com.braze.models.cards.TextAnnouncementCard
 import com.braze.models.inappmessage.InAppMessageFull
 import com.braze.models.inappmessage.InAppMessageModal
 import com.braze.models.inappmessage.InAppMessageSlideup
+import com.braze.ui.actions.UriAction
 import com.getcapacitor.JSObject
 import com.google.common.truth.Truth.assertThat
 import org.json.JSONObject
@@ -346,5 +350,107 @@ class BrazePluginSerializerTest {
         assertThat(
             (plugin.brazePropertiesFrom(JSObject()) as BrazePlugin.PropertiesResult.Ok).properties,
         ).isNull()
+    }
+
+    // -------------------------------------------------------------------------
+    // Content-card useWebView (A2-15 item 2)
+    //
+    // `uw` is `CardKey.OPEN_URI_IN_WEBVIEW`'s wire key at 43.2.0 (read off
+    // the published AAR's constant pool alongside `ca`, `ea`, `u`, ...).
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `a card with a click url carries the SDK's useWebView hint`() {
+        val inApp = CaptionedImageCard(
+            cardJson("i" to "https://i", "tt" to "t", "ds" to "d", "u" to "https://example.com/c", "uw" to true),
+        )
+        val external = CaptionedImageCard(
+            cardJson("i" to "https://i", "tt" to "t", "ds" to "d", "u" to "https://example.com/c", "uw" to false),
+        )
+        assertThat(requireNotNull(plugin.serializeContentCard(inApp)).getBool("useWebView")).isTrue()
+        assertThat(requireNotNull(plugin.serializeContentCard(external)).getBool("useWebView")).isFalse()
+    }
+
+    @Test
+    fun `useWebView is emitted on every non-control variant that has a url`() {
+        val cards: List<Card> = listOf(
+            CaptionedImageCard(cardJson("i" to "https://i", "tt" to "t", "ds" to "d", "u" to "https://e/c", "uw" to true)),
+            ImageOnlyCard(cardJson("i" to "https://i", "u" to "https://e/c", "uw" to true)),
+            ShortNewsCard(cardJson("i" to "https://i", "tt" to "t", "ds" to "d", "u" to "https://e/c", "uw" to true)),
+            TextAnnouncementCard(cardJson("tt" to "t", "ds" to "d", "u" to "https://e/c", "uw" to true)),
+        )
+        for (card in cards) {
+            val dto = requireNotNull(plugin.serializeContentCard(card))
+            assertThat(dto.getBool("useWebView")).isTrue()
+        }
+    }
+
+    @Test
+    fun `a card with no click url omits useWebView rather than guessing`() {
+        // The contract slot is optional precisely so a card with nothing to
+        // open reports no open-target preference (C03: no fabricated values).
+        val card = CaptionedImageCard(cardJson("i" to "https://i", "tt" to "t", "ds" to "d", "uw" to true))
+        val dto = requireNotNull(plugin.serializeContentCard(card))
+        assertThat(dto.has("useWebView")).isFalse()
+    }
+
+    @Test
+    fun `a control card never carries useWebView`() {
+        // ControlCard's only constructor takes the SDK's internal
+        // publisher / storage / analytics collaborators; the serializer
+        // never touches them, so nulls and the existing `publisher()` mock
+        // are enough (same pattern the in-app-message cases use).
+        val control = ControlCard(cardJson("uw" to true), publisher(), null, null)
+        val dto = requireNotNull(plugin.serializeContentCard(control))
+        assertThat(dto.getString("type")).isEqualTo("control")
+        assertThat(dto.has("useWebView")).isFalse()
+    }
+
+    // -------------------------------------------------------------------------
+    // Deep-link payload + channel mapping
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `every Braze channel maps to a contract source tag`() {
+        assertThat(BrazePlugin.deepLinkSource(Channel.PUSH)).isEqualTo("push")
+        assertThat(BrazePlugin.deepLinkSource(Channel.INAPP_MESSAGE)).isEqualTo("inAppMessage")
+        assertThat(BrazePlugin.deepLinkSource(Channel.CONTENT_CARD)).isEqualTo("contentCard")
+        assertThat(BrazePlugin.deepLinkSource(Channel.BANNER)).isEqualTo("banner")
+        assertThat(BrazePlugin.deepLinkSource(Channel.UNKNOWN)).isEqualTo("other")
+        assertThat(BrazePlugin.deepLinkSource(null)).isEqualTo("other")
+    }
+
+    @Test
+    fun `the mapping covers the SDK enum exhaustively`() {
+        // A channel a future SDK adds must not silently take a neighbouring
+        // channel's tag. The `when` is exhaustive over the enum, so this
+        // fails to compile rather than at runtime if Braze adds a case —
+        // this test asserts the current set is fully covered.
+        for (channel in Channel.entries) {
+            assertThat(BrazePlugin.deepLinkSource(channel)).isNotEmpty()
+        }
+        assertThat(Channel.entries).hasSize(5)
+    }
+
+    @Test
+    fun `the deep-link payload carries url, source and the useWebView hint`() {
+        val action = UriAction(
+            Uri.parse("https://example.com/promo?x=1"),
+            null,
+            true,
+            Channel.INAPP_MESSAGE,
+        )
+        val payload = BrazePlugin.deepLinkPayload(action)
+        assertThat(payload.getString("url")).isEqualTo("https://example.com/promo?x=1")
+        assertThat(payload.getString("source")).isEqualTo("inAppMessage")
+        assertThat(payload.getBool("useWebView")).isTrue()
+    }
+
+    @Test
+    fun `the deep-link payload reports useWebView false for a system-browser open`() {
+        val action = UriAction(Uri.parse("https://example.com/ext"), null, false, Channel.PUSH)
+        val payload = BrazePlugin.deepLinkPayload(action)
+        assertThat(payload.getString("source")).isEqualTo("push")
+        assertThat(payload.getBool("useWebView")).isFalse()
     }
 }

@@ -80,7 +80,7 @@ Legend:
 
 ### Currently shipped (as of `0.2.0`)
 
-**35 public methods + 4 listener events.** This list is the row-by-row truth; where the capability
+**35 public methods + 5 listener events.** This list is the row-by-row truth; where the capability
 matrix below disagrees with it, this list wins, and the matrix row is a bug. (The matrix's version
 flags were wrong in nine places at the 2026-09 audit — flagging shipped methods as future work and
 future work as shipped — so treat a version flag as an intent, not as a coverage claim.)
@@ -113,14 +113,24 @@ SDK Authentication:
 `addListener('sdkAuthError', ...)`, plus client-side enforcement of `sdkAuthSignature` on
 `changeUser` when `enableSdkAuthentication: true`.
 
+Deep links:
+`addListener('deepLinkReceived', ...)` — `{ url, source, useWebView }`, where `source` is
+`inAppMessage` / `push` / `contentCard` / `banner` / `other`. Fires **only** under
+`initialize({ deepLinkHandling: 'app' })`, which suppresses the SDK's own URL opening first, so
+nothing navigates unless the consumer navigates. Coverage differs per platform and channel — the
+matrix is in [`SECURITY.md` §7](./SECURITY.md#7-deep-link-security), and the one real gap is HTML
+in-app message iframes on web.
+
 `initialize` options:
 `apiKey`, `endpoint`, `enableLogging`, `allowInsecureEndpoint`, `sessionTimeoutInSeconds`,
 `enableSdkAuthentication`, **`enableInAppMessageUI`** (default `true`), **`enablePushAutomation`**
-(default `false`, iOS only).
+(default `false`, iOS only), **`allowUserSuppliedJavascript`** (default `false`, web only — neither
+native SDK has a counterpart, see [`SECURITY.md` §6](./SECURITY.md#6-in-app-message-xss-risk)),
+**`deepLinkHandling`** (`'sdk'` | `'app'`, default `'sdk'`).
 
-Listeners (4):
+Listeners (5):
 `addListener` / `removeAllListeners` for `featureFlagsUpdated`, `contentCardsUpdated`,
-`inAppMessageReceived`, `sdkAuthError`.
+`inAppMessageReceived`, `sdkAuthError`, `deepLinkReceived`.
 
 Sessions:
 Handled automatically on Android as of 0.2.0 (`BrazeActivityLifecycleCallbackListener` registered
@@ -138,10 +148,7 @@ several were described in the present tense in earlier revisions of this documen
 | **Capacitor 8 support** | Capacitor 8 is current (8.5.x); the peer dep is `^6 \|\| ^7` and the podspec `< 8.0`, so `npm install` conflicts on a current project | Needs AGP 8.13.0, Gradle 8.14.3, Kotlin 2.2.20, compileSdk 36. Xcode 26 and iOS 15 are already satisfied |
 | **SPM support** | Capacitor 8's CLI generates SPM iOS projects by default; a CocoaPods-only plugin does not install into one | Needs `Package.swift` + `CAPBridgedPlugin` conformance. Braze ships a `Package.swift`, so the pieces exist. Track separately from Capacitor 8 |
 | `requestPushPermission` | Currently consumers use `@capacitor/push-notifications` for the prompt | See [C07](./docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md)'s worked counter-example — it would keep the init guard |
-| `deepLinkReceived` listener | Would let a consumer vet URLs from push / in-app messages before they open | Today, Capacitor's `server.allowNavigation` is the only control ([`SECURITY.md` §7](./SECURITY.md#7-deep-link-security)) |
-| `allowUserSuppliedJavascript` at `initialize` | Braze's default of `false` currently applies and cannot be changed through the plugin | If shipped it defaults `false` and carries the §6 threat model in its JSDoc |
 | Android `initialize` options for push presentation | `notificationChannelName`, `notificationChannelDescription`, `smallNotificationIcon`, `fallbackFirebaseMessagingServiceClasspath` — all four setters exist on `BrazeConfig.Builder`; today consumers use `braze.xml` (see C10) | Contract change |
-| Content-card `useWebView` | Known asymmetry: the in-app message click action carries it, content cards don't | Needs `BrazeContentCardBase` widened |
 | `setInAppMessageDisplayChoice` or similar | `enableInAppMessageUI: false` is all-or-nothing; there is no per-message veto, and Capacitor listeners cannot provide one | Would need a synchronous native hook, not a listener |
 
 **Further out:** banners (web-only), geofences (a separate `capacitor-braze-location` package,
@@ -159,14 +166,23 @@ so the consumer's own promise-resolution state is the better signal.
 Not roadmap items — things that are shipped but imperfect, stated so a reviewer does not have to
 find them:
 
-- **Setter return values are discarded.** `setEmail('nonsense')` resolves on every platform even
-  when the Braze SDK rejects the value. iOS and Android log a non-PII warning; the Web SDK exposes
-  no equivalent signal for most setters, so rejecting would break parity. Tracked as audit finding
-  A1-10 and deferred as a contract change.
+- **A value the Braze SDK rejects resolves rather than throwing.** `setEmail('nonsense')` resolves
+  on every platform. As of 0.2.0 web and Android log one non-PII warning
+  (`Braze.<method>: the Braze SDK rejected the value (see SDK logs)`, byte-identical on both), and
+  iOS reports nothing at all because BrazeKit 18.2.1's setters return `Void`. Turning `false` into
+  a rejection remains deferred as a contract change: iOS has no signal to reject on, so it would
+  break cross-platform parity. Audit finding A1-10 / A3-17.
 - **No release has been validated against a live Braze backend.** Everything is verified against the
   in-tree Fastify mock and the real SDKs' compile/runtime surface.
 - **`inAppMessageReceived` has no delivery-path test** on any platform; the DTO is covered at the
   serializer level.
+- **`deepLinkReceived` does not cover HTML in-app message iframes on web.** Their renderer never
+  consults the SDK's click-action path, so the plugin cannot suppress navigation that originates
+  inside the campaign's own markup. iOS and Android do cover it. Full matrix in
+  [`SECURITY.md` §7](./SECURITY.md#7-deep-link-security).
+- **`deepLinkHandling: 'app'` takes `braze.delegate` on iOS.** In the default `'sdk'` mode the slot
+  stays free for a host app (`willPresentModalWithContext`, `noMatchingTriggerForEvent`); opting in
+  is opting out of that slot. `sdkAuthError` is unaffected — it lives on `sdkAuthDelegate`.
 
 
 ### User identity
@@ -201,7 +217,7 @@ find them:
 | Request push permission | ✅ | ✅ | ✅ | ⏳ roadmap — **no `requestPushPermission` exists.** Use `@capacitor/push-notifications` for the prompt |
 | Auto push registration | ✅ (FCM) | ✅ (APNs) | ✅ (Web Push) | ⚠️ partial — **there is no `enableAutomaticPushHandling` option.** iOS has `enablePushAutomation` (✅ shipped, default `false`); Android's automatic FCM Installation-ID registration is Braze's own (43.0.0+) and is configured in `braze.xml`, not here (see [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md)) |
 | Manual token registration | ✅ | ✅ | N/A | ✅ shipped (`registerPushToken`; throws on web by design) |
-| Deep link from push | ✅ | ✅ | ✅ | ⚠️ the SDK's own default routing applies. The plugin does **not** intercept deep links; a `deepLinkReceived` listener is ⏳ roadmap. On iOS, BrazeKit only handles opens/deep links when `enablePushAutomation: true` |
+| Deep link from push | ✅ | ✅ | ✅ | ✅ shipped — the SDK's own routing applies by default; `initialize({ deepLinkHandling: 'app' })` suppresses it and emits `deepLinkReceived` instead. On iOS, BrazeKit only handles opens/deep links when `enablePushAutomation: true`, so that flag gates this channel there |
 | Rich push (images, video) | ✅ | ✅ (via NSE) | ⚠️ (image only) | ⚠️ on iOS, handled by BrazeKit when `enablePushAutomation: true`; the Notification Service Extension is consumer-side and ⏳ undocumented here |
 | Push action buttons | ✅ | ✅ | ⚠️ | ⏳ roadmap |
 | Custom notification factory (Android) / handler (iOS) | ✅ | ✅ | N/A | ⏳ roadmap |
@@ -219,7 +235,7 @@ find them:
 | Return discard / reenqueue / display from listener | ✅ | ✅ | ✅ | ❌ **not possible through a Capacitor listener** — they are fire-and-forget with no return channel to native. The plugin always returns display-now. `enableInAppMessageUI: false` is the all-or-nothing alternative; a per-message veto is ⏳ roadmap and would need a different shape ([`SECURITY.md` §6](./SECURITY.md#6-in-app-message-xss-risk)) |
 | Log impression / click / button click (in-app messages) | ✅ | ✅ | ✅ | ⏳ roadmap — **no IAM impression/click methods exist.** The SDK logs these itself when it renders. (The *content card* equivalents **are** shipped — see below) |
 | Modal, full-screen, slideup native templates | ✅ | ✅ | ✅ | ✅ shipped (rendered by Braze) |
-| HTML in-app message (rendered in WebView) | ✅ | ✅ | ✅ | ✅ shipped as a DTO variant (`html`), which occurs on iOS and Android only. `allowUserSuppliedJavascript` is **not** exposed by the plugin; Braze's default of `false` applies ([`SECURITY.md` §6](./SECURITY.md#6-in-app-message-xss-risk)) |
+| HTML in-app message (rendered in WebView) | ✅ | ✅ | ✅ | ✅ shipped as a DTO variant (`html`). Always reachable on iOS/Android; on web it requires `initialize({ allowUserSuppliedJavascript: true })`, which the plugin exposes and defaults to `false` ([`SECURITY.md` §6](./SECURITY.md#6-in-app-message-xss-risk)) |
 | Custom IAM view factory | ✅ | ✅ | ⚠️ | ⏳ roadmap |
 | Programmatic show / dismiss | ✅ | ✅ | ✅ | ⏳ roadmap |
 
@@ -233,6 +249,7 @@ find them:
 | Native UI rendering | ✅ | ✅ | ✅ | ⏳ roadmap (most consumers render their own) |
 | Filter by tag / type | ✅ | ✅ | ✅ | ⏳ roadmap |
 | Pinned cards | ✅ | ✅ | ✅ | ⏳ roadmap |
+| Open-in-WebView hint on a card's click URL | ✅ `Card.openUriInWebView` | ✅ `ContentCard.ClickAction.url(_, useWebView:)` | ❌ no such member on `Card` | ✅ shipped as the optional `useWebView` on `BrazeContentCardBase`; absent on web and on any card with no click URL |
 
 ### Feature flags
 
@@ -362,7 +379,10 @@ Where the SDKs genuinely differ, the plugin must handle gracefully:
 | Divergence | How the plugin handles it |
 |---|---|
 | Web has no push tokens — Web Push uses VAPID + Service Worker subscriptions | `registerPushToken` **throws a plain `Error`** on web whose message names the platform, the reason, and the `Capacitor.getPlatform()` branching remedy. This is the plugin's only implemented divergence-by-absence, and the template [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md) prescribes for future ones. |
-| In-app message rendering — native uses `UIView` / `Activity`, web uses a DOM modal | `addListener('inAppMessageReceived')` emits the identical 5-variant tagged union on all three platforms, so consumer code is portable. The `html` variant only ever occurs on iOS and Android. |
+| In-app message rendering — native uses `UIView` / `Activity`, web uses a DOM modal | `addListener('inAppMessageReceived')` emits the identical 5-variant tagged union on all three platforms, so consumer code is portable. The `html` variant is always reachable on iOS/Android; on web it requires `allowUserSuppliedJavascript: true`. |
+| Dashboard-supplied JavaScript — only the Web SDK runs campaign JS in the host page's origin | `allowUserSuppliedJavascript` is forwarded on web (default `false`) and **ignored** on iOS/Android, because neither native SDK has a counterpart: their HTML campaigns render in a WebView the SDK owns, not the app's. Stated in the option's JSDoc and [`SECURITY.md` §6](./SECURITY.md#6-in-app-message-xss-risk) rather than papered over. |
+| Deep-link suppression hooks — iOS `BrazeDelegate.shouldOpenURL`, Android `IBrazeDeeplinkHandler.gotoUri`, web a per-message `clickAction` rewrite | `deepLinkHandling: 'app'` gives all three the same `deepLinkReceived` contract, but coverage per channel is not identical: web cannot intercept HTML in-app message iframes, and Android content-card clicks are only covered when Braze's own feed UI renders them. The matrix is in [`SECURITY.md` §7](./SECURITY.md#7-deep-link-security) rather than being smoothed over here. |
+| Content-card open-in-WebView hint | iOS and Android both carry one (`ClickAction.url(_, useWebView:)` / `Card.openUriInWebView`); the Web SDK's `Card` has no such member. The contract slot is optional and simply absent on web — C03 forbids fabricating a default. |
 | In-app message `language` | Braze's Android in-app message models have no accessor for it at 43.2.0, so the field is omitted from the contract on **every** platform rather than being always-`null` on one. |
 | Anonymous user id sentinels — web `null \| undefined`, iOS `nil`, Android `""` | All coalesced to `null` at the bridge. Empty string is never a contract sentinel. |
 | `wipeData()` before `initialize` | iOS disables the SDK for the rest of the app run (BrazeKit constraint); web has no storage manager yet and resolves without effect; Android wipes normally. Documented in the JSDoc, [C07](./docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md) and the README. |

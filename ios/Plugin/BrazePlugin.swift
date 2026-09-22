@@ -30,7 +30,7 @@ import UserNotifications
 ///   `logContentCardClick(cardId)`, `logContentCardImpression(cardId)`
 /// - **Push:** `registerPushToken(token)`
 /// - **Listeners:** `featureFlagsUpdated`, `contentCardsUpdated`,
-///   `inAppMessageReceived`, `sdkAuthError`
+///   `inAppMessageReceived`, `sdkAuthError`, `deepLinkReceived`
 /// - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
 ///   `requestImmediateDataFlush`
 ///
@@ -129,6 +129,13 @@ public class BrazePlugin: CAPPlugin {
     /// level because `braze.sdkAuthDelegate` is `weak`.
     @MainActor private var sdkAuthDelegate: BrazeSdkAuthDelegate?
 
+    /// Bridges `BrazeDelegate.braze(_:shouldOpenURL:)` to the plugin's
+    /// `deepLinkReceived` listener event. Non-nil **only** when `initialize`
+    /// ran with `deepLinkHandling: "app"`; in the default `"sdk"` mode
+    /// `braze.delegate` is left unassigned so a host app can take it.
+    /// Retained at the plugin level because `braze.delegate` is `weak`.
+    @MainActor private var deepLinkDelegate: BrazeDeepLinkDelegate?
+
     /// Diagnostics channel for the one advisory the bridge emits (the
     /// cluster-shape warning). BrazeKit exposes no public logger, and
     /// `SECURITY.md` §3 forbids logging consumer-supplied values, so the
@@ -172,6 +179,9 @@ public class BrazePlugin: CAPPlugin {
         let sessionTimeout: TimeInterval?
         let enableInAppMessageUI: Bool
         let enablePushAutomation: Bool
+        /// `true` when `deepLinkHandling` was `"app"`. `allowUserSuppliedJavascript`
+        /// has no counterpart here — it is web-only, see its JSDoc.
+        let interceptDeepLinks: Bool
     }
 
     @objc func initialize(_ call: CAPPluginCall) {
@@ -232,6 +242,16 @@ public class BrazePlugin: CAPPlugin {
             sessionTimeout = TimeInterval(seconds)
         }
 
+        // Closed enum: an unrecognized mode rejects rather than falling back
+        // to "sdk", so a consumer who typo'd "App" can't believe deep links
+        // are gated when they aren't. The error names the value under C06
+        // §4's closed-enum exemption, byte-identical to `src/web.ts`.
+        let deepLinkHandling = call.getString("deepLinkHandling") ?? "sdk"
+        guard deepLinkHandling == "sdk" || deepLinkHandling == "app" else {
+            call.reject("Braze.initialize: unknown deepLinkHandling \"\(deepLinkHandling)\". Allowed: sdk, app.")
+            return nil
+        }
+
         return InitOptions(
             apiKey: apiKey,
             endpoint: endpoint,
@@ -239,7 +259,8 @@ public class BrazePlugin: CAPPlugin {
             enableSdkAuthentication: call.getBool("enableSdkAuthentication", false),
             sessionTimeout: sessionTimeout,
             enableInAppMessageUI: call.getBool("enableInAppMessageUI", true),
-            enablePushAutomation: call.getBool("enablePushAutomation", false)
+            enablePushAutomation: call.getBool("enablePushAutomation", false),
+            interceptDeepLinks: deepLinkHandling == "app"
         )
     }
 
@@ -327,12 +348,26 @@ public class BrazePlugin: CAPPlugin {
         }
 
         // SDK Authentication failures arrive on `sdkAuthDelegate`, not
-        // `delegate`. `braze.delegate` is deliberately left unassigned so a
-        // host app can take it (shouldOpenURL / willPresentModalWithContext).
+        // `delegate` — which carries shouldOpenURL /
+        // willPresentModalWithContext / noMatchingTriggerForEvent and supplies
+        // defaults for all three, so a misdirected conformance would compile
+        // and never fire (A2-01).
         let authDelegate = BrazeSdkAuthDelegate()
         authDelegate.plugin = self
         braze.sdkAuthDelegate = authDelegate
         self.sdkAuthDelegate = authDelegate
+
+        // `braze.delegate` is taken ONLY to suppress SDK-driven URL opening.
+        // In the default `deepLinkHandling: "sdk"` mode the slot stays
+        // unassigned so a host app can claim it (A2-08); opting into "app"
+        // mode is the consumer explicitly trading that slot for deep-link
+        // gating, which `SECURITY.md` §7 spells out.
+        if options.interceptDeepLinks {
+            let linkDelegate = BrazeDeepLinkDelegate()
+            linkDelegate.plugin = self
+            braze.delegate = linkDelegate
+            self.deepLinkDelegate = linkDelegate
+        }
 
         // Retaining the returned cancellables keeps the subscriptions alive;
         // releasing them (in `wipeData`) cancels at the SDK boundary so a
@@ -368,6 +403,7 @@ public class BrazePlugin: CAPPlugin {
         observingPresenter = nil
         iamDelegate = nil
         sdkAuthDelegate = nil
+        deepLinkDelegate = nil
         BrazePlugin.braze = nil
     }
 
@@ -952,7 +988,13 @@ public class BrazePlugin: CAPPlugin {
     /// Returns nil for a card variant this BrazeKit version introduced and the
     /// contract has no tag for; `serializeContentCards` drops those rather
     /// than emitting a card with no `type` discriminator.
-    private static func serializeContentCard(_ card: Braze.ContentCard) -> [String: Any]? {
+    ///
+    /// `internal` rather than `private` so the XCTest tier can drive it
+    /// against real `Braze.ContentCard` values and assert the exact DTO
+    /// (C11) — the same reason Android's serializers are `internal`. It is
+    /// not part of the Capacitor surface: only `@objc` methods registered in
+    /// `BrazePlugin.m` are callable from JS.
+    static func serializeContentCard(_ card: Braze.ContentCard) -> [String: Any]? {
         let data = card.data
         var dto: [String: Any] = [
             "id": data.id,
@@ -963,11 +1005,21 @@ public class BrazePlugin: CAPPlugin {
             "expiresAt": Self.epochMillis(fromSeconds: data.expiresAt)
         ]
         let clickUrl: Any = data.clickAction?.url?.absoluteString ?? NSNull()
-        let nonControl: [String: Any] = [
+        var nonControl: [String: Any] = [
             "clicked": data.clicked,
             "dismissed": data.removed,
             "dismissible": data.dismissible
         ]
+        // A2-15 item 2: `Braze.ContentCard.ClickAction` at BrazeKit 18.2.1 has
+        // exactly one case, `.url(URL, useWebView: Bool)`, so the hint is
+        // available on every card that has a click action at all. It used to
+        // be dropped here while the in-app-message contract carried the same
+        // field — an arbitrary asymmetry. The key is omitted (not emitted as
+        // null) on a card with no click action, matching the contract's
+        // optional `useWebView?: boolean`.
+        if case .url(_, let useWebView) = data.clickAction {
+            nonControl["useWebView"] = useWebView
+        }
         switch card {
         case .control:
             dto["type"] = "control"

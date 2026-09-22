@@ -234,10 +234,23 @@ Braze supports **HTML In-App Messages** rendered inside a WebView. The HTML cont
 **The plugin's role here is disclosure only.** Be precise about what that means, because an earlier
 version of this document claimed two controls the plugin does not have.
 
-1. **Braze's own `allowUserSuppliedJavascript` default of `false` applies.** The plugin does **not**
-   expose that flag at `initialize`, so it cannot be turned on through this plugin at all — which is
-   the safe direction. Exposing it is a roadmap item in [`SDK_SURFACE.md`](./SDK_SURFACE.md), and if
-   it ever ships it will default to `false` and carry this threat model in its JSDoc.
+1. **`allowUserSuppliedJavascript` is exposed at `initialize` and defaults to `false`.** As of
+   0.2.0 the plugin forwards the Web SDK's own flag, pinned to `false` unless you pass `true` —
+   the plugin writes the `false` explicitly rather than omitting the key, so a future change to
+   the SDK's default cannot silently enable dashboard JavaScript in an app that never asked for
+   it. Enabling it does two things at once, and you are opting into both: it permits
+   `javascript:` / `data:` click-action URIs authored in the Braze dashboard, **and** it is what
+   makes HTML in-app messages render on web at all. Only turn it on if your Braze workspace has
+   SSO plus campaign approval — the threat actor here is whoever can log into that workspace.
+
+   **This flag is web-only, and that is an SDK fact rather than a plugin choice.** Neither
+   `Braze.Configuration` at BrazeKit 18.2.1 nor `BrazeConfig.Builder` at
+   `com.braze:android-sdk-ui` 43.2.0 has a counterpart (verified against the shipped
+   `.swiftinterface` and the published AAR). On both native platforms an HTML campaign renders in
+   a WebView the Braze SDK owns, not in your Capacitor WebView, so the Web SDK's page-scope
+   concern — dashboard JavaScript executing against your application's DOM and origin — has no
+   native analogue to gate. iOS and Android therefore ignore the option and render HTML campaigns
+   unconditionally; the mitigations that matter there are items 3 and 4 below.
 2. **`@braze/web-sdk` is floored at `^6.13.0`, and that is a security floor.** Web SDK 6.12.1 fixed
    a bug where an in-app message with multiple buttons could be displayed even when one of its
    buttons used a `javascript:` or `data:` URI and `allowUserSuppliedJavascript` was disabled — a
@@ -265,31 +278,89 @@ version of this document claimed two controls the plugin does not have.
 
 ## 7. Deep link security
 
-Push notifications and in-app messages can contain URLs that open when tapped. Without controls,
-that is an open redirect into the WebView.
+Push notifications, in-app messages and content cards can contain URLs that open when tapped.
+Without controls, that is an open redirect into the WebView.
 
 ### What the plugin does
 
-**Nothing — and it is important to be clear about that.** The plugin does not intercept deep links.
-There is no `deepLinkReceived` listener; grep the bridges and you will find no deep-link code at
-all. URLs from push and in-app messages are handled by the Braze SDK's own default behaviour.
+**`initialize({ deepLinkHandling: 'app' })` suppresses the SDK's own URL opening and hands you the
+URL instead.** That is new in 0.2.0. The default is `'sdk'` — the SDK opens the URL itself, exactly
+as before — so nothing changes unless you opt in.
 
-### What actually controls this
+In `'app'` mode the plugin tells the SDK not to open the URL *first*, then emits
+`deepLinkReceived` with `{ url, source, useWebView }`. Nothing navigates unless your listener
+navigates, so **not acting on the event is a complete "deny"**; there is no second call to make.
+
+```ts
+await Braze.initialize({ apiKey, endpoint, deepLinkHandling: 'app' });
+await Braze.addListener('deepLinkReceived', ({ url, source, useWebView }) => {
+  const target = new URL(url);
+  if (target.protocol !== 'https:' || !ALLOWED_HOSTS.has(target.host)) {
+    console.warn(`blocked a ${source} deep link`);
+    return; // nothing opened it
+  }
+  if (useWebView) router.push(target.pathname);
+  else window.open(url, '_blank');
+});
+```
+
+**The decision is the init-time mode, not a per-URL veto.** Capacitor listeners are fire-and-forget
+and have no return channel to native, so a JS listener cannot answer "allow" or "deny" while the
+native SDK waits on it. An earlier version of this section described exactly such a hook — an
+`{ allow, replaceWith }` return contract — which was never built and could not have been. Choosing
+the mode up front is the only shape that actually gates navigation.
+
+### Per-platform, per-channel coverage
+
+| Channel | iOS | Android | Web |
+|---|---|---|---|
+| In-app message body / button click | ✅ intercepted | ✅ intercepted | ✅ intercepted |
+| HTML in-app message, link inside the campaign's own markup | ✅ intercepted | ✅ intercepted | ❌ **not intercepted** |
+| Push notification open | ✅ intercepted (when BrazeKit routes the open — see below) | ✅ intercepted | n/a (no push on the web bridge) |
+| Content card click | ✅ intercepted | ⚠️ only when Braze's own feed UI renders the card | ⚠️ consumer-rendered; you own the click |
+| Banner click | ✅ intercepted | ✅ intercepted | n/a (banners are not in the plugin surface) |
+
+The mechanism differs per platform, which is where the gaps come from:
+
+- **iOS** installs a `BrazeDelegate` whose `braze(_:shouldOpenURL:)` returns `false`. That is
+  BrazeKit's single URL-opening hook: every channel's `processClickAction` routes through it, so
+  coverage is uniform. **Cost:** the plugin takes `braze.delegate`, which it deliberately leaves
+  free in `'sdk'` mode so a host app can claim it for `willPresentModalWithContext` /
+  `noMatchingTriggerForEvent` (2026-09 audit, A2-08). Opting into `'app'` mode is opting out of
+  that slot. `sdkAuthError` is unaffected — it lives on the separate `sdkAuthDelegate`.
+  **Push caveat:** BrazeKit only routes notification opens when `enablePushAutomation: true`. With
+  it off (the default) your own `UNUserNotificationCenter` delegate owns the tap, and the plugin is
+  not in that path at all — which is its own, stronger form of control.
+- **Android** installs a custom `IBrazeDeeplinkHandler` via
+  `BrazeDeeplinkHandler.setBrazeDeeplinkHandler` that does not execute the `UriAction`. `gotoUri`
+  is the funnel every channel uses, verified at `com.braze:android-sdk-ui` 43.2.0 by the classes
+  that call it: `BrazeNotificationUtils` (push opens), `DefaultInAppMessageViewLifecycleListener`
+  and `DefaultInAppMessageWebViewClientListener` (in-app message body, button and HTML-iframe
+  clicks), `BaseCardView` / `BrazeContentCardUtils` (content-card clicks),
+  `DefaultBannerWebViewClientListener` (banners), and the Braze Actions steps
+  `OpenLinkInWebViewStep` / `OpenLinkExternallyStep`. **Content-card caveat:** those two card
+  classes are Braze's *own* feed UI. A Capacitor app that renders cards itself from
+  `getContentCards()` never goes through them — you navigate, so you gate.
+  The handler is process-global, so the plugin captures the handler it replaced and restores it on
+  `wipeData`, on Activity destruction, and on a re-`initialize` that drops the option.
+- **Web** rewrites the message's and each button's `clickAction` from `URI` to `NONE` before the
+  SDK presents it, and emits the event from the SDK's own clicked-event subscribers. That covers
+  slideup, modal and full-screen messages. **It does not cover HTML in-app messages:** their
+  renderer (`html-message-to-html.js`) never consults `clickAction`, and navigation from inside the
+  iframe goes through Braze's `brazeBridge`, which the plugin is not in the path of. HTML campaigns
+  are also off by default on web — they require `allowUserSuppliedJavascript: true` (§6). Content
+  cards on web are consumer-rendered and push does not exist on the web bridge, so neither is a
+  gap so much as "not the plugin's to intercept".
+
+### What still controls this regardless of mode
 
 - **Capacitor's `server.allowNavigation`** allow-list in `capacitor.config.ts` governs which hosts
   the WebView may navigate to. This is Capacitor's control, not this plugin's, and it applies
-  whether or not Braze is involved. Set it.
-- **`enablePushAutomation` (iOS) is off by default.** When you leave it off, BrazeKit does not take
-  over notification opens or deep links, and your own `UNUserNotificationCenter` delegate keeps
-  control of what a tap does. Turning it on is an explicit decision to let BrazeKit route them.
+  whether or not Braze is involved — including to the gaps in the table above. **Set it.** It is
+  the backstop, and `deepLinkHandling: 'app'` does not replace it.
+- **`enablePushAutomation` (iOS) is off by default**, as described above.
 - **Braze dashboard hygiene** — the URL in a campaign is authored by whoever can log into your
   workspace, the same threat actor as §6.
-
-### Roadmap
-
-An interception listener with an allow/replace contract (`{ allow: boolean, replaceWith?: string }`)
-is a reasonable feature and is tracked in [`SDK_SURFACE.md`](./SDK_SURFACE.md)'s roadmap. It is
-**not** implemented, and until it is, treat this section as "Capacitor's allow-list is your control."
 
 ---
 

@@ -2,9 +2,16 @@
 
 **One native subscription per event, created eagerly in `initialize`, torn down deterministically on every path that invalidates the SDK instance. All JS listeners share the single native subscription via Capacitor's `notifyListeners`. Initial state is not replayed on `addListener` — the consumer reads current state explicitly after attaching.**
 
-This MDC is the load-bearing decision behind every `addListener('eventName', ...)` surface. Four
-events ship today: `featureFlagsUpdated`, `contentCardsUpdated`, `inAppMessageReceived`,
-`sdkAuthError`.
+This MDC is the load-bearing decision behind every `addListener('eventName', ...)` surface. Five
+events ship today:
+
+| Event | Payload | Native source | Notes |
+|---|---|---|---|
+| `featureFlagsUpdated` | `{ flags }` | `subscribeToFeatureFlagsUpdates` / `featureFlags.subscribeToUpdates` | The worked example below |
+| `contentCardsUpdated` | `{ cards, lastUpdated }` | `subscribeToContentCardsUpdates` / `contentCards.subscribeToUpdates` | Full card set on every update, not a delta |
+| `inAppMessageReceived` | `{ message }` | IAM presenter / manager listener | Observational; cannot block display |
+| `sdkAuthError` | `{ userId, errorCode, errorReason, signature, errorEventId }` | `sdkAuthDelegate` / `BrazeSdkAuthenticationErrorEvent` | Not `BrazeDelegate` — see the note below |
+| `deepLinkReceived` | `{ url, source, useWebView }` | `BrazeDelegate.shouldOpenURL` / `IBrazeDeeplinkHandler.gotoUri` / per-message `clickAction` rewrite | **Conditional**: only wired when `initialize` ran with `deepLinkHandling: 'app'` — see below |
 
 ---
 
@@ -239,6 +246,45 @@ See [`src/web.ts`](../../src/web.ts) for the Web wiring,
 for iOS (`contentCardsSubscription`), and
 [`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)
 for Android (`contentCardsSubscriber` and `teardownContentCardsSubscription`).
+
+## Third worked example — `deepLinkReceived`, the one conditional listener
+
+`deepLinkReceived` breaks two of this MDC's defaults on purpose, and both exceptions are narrow
+enough to state precisely.
+
+**1. It is wired conditionally, not eagerly-always.** Every other event subscribes at `initialize`
+unconditionally. This one only wires when `initialize` ran with `deepLinkHandling: 'app'`, because
+wiring it *is* the behaviour change: the native hooks it installs are suppression hooks, not
+observation hooks. Subscribing "just in case" would stop URLs opening for a consumer who never
+asked. The eager-on-init rule still holds within the mode — when `'app'` is set, the wiring happens
+during `initialize` and not on first `addListener`.
+
+**2. Its native hook has a return value that matters.** iOS's
+`BrazeDelegate.braze(_:shouldOpenURL:)` returns `false`; Android's
+`IBrazeDeeplinkHandler.gotoUri` simply does not execute the `UriAction`; web rewrites the message's
+and each button's `clickAction` from `URI` to `NONE` before `showInAppMessage`. The listener itself
+is still fire-and-forget — the consumer cannot answer back — which is exactly why the decision is
+the init-time mode rather than a per-URL veto. Capacitor has no return channel, and pretending
+otherwise is the bug `SECURITY.md` §7 used to ship.
+
+**Teardown is per-platform, and Android's is the interesting one.** iOS releases
+`deepLinkDelegate` in `teardownSdkArtifacts()` alongside the other delegates; web resets
+`deepLinkHandling` to `'sdk'` on `wipeData` / `disableSDK` / `enableSDK`. Android's
+`BrazeDeeplinkHandler.setBrazeDeeplinkHandler` is a **process-global static with no un-set**, so
+the plugin captures the handler it replaced and restores that, from `handleOnDestroy`, `wipeData`
+and a re-`initialize` that drops the option. The restore is identity-checked against the live
+handler for the same reason the in-app message listener teardown is: on a configuration change the
+replacement Activity has already installed its own, and an unconditional restore would kill
+`deepLinkReceived` after the first rotation. A re-`initialize` in `'app'` mode restores before
+installing, so wrappers replace rather than stack — a stacked wrapper would fan out N
+`deepLinkReceived` events per click, this MDC's Forbidden entry in deep-link clothing.
+
+See `BrazeDeepLinkDelegate` in
+[`ios/Plugin/BrazeIAMDelegate.swift`](../../ios/Plugin/BrazeIAMDelegate.swift),
+`InterceptingDeeplinkHandler` / `installDeepLinkHandler` / `teardownDeepLinkHandler` in
+[`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt), and
+`interceptDeepLinks` in [`src/web.ts`](../../src/web.ts). Per-channel coverage — including the two
+real gaps — is [`SECURITY.md` §7](../../SECURITY.md#7-deep-link-security).
 
 ## Rules for adding a new event
 

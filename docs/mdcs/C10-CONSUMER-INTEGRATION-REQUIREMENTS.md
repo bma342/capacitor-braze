@@ -404,6 +404,35 @@ Note that Web push has no token concept; [`Braze.registerPushToken`](../../src/d
 
 ---
 
+## Deep-link handling — what opting in costs you
+
+`initialize({ deepLinkHandling: 'app' })` is the only option in the plugin that takes something
+away from the host app, so the trade is stated here rather than discovered:
+
+- **You must register a `deepLinkReceived` listener.** In `'app'` mode the plugin tells the SDK not
+  to open the URL *before* emitting the event. A consumer who opts in and writes no listener gets
+  an app where every Braze campaign CTA does nothing. That is why the default is `'sdk'`.
+- **iOS: the plugin takes `braze.delegate`.** In the default mode that slot is deliberately left
+  free so a host app can claim it for `braze(_:willPresentModalWithContext:)` or
+  `braze(_:noMatchingTriggerForEvent:)`. Opting into `'app'` mode means giving that up; there is no
+  way to have both, because `Braze` holds one delegate. `sdkAuthError` is unaffected — it lives on
+  the separate `sdkAuthDelegate`.
+- **iOS: push opens are only covered when `enablePushAutomation: true`.** With automation off (the
+  default) your own `UNUserNotificationCenter` delegate owns the notification tap and BrazeKit is
+  not in the path, so neither is the plugin.
+- **Android: the plugin replaces the process-global `BrazeDeeplinkHandler`.** It captures whatever
+  was installed and restores it on `wipeData`, Activity destruction and a re-`initialize` that
+  drops the option — but if your app installs its own custom `IBrazeDeeplinkHandler`, install it
+  **before** `Braze.initialize` runs so the plugin wraps yours rather than the SDK default.
+- **Keep `server.allowNavigation` set either way.** It is Capacitor's control, it applies to the
+  channels the plugin cannot intercept (notably HTML in-app message iframes on web), and
+  `deepLinkHandling: 'app'` does not replace it.
+
+Per-channel coverage is [`SECURITY.md` §7](../../SECURITY.md#7-deep-link-security); the listener
+lifecycle is [C05](./C05-LISTENERS.md).
+
+---
+
 ## Privacy declarations you must make
 
 The plugin ships `ios/Plugin/PrivacyInfo.xcprivacy` via the podspec's `resource_bundles`. It

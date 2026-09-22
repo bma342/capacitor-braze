@@ -41,7 +41,28 @@ the time anyone checked (2026-09 audit, A6-54).
 | `allowInsecureEndpoint` | `false` | An `http://` endpoint is **rejected** unless this is strictly `true`. | `validateInitializeOptions` in [`src/web.ts`](../../src/web.ts); the equivalent guard at the top of `initialize` on both natives |
 | `enableInAppMessageUI` | `true` | The plugin renders in-app messages out of the box. `false` is an **opt-out**, not a security toggle — it does not suppress messages, it hands rendering to the host app. | `initialize` on all three bridges |
 | `enablePushAutomation` | `false` | **iOS only.** The plugin does not touch `UNUserNotificationCenter` and BrazeKit does not take over notification opens or deep links unless the consumer opts in. | `performInitialize` in [`BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift) |
+| `allowUserSuppliedJavascript` | `false` | **Web only.** Braze dashboard authors cannot run JavaScript in your page's origin, and HTML in-app messages do not render on web. The plugin writes the `false` **explicitly** rather than omitting the key, so a future flip of the SDK's own default cannot silently enable it. iOS and Android ignore the option because neither SDK has a counterpart — see the note below. | `initialize` in [`src/web.ts`](../../src/web.ts) |
+| `deepLinkHandling` | `'sdk'` | The Braze SDK opens campaign URLs itself, which is the pre-0.2.0 behaviour and the Braze default. `'app'` is an **opt-in** that suppresses the SDK's opening and routes every URL through the `deepLinkReceived` listener. | `initialize` on all three bridges; coverage matrix in [`SECURITY.md` §7](../../SECURITY.md#7-deep-link-security) |
 | `enableSdkAuthentication` | `false` | (not security-defaulted; opt-in by consumer) | — |
+
+**`deepLinkHandling`'s default is the *less* locked-down value, deliberately.** That looks like it
+contradicts this section, and the reasoning is worth writing down so nobody "fixes" it: `'app'`
+mode does not make the plugin safer on its own — it moves the decision to the consumer, and a
+consumer who opts in without writing a listener gets an app where **no** Braze deep link works.
+Silently breaking every campaign CTA on a minor upgrade is a worse failure than the status quo,
+and the status quo already has a real control (Capacitor's `server.allowNavigation`). The safer
+default for a *toggle the plugin implements end to end* is the safer value; the safer default for a
+*toggle that delegates the work to the consumer* is the one that does not silently delegate. On
+iOS there is a second cost: `'app'` mode claims `braze.delegate`, which the plugin otherwise leaves
+free for the host app (2026-09 audit, A2-08).
+
+**`allowUserSuppliedJavascript` being ignored on two platforms is an SDK fact, not a drop.** C03
+forbids silently discarding a consumer-supplied option, so the asymmetry is stated in the option's
+JSDoc, in [`SECURITY.md` §6](../../SECURITY.md#6-in-app-message-xss-risk) and in
+[`SDK_SURFACE.md`](../../SDK_SURFACE.md)'s divergence table: `Braze.Configuration` (BrazeKit 18.2.1)
+and `BrazeConfig.Builder` (`com.braze:android-sdk-ui` 43.2.0) have no such property, because their
+HTML campaigns render in a WebView the Braze SDK owns rather than in the app's Capacitor WebView.
+There is nothing there to gate.
 
 **The `enableLogging` row is the one this project got wrong twice**, so it is worth stating what
 "safer value" means concretely: the option defaulting to `false` is necessary but not sufficient —

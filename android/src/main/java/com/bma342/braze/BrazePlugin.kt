@@ -1,8 +1,11 @@
 package com.bma342.braze
 
+import android.content.Context
 import com.braze.Braze
 import com.braze.BrazeActivityLifecycleCallbackListener
+import com.braze.IBrazeDeeplinkHandler
 import com.braze.configuration.BrazeConfig
+import com.braze.enums.Channel
 import com.braze.enums.Gender
 import com.braze.enums.Month
 import com.braze.events.BrazeSdkAuthenticationErrorEvent
@@ -26,6 +29,8 @@ import com.braze.models.inappmessage.InAppMessageBase
 import com.braze.models.inappmessage.InAppMessageSlideup
 import com.braze.models.inappmessage.MessageButton
 import com.braze.support.BrazeLogger
+import com.braze.ui.BrazeDeeplinkHandler
+import com.braze.ui.actions.UriAction
 import com.braze.ui.inappmessage.BrazeInAppMessageManager
 import com.braze.ui.inappmessage.InAppMessageOperation
 import com.braze.ui.inappmessage.listeners.IInAppMessageManagerListener
@@ -63,7 +68,10 @@ import java.math.BigDecimal
  *   `logContentCardClick(cardId)`, `logContentCardImpression(cardId)`
  * - **Push:** `registerPushToken(token)`
  * - **Listeners:** `addListener('featureFlagsUpdated', ...)`,
- *   `addListener('contentCardsUpdated', ...)`
+ *   `addListener('contentCardsUpdated', ...)`,
+ *   `addListener('inAppMessageReceived', ...)`,
+ *   `addListener('sdkAuthError', ...)`,
+ *   `addListener('deepLinkReceived', ...)`
  * - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
  *   `requestImmediateDataFlush`
  *
@@ -150,6 +158,76 @@ class BrazePlugin : Plugin() {
      */
     private var inAppMessageManagerRegistered: Boolean = false
 
+    /**
+     * The [IBrazeDeeplinkHandler] this plugin instance installed for
+     * `deepLinkHandling: "app"`, or null in the default `"sdk"` mode.
+     * Retained so [handleOnDestroy] / `wipeData` / a re-`initialize` can
+     * restore whatever handler was in place beforehand — the SDK's setter
+     * is a process-global static with no "unset".
+     */
+    private var deepLinkHandler: InterceptingDeeplinkHandler? = null
+
+    /**
+     * The [IBrazeDeeplinkHandler] that was installed before
+     * [deepLinkHandler] replaced it. `BrazeDeeplinkHandler.getInstance()`
+     * returns the custom handler once one is set, so this has to be
+     * captured *before* installing, both to restore on teardown and to
+     * delegate the three non-`gotoUri` interface methods to.
+     */
+    private var previousDeepLinkHandler: IBrazeDeeplinkHandler? = null
+
+    /**
+     * Custom [IBrazeDeeplinkHandler] that emits `deepLinkReceived` instead
+     * of opening the URL.
+     *
+     * `gotoUri` is the single funnel every Braze Android channel uses to
+     * open a URL — verified at `com.braze:android-sdk-ui` 43.2.0 by the set
+     * of classes that reference it: `BrazeNotificationUtils` (push opens),
+     * `DefaultInAppMessageViewLifecycleListener` and
+     * `DefaultInAppMessageWebViewClientListener` (in-app message body,
+     * button and HTML-iframe clicks), `BaseCardView` /
+     * `BrazeContentCardUtils` (content-card clicks rendered by Braze's own
+     * feed UI), `DefaultBannerWebViewClientListener` (banners), and the
+     * Braze Actions steps `OpenLinkInWebViewStep` / `OpenLinkExternallyStep`.
+     * Not executing the [UriAction] is therefore what suppresses the open.
+     *
+     * The other three interface methods are pure factories / flag lookups
+     * with no side effects, so they delegate to the handler that was
+     * installed beforehand rather than being reimplemented — the plugin
+     * changes *whether* a URL opens, never how a [UriAction] is built.
+     *
+     * @property delegate the previously installed handler, used for
+     *   everything except `gotoUri`.
+     * @property onSuppressed invoked with the suppressed action so the
+     *   plugin can emit the listener event.
+     */
+    internal class InterceptingDeeplinkHandler(
+        internal val delegate: IBrazeDeeplinkHandler,
+        private val onSuppressed: (UriAction) -> Unit,
+    ) : IBrazeDeeplinkHandler {
+
+        override fun gotoUri(context: Context, uriAction: UriAction) {
+            onSuppressed(uriAction)
+        }
+
+        override fun getIntentFlags(intentFlagPurpose: IBrazeDeeplinkHandler.IntentFlagPurpose): Int =
+            delegate.getIntentFlags(intentFlagPurpose)
+
+        override fun createUriActionFromUrlString(
+            url: String,
+            extras: android.os.Bundle?,
+            openInWebView: Boolean,
+            channel: Channel,
+        ): UriAction? = delegate.createUriActionFromUrlString(url, extras, openInWebView, channel)
+
+        override fun createUriActionFromUri(
+            uri: android.net.Uri,
+            extras: android.os.Bundle?,
+            openInWebView: Boolean,
+            channel: Channel,
+        ): UriAction = delegate.createUriActionFromUri(uri, extras, openInWebView, channel)
+    }
+
     companion object {
         /** Logcat tag for the bridge's own (never PII-bearing) warnings. */
         private const val LOG_TAG = "CapacitorBraze"
@@ -174,6 +252,39 @@ class BrazePlugin : Plugin() {
 
         /** Local-development hosts exempted from the cluster warning. */
         private val DEV_HOST_REGEX = Regex("""^(localhost|127\.0\.0\.1|.+\.(test|local))$""")
+
+        /**
+         * Maps `com.braze.enums.Channel` onto the contract's
+         * `BrazeDeepLinkSource` union. `PUSH` is renamed to `push` so the
+         * value matches iOS's `Braze.Channel.notification`; `UNKNOWN` and
+         * anything a future SDK adds surface as `other` rather than being
+         * coerced into a neighbouring channel.
+         *
+         * `internal` so the Robolectric tier can assert the mapping
+         * directly (C11).
+         */
+        internal fun deepLinkSource(channel: Channel?): String = when (channel) {
+            Channel.PUSH -> "push"
+            Channel.INAPP_MESSAGE -> "inAppMessage"
+            Channel.CONTENT_CARD -> "contentCard"
+            Channel.BANNER -> "banner"
+            Channel.UNKNOWN, null -> "other"
+        }
+
+        /**
+         * Builds the `BrazeDeepLinkReceivedEvent` wire shape from a
+         * suppressed [UriAction].
+         *
+         * `internal` so the Robolectric tier can assert the payload without
+         * driving the whole SDK (C11).
+         */
+        internal fun deepLinkPayload(uriAction: UriAction): JSObject {
+            val payload = JSObject()
+            payload.put("url", uriAction.uri.toString())
+            payload.put("source", deepLinkSource(uriAction.channel))
+            payload.put("useWebView", uriAction.useWebView)
+            return payload
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -239,6 +350,7 @@ class BrazePlugin : Plugin() {
             manager.setCustomControlInAppMessageManagerListener(null)
         }
         unregisterInAppMessageManager()
+        teardownDeepLinkHandler()
         initialized = false
         sdkAuthenticationEnabled = false
         super.handleOnDestroy()
@@ -270,6 +382,61 @@ class BrazePlugin : Plugin() {
         val activity = bridge?.activity ?: return
         manager.registerInAppMessageManager(activity)
         inAppMessageManagerRegistered = true
+    }
+
+    /**
+     * Installs [InterceptingDeeplinkHandler] so Braze-driven URL opens emit
+     * `deepLinkReceived` instead of navigating. Called from `initialize`
+     * when `deepLinkHandling` is `"app"`.
+     *
+     * Idempotent: a re-`initialize` restores the previous handler first, so
+     * re-running this never stacks wrappers (which would make the same click
+     * fan out N `deepLinkReceived` events, the deep-link analogue of the
+     * stacked-subscriber bug C05 lists under Forbidden).
+     *
+     * The handler the SDK reports *before* the install is captured and
+     * delegated to, because `BrazeDeeplinkHandler.setBrazeDeeplinkHandler`
+     * is a process-global static with no un-set: restoring means installing
+     * that captured handler back.
+     */
+    private fun installDeepLinkHandler() {
+        teardownDeepLinkHandler()
+        // Unwrap before capturing. During an Activity recreation the
+        // replacement plugin instance can install *before* the outgoing one's
+        // `handleOnDestroy` runs, so `getInstance()` may already be another
+        // instance's wrapper. Capturing that would build a chain — and the
+        // orphaned wrapper in the middle holds a closure over the dead
+        // Activity's bridge, which is both a leak and a duplicate-emit path.
+        // Taking its delegate keeps the chain exactly one deep, always.
+        val live = BrazeDeeplinkHandler.getInstance()
+        val previous = if (live is InterceptingDeeplinkHandler) live.delegate else live
+        val handler = InterceptingDeeplinkHandler(previous) { uriAction ->
+            notifyOnMain("deepLinkReceived", deepLinkPayload(uriAction))
+        }
+        BrazeDeeplinkHandler.setBrazeDeeplinkHandler(handler)
+        previousDeepLinkHandler = previous
+        deepLinkHandler = handler
+    }
+
+    /**
+     * Restores the handler that was installed before
+     * [installDeepLinkHandler] ran — but only while *this* instance's
+     * handler is still the live one.
+     *
+     * The identity check matters for the same reason the in-app message
+     * listener teardown has one: on a configuration change Android resumes
+     * the replacement Activity (which has already installed its own
+     * handler) before destroying the outgoing one, so an unconditional
+     * restore would silently stop `deepLinkReceived` after the first
+     * rotation.
+     */
+    private fun teardownDeepLinkHandler() {
+        val installed = deepLinkHandler
+        if (installed != null && BrazeDeeplinkHandler.getInstance() === installed) {
+            previousDeepLinkHandler?.let { BrazeDeeplinkHandler.setBrazeDeeplinkHandler(it) }
+        }
+        deepLinkHandler = null
+        previousDeepLinkHandler = null
     }
 
     /** Inverse of the registration half of [wireInAppMessages]. */
@@ -537,6 +704,16 @@ class BrazePlugin : Plugin() {
         val enableSdkAuthentication = call.getBoolean("enableSdkAuthentication", false) ?: false
         val enableInAppMessageUI = call.getBoolean("enableInAppMessageUI", true) ?: true
 
+        // Closed enum: an unrecognized mode rejects rather than falling back
+        // to "sdk", so a consumer who typo'd "App" can't believe deep links
+        // are gated when they aren't. The error names the value under C06
+        // §4's closed-enum exemption, byte-identical to `src/web.ts`.
+        val deepLinkHandling = call.getString("deepLinkHandling") ?: "sdk"
+        if (deepLinkHandling != "sdk" && deepLinkHandling != "app") {
+            call.reject("Braze.initialize: unknown deepLinkHandling \"$deepLinkHandling\". Allowed: sdk, app.")
+            return
+        }
+
         // L5-08 / C04: reject a non-positive OR non-integer
         // `sessionTimeoutInSeconds` rather than silently dropping it.
         // Capacitor's `getInt` returns null for an absent key *and* for a
@@ -599,6 +776,16 @@ class BrazePlugin : Plugin() {
         // next resume would lose every in-app message until the app is
         // backgrounded and foregrounded again.
         wireInAppMessages()
+
+        // `"app"` installs the suppressing handler; `"sdk"` restores
+        // whatever was in place before, so a re-`initialize` that drops the
+        // option genuinely returns to SDK-opens-the-URL rather than leaving
+        // the previous run's interception armed.
+        if (deepLinkHandling == "app") {
+            installDeepLinkHandler()
+        } else {
+            teardownDeepLinkHandler()
+        }
 
         // Wire the persistent feature-flag update subscription. Drop any
         // previous subscriber first so re-init doesn't double-fire events
@@ -1275,6 +1462,10 @@ class BrazePlugin : Plugin() {
         teardownFeatureFlagsSubscription()
         teardownContentCardsSubscription()
         teardownSdkAuthErrorSubscription()
+        // The deep-link mode is per-`initialize`, like the SDK-auth flag:
+        // after a wipe the SDK opens URLs itself again until a fresh
+        // `initialize` asks for interception.
+        teardownDeepLinkHandler()
         initialized = false
         sdkAuthenticationEnabled = false
         call.resolve()
@@ -1495,6 +1686,16 @@ class BrazePlugin : Plugin() {
         dto.put("clicked", card.isClicked)
         dto.put("dismissed", card.isDismissed)
         dto.put("dismissible", card.isDismissibleByUser)
+        // A2-15 item 2: `Card.openUriInWebView` is the Android counterpart of
+        // BrazeKit's `ContentCard.ClickAction.url(_, useWebView:)` and of the
+        // in-app-message contract's `clickAction.useWebView`. It used to be
+        // dropped on content cards while the IAM path carried it. Only emitted
+        // when the card actually has a click URL — a card with nothing to open
+        // has no open-target preference to report, which is why the contract
+        // slot is optional.
+        if (card.url != null) {
+            dto.put("useWebView", card.openUriInWebView)
+        }
 
         when (card) {
             is CaptionedImageCard -> {
@@ -1643,10 +1844,6 @@ class BrazePlugin : Plugin() {
      */
     private fun warnIfRejected(accepted: Boolean, method: String) {
         if (accepted) return
-        BrazeLogger.w(
-            LOG_TAG,
-            "Braze.$method: the Braze SDK rejected the supplied value as invalid and did not " +
-                "store it. The value is omitted from this log per SECURITY.md §3.",
-        )
+        BrazeLogger.w(LOG_TAG, "Braze.$method: the Braze SDK rejected the value (see SDK logs)")
     }
 }
