@@ -16,8 +16,8 @@
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		51A0510ED92601C41747C70B /* Pods_CapacitorBrazeTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 671420438EEFC7C49361E43C /* Pods_CapacitorBrazeTests.framework */; };
 		A084ECDBA7D38E1E42DFC39D /* Pods_App.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */; };
-		CB9A5FE787512837C6BEE203 /* BrazePluginContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B828F665C4B2E431B7D97B76 /* BrazePluginContractTests.swift */; };
 		F0D49948F99E3B81BE73BEFF /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14CDD5FDD8F27E7856B665A4 /* Foundation.framework */; };
+		F417E24B5595DBF49CE077F1 /* BrazePluginContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6106393CA52C60CCE735D04C /* BrazePluginContractTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -44,10 +44,10 @@
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		6106393CA52C60CCE735D04C /* BrazePluginContractTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BrazePluginContractTests.swift; path = ../../../ios/Tests/BrazePluginTests/BrazePluginContractTests.swift; sourceTree = "<group>"; };
 		671420438EEFC7C49361E43C /* Pods_CapacitorBrazeTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_CapacitorBrazeTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_App.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF51FD2D460BCFE21FA515B2 /* Pods-App.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.release.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.release.xcconfig"; sourceTree = "<group>"; };
-		B828F665C4B2E431B7D97B76 /* BrazePluginContractTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BrazePluginContractTests.swift; path = ../../../ios/PluginTests/BrazePluginContractTests.swift; sourceTree = "<group>"; };
 		FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.debug.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.debug.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -85,7 +85,7 @@
 		48A819AFA7888C0002D97081 /* CapacitorBrazeTests */ = {
 			isa = PBXGroup;
 			children = (
-				B828F665C4B2E431B7D97B76 /* BrazePluginContractTests.swift */,
+				6106393CA52C60CCE735D04C /* BrazePluginContractTests.swift */,
 			);
 			name = CapacitorBrazeTests;
 			sourceTree = "<group>";
@@ -314,7 +314,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				CB9A5FE787512837C6BEE203 /* BrazePluginContractTests.swift in Sources */,
+				F417E24B5595DBF49CE077F1 /* BrazePluginContractTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

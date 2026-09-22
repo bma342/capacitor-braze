@@ -2,13 +2,13 @@ PODS:
   - BrazeKit (18.2.1)
   - BrazeUI (18.2.1):
     - BrazeKit (= 18.2.1)
-  - Capacitor (6.2.1):
+  - Capacitor (8.5.2):
     - CapacitorCordova
-  - CapacitorBraze (0.2.0):
+  - CapacitorBraze (0.3.0):
     - BrazeKit (= 18.2.1)
     - BrazeUI (= 18.2.1)
-    - Capacitor (< 8.0, >= 6.0)
-  - CapacitorCordova (6.2.1)
+    - Capacitor (< 9.0, >= 6.0)
+  - CapacitorCordova (8.5.2)
 
 DEPENDENCIES:
   - "Capacitor (from `../../node_modules/@capacitor/ios`)"
@@ -31,9 +31,9 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   BrazeKit: 480910f8b829eec98bf0e76b22a425cb1086a739
   BrazeUI: 67d5b9e9d4df84b7aa9f178b3684cd534a18e38c
-  Capacitor: c95400d761e376be9da6be5a05f226c0e865cebf
-  CapacitorBraze: 828ebf56cf6216f3cdc70dc5d78fcc2e9d6c2003
-  CapacitorCordova: 8d93e14982f440181be7304aa9559ca631d77fff
+  Capacitor: 89067779e14fb7ea56af07b4817f45d1f0c2a269
+  CapacitorBraze: 4807e32e0f724d844c4c4837aa53ea06b59d80ab
+  CapacitorCordova: 5bec5648cbd09a176ce34ce5e7b6cdabb2c8a327
 
 PODFILE CHECKSUM: 2871d95a9b321129a92e7dacea516031f5046ec3
 
