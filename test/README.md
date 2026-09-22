@@ -87,7 +87,7 @@ describe('<method group>', () => {
 
 ## Current state
 
-**154 tests across 14 files, ~3s.** All 35 public methods and every input-validation branch in
+**206 tests across 18 files, ~3.5s.** All 35 public methods and every input-validation branch in
 `src/web.ts` are covered, plus the serializers against real `@braze/web-sdk` model classes. The
 per-method map is in [`docs/TEST-COVERAGE-AUDIT.md`](../docs/TEST-COVERAGE-AUDIT.md).
 

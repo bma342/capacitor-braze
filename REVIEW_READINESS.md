@@ -13,17 +13,17 @@ standard to aim at; this block is what is true.
 |---|---|
 | **Version** | `0.2.0` (unreleased on this branch). `0.1.0` is on npm since 2026-05-22 |
 | **Public surface** | 35 methods + 5 listener events (`featureFlagsUpdated`, `contentCardsUpdated`, `inAppMessageReceived`, `sdkAuthError`, `deepLinkReceived`) |
-| **Web tests** | **205** vitest across **18 files**, ~3.4s, against an in-process Fastify mock |
+| **Web tests** | **206** vitest across **18 files**, ~3.4s, against an in-process Fastify mock |
 | **Android tests** | **91** Robolectric/JUnit — run in CI |
 | **iOS tests** | **35** XCTest — run in CI via a generated target (`scripts/ios-add-test-target.rb`) |
 | **CI jobs** | **9** in `test.yml` + **2** CodeQL analyses in `codeql.yml`, all actions SHA-pinned, per-job least-privilege permissions |
 | **Lint** | **ESLint 10** flat config (`eslint.config.cjs`) on `@ionic/eslint-config` 0.5.0, run with `--max-warnings=0`; Prettier 3.9; SwiftLint `--strict`; Android Lint `abortOnError true`. `npm audit` including dev deps: **0 vulnerabilities** |
 | **Native pins** | BrazeKit/BrazeUI **18.2.1** (Xcode 26+), `com.braze:android-sdk-ui` **43.2.0**, `@braze/web-sdk` peer **`^6.13.0`** (security floor) |
 | **Capacitor** | `^6.0.0 \|\| ^7.0.0`. **Capacitor 8: not supported**, tracked follow-up |
-| **Coverage instrumentation** | **web only**: `src/web.ts` measured at 97.38% statements/lines, 90.66% branches, 100% functions, with ratcheted thresholds enforced in the `test-web` job. **Native: none** — the Android and iOS numbers are test counts. `docs/TEST-COVERAGE-AUDIT.md` reports the measurement |
+| **Coverage instrumentation** | **web only**: `src/web.ts` measured at 97.45% statements/lines, 90.80% branches, 100% functions, with ratcheted thresholds enforced in the `test-web` job. **Native: none** — the Android and iOS numbers are test counts. `docs/TEST-COVERAGE-AUDIT.md` reports the measurement |
 | **Layer 4 (real Braze)** | **never run.** No release is validated against a live Braze backend |
 | **e2e runner (Maestro/Detox)** | **none, and none planned** — decided against; see `PLAN.md` §14 |
-| **Perf / bundle budgets in CI** | **one, enforced**: gzipped ESM bundle ≤ 20,480 B (measured 16,180 B). The other budgets in §2 were unmeasured guesses and are gone |
+| **Perf / bundle budgets in CI** | **one, enforced**: gzipped ESM bundle ≤ 20,480 B (measured 17,472 B). The other budgets in §2 were unmeasured guesses and are gone |
 | **SAST / CodeQL** | **CodeQL on `javascript-typescript` + `actions`** (push, PR, weekly), plus `npm audit`, gitleaks and secret scanning. Swift/Kotlin need a traced native build — deferred, see `codeql.yml`. Snyk removed: its token was never provisioned |
 | **Provenance** | `0.1.0` published by hand, **no attestation**. `0.2.0` will be the first workflow-published release |
 | **Repo settings still to do** | private vulnerability reporting, `enforce_admins`, `v*` tag ruleset, npm Trusted Publishing — see [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
@@ -146,7 +146,7 @@ Note item 6: there is no `enableAutomaticPushHandling` option and never was — 
 > Layer 4 smoke has never been run.** They are the Layer 4 checklist, and they stay unchecked until
 > someone walks [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) against a real trial
 > and commits the capture files. Note what this does *not* mean: the bridge translation for each of
-> these paths is covered by the 205 + 91 + 35 automated tests. What is unverified is the round trip
+> these paths is covered by the 206 + 91 + 35 automated tests. What is unverified is the round trip
 > to Braze's backend.
 
 - [ ] App initializes Braze, identifies user, logs an event → event appears in Braze dashboard.
@@ -185,7 +185,7 @@ they need a real backend.
 
 | Metric | Budget | How it is measured | Enforced? |
 |---|---|---|---|
-| Web bundle gzipped, plugin only (`dist/esm/**/*.js`) | **≤ 20,480 B** — measured **16,180 B** at `0.2.0` (2026-09-22) | `node .github/scripts/assert-size.mjs`, run in the `build-plugin` job | **✓ fails the build** |
+| Web bundle gzipped, plugin only (`dist/esm/**/*.js`) | **≤ 20,480 B** — measured **17,472 B** at `0.2.0` (2026-09-22) | `node .github/scripts/assert-size.mjs`, run in the `build-plugin` job | **✓ fails the build** |
 
 The number is what it is: ~13.2 KB gzipped for the bridge, not the **"<5 KB"** this table used to
 promise. Thirty-five methods of boundary validation, DTO serializers and listener plumbing do not
@@ -194,7 +194,7 @@ alongside for information and is not gated — Rollup builds it from the same mo
 the ESM total. `@braze/web-sdk` is a peer dependency and is never bundled, so it is outside the
 budget by construction.
 
-The budget carries ~27% headroom over the measurement, which absorbs ordinary method-by-method
+The budget carries ~17% headroom over the measurement, which absorbs ordinary method-by-method
 growth while still catching a dependency accidentally inlined into the bundle. Raising it is
 allowed, in the same commit as the code that needs it, with the new measurement recorded in the
 script header and here; raising it to turn a red build green is not.
@@ -259,10 +259,10 @@ Concrete things a senior Braze SDK engineer would look for when deciding whether
 
 ### Testing rigor
 
-- **⚠️** Layers 1–3 exist and run in CI (205 vitest against the Fastify mock, 91 Robolectric, 35 XCTest). **Layer 4 has never been run.** The HTTP-intercept native integration tier designed in C11 is also unbuilt.
+- **⚠️** Layers 1–3 exist and run in CI (206 vitest against the Fastify mock, 91 Robolectric, 35 XCTest). **Layer 4 has never been run.** The HTTP-intercept native integration tier designed in C11 is also unbuilt.
 - **⚠️** iOS simulator: yes (`xcodebuild test`). Android: **JVM/Robolectric, not an emulator** — deliberate, per C11, because emulator startup is a 5-minute tax per job. Web: jsdom, not headless Chrome — also deliberate; the assertions are on outbound HTTP, not on rendering.
 - **[ ]** **Does not exist, and is deliberately deferred.** No workflow is scheduled and no Braze credential exists in CI. Drift is caught by a human reading Braze's release notes (C08).
-- **⚠️** Coverage instrumentation exists on **web only** — `@vitest/coverage-v8` over `src/web.ts`, with ratcheted thresholds enforced in the `test-web` job (97.38% statements/lines, 90.66% branches, 100% functions at `0.2.0`). The Android and iOS suites report test counts, not coverage; JaCoCo / `xcodebuild -enableCodeCoverage` is the open gap. `docs/TEST-COVERAGE-AUDIT.md` records both.
+- **⚠️** Coverage instrumentation exists on **web only** — `@vitest/coverage-v8` over `src/web.ts`, with ratcheted thresholds enforced in the `test-web` job (97.45% statements/lines, 90.80% branches, 100% functions at `0.2.0`). The Android and iOS suites report test counts, not coverage; JaCoCo / `xcodebuild -enableCodeCoverage` is the open gap. `docs/TEST-COVERAGE-AUDIT.md` records both.
 - [x] No tests that depend on real Braze for every PR.
 
 ### Documentation completeness
@@ -423,15 +423,15 @@ Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open ·
 | Checkbox | Status | Evidence |
 |---|---|---|
 | TS types pass `tsc --strict --noEmit` | ✓ | `build-plugin` CI job |
-| `npm test` passes | ✓ | `test-web` CI job — **205 tests across 18 files in ~3.4s**, all 35 methods covered, followed by a coverage-threshold run. Map + measured numbers in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) |
+| `npm test` passes | ✓ | `test-web` CI job — **206 tests across 18 files in ~3.4s**, all 35 methods covered, followed by a coverage-threshold run. Map + measured numbers in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) |
 | Android native tests pass in CI | ✓ | `verify-android` compiles the bridge against `com.braze:android-sdk-ui` 43.2.0, runs **91** Robolectric tests, and runs Android Lint with `abortOnError true`. The HTTP-intercept tier (C11) is still design-only |
 | iOS native tests pass in CI | ✓ | `verify-ios` compiles against BrazeKit 18.2.1 and runs **35** XCTests via a generated target. Until `0.2.0` the suite had no target and had never been compiled |
 | Web Layer 3 passes in CI | ✓ | `test-web` runs the vitest + Fastify-mock harness |
 | Layer 4 manual smoke against real Braze | ◌ | **Never run.** `0.1.0` and `0.2.0` both ship on mock-verified wire format only, and say so |
 | No `any`, no `!`, no `TODO`, no `@Suppress` (without docs) | ✓ | Re-verified 2026-09-22 by grep over `src/`, `ios/Plugin/`, `android/src/main/`: no TODO/FIXME, no `@Suppress`, no Swift force-unwraps / `try!` / `as!` / `fatalError`, no `any` |
 | Lint clean | ✓ | **ESLint 10** (flat config, `--max-warnings=0`) + Prettier 3.9 in `lint`; **SwiftLint `--strict`, 0 violations** in `verify-ios` — the binary is now installed and asserted, having previously been absent, which made the gate a silent no-op; **Android Lint** `abortOnError true` in `verify-android`. **ktlint deliberately not used** per [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md) |
-| Code coverage targets met | ⚠️ | **Web only.** `src/web.ts` is measured at 97.38% statements/lines, 90.66% branches, 100% functions, with thresholds that fail the `test-web` job on a regression. The 91 Android and 35 iOS tests are counts, not coverage — no JaCoCo, no `-enableCodeCoverage`. 331 tests across three platforms; [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) reports both halves |
-| Bundle size budget met | ✓ | **Measured and enforced** as of `0.2.0`: `node .github/scripts/assert-size.mjs` runs in `build-plugin` and fails above **20,480 B** gzipped for `dist/esm/**/*.js`; the measured total is **16,180 B**. The four unmeasurable budgets (`.aar`, `.framework`, init time, round-trip) were deleted from §2 rather than left as aspirations |
+| Code coverage targets met | ⚠️ | **Web only.** `src/web.ts` is measured at 97.45% statements/lines, 90.80% branches, 100% functions, with thresholds that fail the `test-web` job on a regression. The 91 Android and 35 iOS tests are counts, not coverage — no JaCoCo, no `-enableCodeCoverage`. 332 tests across three platforms; [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) reports both halves |
+| Bundle size budget met | ✓ | **Measured and enforced** as of `0.2.0`: `node .github/scripts/assert-size.mjs` runs in `build-plugin` and fails above **20,480 B** gzipped for `dist/esm/**/*.js`; the measured total is **17,472 B**. The four unmeasurable budgets (`.aar`, `.framework`, init time, round-trip) were deleted from §2 rather than left as aspirations |
 
 ### Docs (§5)
 
@@ -496,10 +496,10 @@ Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open ·
 
 | Checkbox | Status | Evidence |
 |---|---|---|
-| Four-layer test pyramid | ⚠️ | Layers 1–3 exist and run in CI: 205 vitest against the Fastify mock, 91 Robolectric, 35 XCTest. **Layer 4 has never been run.** C11's native HTTP-intercept tier is also unbuilt |
+| Four-layer test pyramid | ⚠️ | Layers 1–3 exist and run in CI: 206 vitest against the Fastify mock, 91 Robolectric, 35 XCTest. **Layer 4 has never been run.** C11's native HTTP-intercept tier is also unbuilt |
 | CI runs the local tiers across iOS sim + Android + jsdom | ⚠️ | iOS: real simulator via `xcodebuild test`. Android: **JVM/Robolectric, not an emulator** — deliberate per C11 (emulator startup is a 5-minute tax per job). Web: jsdom, not headless Chrome — also deliberate, since the assertions are on outbound HTTP |
 | Daily spec-drift job against real Braze trial | ○ | **Does not exist, deliberately.** No workflow is scheduled and no Braze credential exists in CI. Five documents claimed otherwise until `0.2.0`. Drift is caught by reading Braze's release notes (C08) |
-| Code coverage >80% TS, >70% native | ⚠️ | TS: **met and enforced** — `src/web.ts` at 97.38% statements/lines against a 97 threshold. Native: **not measured**, so the >70% target is neither met nor refuted. See the "Code coverage" row above |
+| Code coverage >80% TS, >70% native | ⚠️ | TS: **met and enforced** — `src/web.ts` at 97.45% statements/lines against a 97 threshold. Native: **not measured**, so the >70% target is neither met nor refuted. See the "Code coverage" row above |
 | No tests that depend on real Braze for every PR | ✓ | Mock-server harness is self-contained |
 
 ### Adoption / trust signals (§3)

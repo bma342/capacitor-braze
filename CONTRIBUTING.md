@@ -67,7 +67,7 @@ same commit, with the reason.
 Three tiers run locally and in CI. A fourth, against a real Braze account, has never been run.
 
 ```bash
-# Web — 205 vitest tests across 18 files, ~3.4s, against an in-process Fastify mock.
+# Web — 206 vitest tests across 18 files, ~3.4s, against an in-process Fastify mock.
 # The mock is started by the tests themselves; nothing to launch first.
 npm test
 
@@ -233,7 +233,7 @@ already 8–15-minute runtime. The reasoning and the shape of the follow-up are
 in the header of `.github/workflows/codeql.yml`.
 
 **Raising the bundle-size budget.** `assert-size.mjs` fails above 20,480 B
-gzipped for `dist/esm/**/*.js`; the measured total at `0.2.0` is 16,180 B. If a
+gzipped for `dist/esm/**/*.js`; the measured total at `0.2.0` is 17,472 B. If a
 deliberate addition pushes past the budget, re-measure with
 `npm run build && node .github/scripts/assert-size.mjs`, raise
 `ESM_GZIP_BUDGET_BYTES` **in the same commit as the code**, and update the

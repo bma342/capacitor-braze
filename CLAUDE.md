@@ -3,7 +3,7 @@
 **Project:** Open-source Capacitor 6/7 plugin wrapping the Braze native SDKs (Android Kotlin, iOS Swift, Web JS).
 **Owner:** Bryce Aspinwall (`bma342`), MIT-licensed, personal portfolio + Aromo lighthouse.
 **npm package:** [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) — published; `0.1.0` is on the registry, `0.2.0` is this branch.
-**Current state:** 35 methods + 5 listener events; 205 web + 91 Android + 35 iOS tests, all in CI; BrazeKit/BrazeUI 18.2.1 (Xcode 26+), `com.braze:android-sdk-ui` 43.2.0, `@braze/web-sdk` peer `^6.13.0`.
+**Current state:** 35 methods + 5 listener events; 206 web + 91 Android + 35 iOS tests, all in CI; BrazeKit/BrazeUI 18.2.1 (Xcode 26+), `com.braze:android-sdk-ui` 43.2.0, `@braze/web-sdk` peer `^6.13.0`.
 
 **Source-of-truth docs — read these before any non-trivial work:**
 - [`PLAN.md`](./PLAN.md) — the **original 2026-05 plan**, kept as history. Where it disagrees with the code, the code wins; read `CHANGELOG.md` + `SDK_SURFACE.md` §2 for the live roadmap.
@@ -72,7 +72,7 @@ If you find yourself writing more than ~20 lines for a single method, you're pro
 | **iOS bridge** | Swift 5.9+, Capacitor iOS, **Xcode 26+** (BrazeKit ≥ 15 requires it) | `BrazeKit` + `BrazeUI` **18.2.1** (exact pin) |
 | **Web bridge** | TypeScript | `@braze/web-sdk` **`^6.13.0`** peer dep — a security floor, see SECURITY.md §6 |
 | **Build** | Rollup (Capacitor standard) → ESM + CJS only; the IIFE/`unpkg` bundle was removed in 0.2.0 | — |
-| **Tests** | **vitest** (web, 205 across 18 files, with a `@vitest/coverage-v8` ratchet on `src/web.ts`), **Robolectric/JUnit** (Android, 91), **XCTest** (iOS, 35), **Fastify** mock Braze server (TypeScript, in-process, ephemeral port). No Jest, no Ktor, no Maestro anywhere in this repo | — |
+| **Tests** | **vitest** (web, 206 across 18 files, with a `@vitest/coverage-v8` ratchet on `src/web.ts`), **Robolectric/JUnit** (Android, 91), **XCTest** (iOS, 35), **Fastify** mock Braze server (TypeScript, in-process, ephemeral port). No Jest, no Ktor, no Maestro anywhere in this repo | — |
 | **Lint** | **ESLint 10** flat config (`eslint.config.cjs`) on `@ionic/eslint-config` 0.5.0 — the preset's flat rewrite, which peer-requires ESLint 10 — plus Prettier 3.9 (`@ionic/prettier-config`, 120-char width) and SwiftLint. `npm run eslint` runs `--max-warnings=0` | see `package.json` |
 | **CI** | GitHub Actions, all actions SHA-pinned: **9 jobs in `test.yml`** (`lint`, `build-plugin`, `pack-check`, `build-example`, `build-demo`, `test-web`, `audit`, `verify-ios`, `verify-android`) **+ 2 CodeQL analyses** in `codeql.yml` (`javascript-typescript`, `actions`) | ubuntu + macOS |
 
@@ -88,8 +88,8 @@ Snapshot at `0.2.0`, verified 2026-09-22 (see `package.json` for the live versio
 | Android bridge against `com.braze:android-sdk-ui:43.2.0` | ✅ |
 | iOS bridge against `BrazeKit / BrazeUI 18.2.1` (needs Xcode 26+) | ✅ |
 | Mock Braze server (**Fastify + TypeScript**, in `test/mock-server`) | ✅ |
-| Web behavioral tests (vitest + mock) — 205 across 18 files | ✅ |
-| Web coverage ratchet — `src/web.ts` 97.38% statements/lines, 90.66% branches, 100% functions; thresholds enforced in the `test-web` job | ✅ |
+| Web behavioral tests (vitest + mock) — 206 across 18 files | ✅ |
+| Web coverage ratchet — `src/web.ts` 97.45% statements/lines, 90.80% branches, 100% functions; thresholds enforced in the `test-web` job | ✅ |
 | Android native tests (Robolectric/JUnit) — 91, run in CI | ✅ |
 | iOS native tests (XCTest) — 35, run in CI via a generated target | ✅ |
 | Native coverage instrumentation (JaCoCo / `-enableCodeCoverage`) | ⏳ not wired — the native counts are test counts, not coverage |
@@ -108,7 +108,7 @@ Snapshot at `0.2.0`, verified 2026-09-22 (see `package.json` for the live versio
 | Signed-commit + required-check branch protection on `main` | ✅ |
 | Gitleaks CI step | ✅ |
 | CodeQL SAST (`codeql.yml`) — `javascript-typescript` + `actions`, push/PR to `main` + weekly | ✅ — ⏳ not yet a *required* check (needs one run on `main` to name it) |
-| Bundle-size gate (`.github/scripts/assert-size.mjs` in `build-plugin`) | ✅ gzipped ESM budget 20,480 B; measured 16,180 B at `0.2.0` |
+| Bundle-size gate (`.github/scripts/assert-size.mjs` in `build-plugin`) | ✅ gzipped ESM budget 20,480 B; measured 17,472 B at `0.2.0` |
 | Capacitor 7 forward-compat (`^6 \|\| ^7` peer dep) | ✅ |
 | Smoke wrappers (`npm run smoke:web/ios/android`) | ✅ scripts exist |
 | Audit cleanup — `docs/audits/2026-05` (17 phases) + `docs/audits/2026-09` (this wave) | ✅ |
@@ -174,7 +174,7 @@ capacitor-braze/
 ├── demo/                                                  # consumer-fork-starter (React 19 + TanStack)
 └── test/
     ├── mock-server/                                       # Fastify mock Braze backend (ephemeral port)
-    └── web/src/                                           # 205 vitest behavioral tests across 18 files
+    └── web/src/                                           # 206 vitest behavioral tests across 18 files
 ```
 
 **The method lockstep:** adding or changing a plugin method touches a fixed list of files, and
@@ -263,7 +263,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
 Four tiers. Tiers 1–3 are fully local and hermetic; tier 4 has never been run.
 
 ```bash
-# Tier 1-3 (web): 205 vitest behavioral tests driving the real @braze/web-sdk
+# Tier 1-3 (web): 206 vitest behavioral tests driving the real @braze/web-sdk
 # under jsdom against an in-process Fastify mock Braze server. ~3.4s.
 npm test
 

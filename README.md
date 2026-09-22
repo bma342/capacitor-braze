@@ -30,11 +30,11 @@ Snapshot at **0.2.0** (2026-09-22). This table drifts — `package.json`, `git l
 | **TypeScript API** | 35 methods + `addListener` / `removeAllListeners` for **5 events** (`featureFlagsUpdated`, `contentCardsUpdated`, `inAppMessageReceived`, `sdkAuthError`, `deepLinkReceived`) |
 | **iOS bridge** (`BrazeKit` / `BrazeUI` 18.2.1) | Compiles and runs **35 XCTests** on every PR via the `verify-ios` CI job; `PrivacyInfo.xcprivacy` shipped via podspec `resource_bundles`. **Requires Xcode 26+** |
 | **Android bridge** (`com.braze:android-sdk-ui` 43.2.0) | Compiles, runs **91 Robolectric/JUnit tests** and Android Lint on every PR via the `verify-android` CI job |
-| **Web bridge** (`@braze/web-sdk` peer `^6.13.0`) | **205 vitest tests across 18 files in ~3.4s** against an in-process Fastify mock Braze server; 35/35 methods and every validation branch covered, with **measured** V8 coverage of `src/web.ts` at 97.38% statements/lines and 90.66% branches, ratcheted in CI — see [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md). One method (`registerPushToken`) is platform-divergent and throws on web by design (per [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md)) |
+| **Web bridge** (`@braze/web-sdk` peer `^6.13.0`) | **206 vitest tests across 18 files in ~3.4s** against an in-process Fastify mock Braze server; 35/35 methods and every validation branch covered, with **measured** V8 coverage of `src/web.ts` at 97.45% statements/lines and 90.80% branches, ratcheted in CI — see [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md). One method (`registerPushToken`) is platform-divergent and throws on web by design (per [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md)) |
 | **Developer testbed** (`example/`) | Every plugin method has a button; clicking invokes + logs |
 | **Reference app** (`demo/`) | React 19 + Tailwind 4 + TanStack Router; restaurant ordering + e-commerce flows; iOS + Android Capacitor projects committed |
 | **MDC design contracts** | [C01–C11](./docs/mdcs/) codify the patterns; CI gates enforce them |
-| **CI** | 9 jobs in [`test.yml`](./.github/workflows/test.yml) plus 2 CodeQL analyses (`javascript-typescript`, `actions`) in [`codeql.yml`](./.github/workflows/codeql.yml); all GitHub Actions pinned to commit SHAs; release publishing gated on the full suite. `build-plugin` enforces a gzipped-ESM bundle budget of 20,480 B (measured 16,180 B at 0.2.0) |
+| **CI** | 9 jobs in [`test.yml`](./.github/workflows/test.yml) plus 2 CodeQL analyses (`javascript-typescript`, `actions`) in [`codeql.yml`](./.github/workflows/codeql.yml); all GitHub Actions pinned to commit SHAs; release publishing gated on the full suite. `build-plugin` enforces a gzipped-ESM bundle budget of 20,480 B (measured 17,472 B at 0.2.0) |
 | **Branch protection** | `main` requires the CI checks (strict), signed commits, no force pushes, no deletions. Admin enforcement, a release-tag ruleset and private vulnerability reporting are **maintainer steps not yet performed** — see [CONTRIBUTING → Maintainer pre-tag checklist](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
 | **Published to npm** | ✅ [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) — `0.1.0` published 2026-05-22 (by hand, no provenance attestation). `0.2.0` is the first release published by the workflow with `--provenance` |
 | **Smoke-tested against real Braze** | ❌ **Not yet.** The Layer 4 playbook and capture templates are staged in [`docs/smoke-tests/`](./docs/smoke-tests/) but have never been run — no claim in this repo is backed by a live Braze backend |
@@ -1839,9 +1839,7 @@ wrote".
 
 Construct a type with a set of properties K of type T
 
-<code>{
- [P in K]: T;
- }</code>
+<code>{ [P in K]: T; }</code>
 
 
 #### BrazeEventPropertyValue
@@ -1958,7 +1956,7 @@ npm run build                                          # tsc + rollup + docgen
 ### Fast loops (every PR)
 
 ```bash
-npm test                              # 205 vitest behavioral tests vs. the Fastify mock
+npm test                              # 206 vitest behavioral tests vs. the Fastify mock
 (cd test/web && npm run test:coverage) # same suite + V8 coverage, against ratcheted thresholds
 npm run lint                          # eslint (10, flat config) + prettier --check + swiftlint
 npm run fmt                           # auto-fix everything lint complains about

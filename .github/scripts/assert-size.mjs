@@ -19,9 +19,9 @@
 // Measured at 0.2.0 on 2026-09-22 (node 22, rollup output, gzip -9):
 //   dist/esm/definitions.js       327 B raw ->      251 B gz
 //   dist/esm/index.js             238 B raw ->      190 B gz
-//   dist/esm/web.js            49,644 B raw ->   13,070 B gz
-//   ESM total                  ~59 KB raw  ->   16,180 B gz  <-- the gated number
-//   dist/plugin.cjs.js         49,920 B raw ->   13,213 B gz
+//   dist/esm/web.js            64,291 B raw ->   17,031 B gz
+//   ESM total                  64,856 B raw ->   17,472 B gz  <-- the gated number
+//   dist/plugin.cjs.js         64,567 B raw ->   17,171 B gz
 //
 // So the honest headline is ~13.2 KB gzipped for the bridge, not the "<5 KB"
 // REVIEW_READINESS.md §2 used to promise. 35 methods' worth of validation
@@ -43,10 +43,10 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 /** Gated budget for the gzipped ESM tree, in bytes. See the header. */
-const ESM_GZIP_BUDGET_BYTES = 20480; // 20 KiB — the measurement below plus ~27% headroom.
+const ESM_GZIP_BUDGET_BYTES = 20480; // 20 KiB — the measurement below plus ~17% headroom.
 
 /** The measurement the budget was derived from, for the failure message. */
-const ESM_GZIP_MEASURED_BYTES = 16180;
+const ESM_GZIP_MEASURED_BYTES = 17472;
 const MEASURED_AT = '0.2.0, 2026-09-22';
 
 const ESM_DIR = 'dist/esm';

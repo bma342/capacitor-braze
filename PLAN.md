@@ -13,7 +13,7 @@
 > | This plan says | What actually shipped |
 > |---|---|
 > | "~15 public methods" for v0.1 | **35 methods + 4 listener events**, by `0.1.0` |
-> | Jest for the TS tests | **vitest**, 154 tests across 14 files |
+> | Jest for the TS tests | **vitest**, 206 tests across 18 files |
 > | A Ktor mock server (~150 LOC) | **Fastify + TypeScript**, in-process, ephemeral port |
 > | Detox or Maestro for e2e | **Neither.** No e2e runner exists; the native tiers are Robolectric (74) and XCTest (26) |
 > | `test/ts/`, `test/e2e/`, Ktor `test/mock-server/` | `test/web/` (vitest) and `test/mock-server/` (Fastify) |
@@ -512,7 +512,7 @@ the opposite of the defaults this section proposed.
 
 1. **npm name:** ~~`@bma342/capacitor-braze`~~ → **`capacitor-braze` (unscoped)**. ✅ **Shipped as decided.** Cleaner install; matches `capacitor-secure-storage-plugin` and similar community conventions. (Five other lines in this document still say the scoped name; they were never updated.)
 2. **Mock server language:** proposed Ktor. ❌ **Decided the other way: Fastify + TypeScript.** It runs in-process inside vitest on an ephemeral port, which removes the "start the server first" step entirely and lets each test bind its own instance. A JVM server would have meant a second toolchain in CI for the JS test tier. The Ktor framing survived in five documents for four months after the decision and caused real confusion — including a Dependabot entry declaring a `gradle` ecosystem for an npm project, which failed weekly from July until 0.2.0.
-3. **E2E test runner:** proposed Maestro. ❌ **Decided against both.** No e2e runner exists and none is planned. The three test tiers that shipped — 154 vitest against the mock, 74 Robolectric, 26 XCTest — cover the bridge translation layer, which is what this plugin actually owns; an e2e runner would mostly re-test Braze's SDKs and the demo app's React code. Layer 4 (manual, against a real Braze trial) is the intended top of the pyramid, and it has not been run. `REVIEW_READINESS.md` §7 records this as a deliberate deferral.
+3. **E2E test runner:** proposed Maestro. ❌ **Decided against both.** No e2e runner exists and none is planned. The three test tiers that shipped — 206 vitest against the mock, 91 Robolectric, 35 XCTest — cover the bridge translation layer, which is what this plugin actually owns; an e2e runner would mostly re-test Braze's SDKs and the demo app's React code. Layer 4 (manual, against a real Braze trial) is the intended top of the pyramid, and it has not been run. `REVIEW_READINESS.md` §7 records this as a deliberate deferral.
 4. **Min Capacitor version supported:** ✅ **v6.0**, later widened to `^6.0.0 || ^7.0.0`. Capacitor 8 is out of range and is a tracked follow-up (see `SDK_SURFACE.md`).
 5. **Min Android API / iOS version:** ⚠️ **Decided, but not as stated.** The plugin's Android default is `minSdkVersion 22` (matching Capacitor's stock template), not 26; and the iOS 15 floor is **the plugin's own choice**, not Braze's — BrazeKit declares iOS 12 at every version this plugin has pinned. See [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md).
 6. **Aromo as lighthouse on day 1:** ❌ **Not done.** The plugin shipped `0.1.0` and `0.2.0` with no production consumer, and no document claims otherwise — including the README, which deliberately does not cite Aromo. The cost is visible: without a production integration, nothing has run against a real Braze backend at all.

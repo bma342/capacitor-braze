@@ -7,7 +7,7 @@
 
 **Audited:** 2026-09-22 (`0.2.0`).
 **Web test count:** **206 tests across 18 files, ~3.5s** (`npm test`).
-**Native:** 74 Robolectric/JUnit (`android/src/test/`) + 26 XCTest (`ios/PluginTests/`), both in CI.
+**Native:** 91 Robolectric/JUnit (`android/src/test/`) + 35 XCTest (`ios/PluginTests/`), both in CI.
 **Methods on the surface:** 35, plus `addListener` (4 event overloads) and `removeAllListeners`.
 **Directly covered:** **35 of 35**, plus dedicated rejection coverage for every input-validation
 branch in `src/web.ts` ([`validation.test.ts`](../test/web/src/validation.test.ts)).
@@ -95,7 +95,7 @@ Every consumer-facing method has at least one direct behavioral test. `initializ
 | `registerPushToken` | `push.test.ts` | rejects on web with named, helpful error |
 | `echo` | `privacy-lifecycle.test.ts` | Capacitor convention round-trip, init-independent |
 | `addListener('featureFlagsUpdated', cb)` | `listeners.test.ts` | refresh fires callback with serialized DTOs |
-| `addListener('contentCardsUpdated', cb)` | `listeners.test.ts`, `lifecycle.test.ts` | same, plus the re-`initialize` config gate (both branches) |
+| `addListener('contentCardsUpdated', cb)` | `listeners.test.ts`, `lifecycle.test.ts` | same, plus re-`initialize` mid-flight / settled / workspace-switch (self-healing config) |
 | `addListener('inAppMessageReceived', cb)` | `in-app-messages.test.ts` | end-to-end trigger delivery: slideup / modal / full / control DTOs, button click actions, `enableInAppMessageUI` on and off |
 | `addListener('sdkAuthError', cb)` | `listeners.test.ts` | scripted `auth_error` response fires the listener with userId / code / reason / signature |
 | `removeAllListeners` | `listeners.test.ts`, `in-app-messages.test.ts` | subsequent refreshes and triggers do not invoke removed callbacks |
@@ -154,27 +154,26 @@ The wire format (`triggers[].trigger_condition`, `triggers[].data`, the `type` d
 gating fields) was read out of `@braze/web-sdk` 6.13.0's own source and is documented on
 `mockTrigger` in [`test-utils.ts`](../test/web/src/test-utils.ts).
 
-**`contentCardsUpdated` after a second `initialize`** — three tests in
-[`lifecycle.test.ts`](../test/web/src/lifecycle.test.ts). The behaviour reproduces, but the earlier
-diagnosis ("the SDK does not publish to a fresh subscriber") was wrong: the subscription is fine,
-and the same listener fires once the gate opens. The real cause is a race against the Web SDK's
-server-config memoization. `initialize` reads `ab.storage.serverConfig` exactly once, synchronously;
-the plugin's re-init path destroys the previous SDK instance first (it must, or the SDK would keep
-the original API key and base URL). If the first cycle's `/api/v3/data/` response has not landed by
-then, the fresh config manager memoizes empty defaults — `content_cards.enabled: false` — and the
-response lands on the destroyed manager. `requestContentCardsRefresh()` then sends no sync POST at
-all and parks on the config-change subscription; the promise still resolves. Any later data round
-trip repairs it. Feature flags are gated identically; in-app messages and `sdkAuthError` are not
-config-gated and are unaffected. The tests pin both branches — settled re-init works, mid-flight
-re-init is gated until a data round trip — and the mock's new `delayMs` makes the race deterministic
-rather than timing-dependent.
+**`contentCardsUpdated` after a second `initialize`.** The gap note's original premise ("the
+re-subscribe is dead") was wrong; the real cause was a race against the Web SDK's server-config
+memoization. The SDK reads `ab.storage.serverConfig` exactly once, synchronously, when an instance is
+built. The plugin's re-init path used to `destroy()` and rebuild unconditionally; if the first cycle's
+`/api/v3/data/` response had not landed by then, the fresh config manager memoized empty defaults
+(`content_cards.enabled: false`, `feature_flags.enabled: false`) and the late response landed on the
+destroyed manager. `requestContentCardsRefresh()` then sent no sync POST at all and parked on the
+config-change subscription while still resolving. **Fixed in 0.2.0:** `initialize` now fingerprints
+the construction-time options and keeps the instance on a same-configuration re-init (subscriptions
+are still torn down and re-wired), so the in-flight response reaches the manager that owns the parked
+refresh; a changed key / endpoint still rebuilds. `lifecycle.test.ts` pins both cases — settled re-init
+and mid-flight re-init — and a genuine workspace switch, with the mock's `delayMs` making the race
+deterministic rather than timing-dependent.
 
 ### Native coverage — what the unit tiers now cover
 
 [C11](./mdcs/C11-NATIVE-TEST-HARNESSES.md)'s unit tiers landed in `0.2.0` and run in CI. On Android,
-74 Robolectric tests cover every `@PluginMethod` validation branch byte-exact against `src/web.ts`,
+91 Robolectric tests cover every `@PluginMethod` validation branch byte-exact against `src/web.ts`,
 an init-guard sweep over all 29 guarded methods, and every serializer against real Braze model
-objects parsed from Braze's own wire JSON. On iOS, 26 XCTests cover the attribute-value classifier
+objects parsed from Braze's own wire JSON. On iOS, 35 XCTests cover the attribute-value classifier
 (including the `0`/`1`-as-boolean regression), `dataFromHex` for `registerPushToken`, the C04 error
 strings, extras stringification, and the `sdkAuthError` payload. The iOS `enableSDK` / `isDisabled`
 asymmetry this table used to list is gone — the plugin now tracks that state itself.

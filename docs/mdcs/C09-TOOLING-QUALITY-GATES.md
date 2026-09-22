@@ -198,7 +198,7 @@ publish path, and is a tracked pre-tag item to make a required check.
 | Job | Runner | What it does |
 |---|---|---|
 | `lint` | ubuntu-latest | `npm run eslint` + `npm run prettier -- --check`. **Not SwiftLint** — see below |
-| `build-plugin` | ubuntu-latest | `npm run build`, then asserts the dist artifacts (`dist/esm/index.js`, `dist/esm/index.d.ts`, `dist/plugin.cjs.js`, `dist/docs.json`) exist and the README docgen block is populated, then `node .github/scripts/assert-size.mjs` — gzipped `dist/esm/**/*.js` ≤ **20,480 B**, fails the build above it (measured **16,180 B** at `0.2.0`) |
+| `build-plugin` | ubuntu-latest | `npm run build`, then asserts the dist artifacts (`dist/esm/index.js`, `dist/esm/index.d.ts`, `dist/plugin.cjs.js`, `dist/docs.json`) exist and the README docgen block is populated, then `node .github/scripts/assert-size.mjs` — gzipped `dist/esm/**/*.js` ≤ **20,480 B**, fails the build above it (measured **17,472 B** at `0.2.0`) |
 | `pack-check` | ubuntu-latest | `npm run pack:check` → `.github/scripts/assert-pack.mjs`: asserts every consumer-required path is in the tarball and that nothing from `test/ example/ demo/ docs/ .claude/` leaked |
 | `build-example` | ubuntu-latest | Builds the `example/` testbed app against the freshly built plugin |
 | `build-demo` | ubuntu-latest | Builds the `demo/` reference app's web assets against the freshly built plugin |
