@@ -1,8 +1,8 @@
 # capacitor-braze — AI Developer Configuration
 
-**Project:** Open-source Capacitor 6/7 plugin wrapping the Braze native SDKs (Android Kotlin, iOS Swift, Web JS).
+**Project:** Open-source Capacitor 6/7/8 plugin wrapping the Braze native SDKs (Android Kotlin, iOS Swift, Web JS). iOS installs under **CocoaPods or Swift Package Manager**.
 **Owner:** Bryce Aspinwall (`bma342`), MIT-licensed, personal portfolio + Aromo lighthouse.
-**npm package:** [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) — published; `0.1.0` is on the registry, `0.2.0` is this branch.
+**npm package:** [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) — published; `0.1.0` is on the registry, `0.2.0` shipped, `0.3.0` (Capacitor 8 + SPM) is this branch.
 **Current state:** 35 methods + 5 listener events; 206 web + 91 Android + 35 iOS tests, all in CI; BrazeKit/BrazeUI 18.2.1 (Xcode 26+), `com.braze:android-sdk-ui` 43.2.0, `@braze/web-sdk` peer `^6.13.0`.
 
 **Source-of-truth docs — read these before any non-trivial work:**
@@ -47,7 +47,8 @@
 ## What this is / what this is not
 
 ### Is
-- A Capacitor plugin (Capacitor 6 or 7; **not** 8 yet).
+- A Capacitor plugin (Capacitor 6, 7 **or 8**; not 9 — the ranges are bounded on purpose, see C08).
+- Installable on iOS through **either** CocoaPods (`CapacitorBraze.podspec`) or **SPM** (root `Package.swift`). Capacitor 8's CLI generates SPM projects by default, which is why the SPM half is not optional.
 - A bridge layer: TS interface + native Kotlin + native Swift + web fallback.
 - A pinned consumer of `com.braze:android-sdk-ui`, `BrazeKit`/`BrazeUI`, and `@braze/web-sdk`.
 - An open-source, MIT-licensed package intended for npm distribution.
@@ -67,9 +68,9 @@ If you find yourself writing more than ~20 lines for a single method, you're pro
 | Layer | Tech | Version pin |
 |---|---|---|
 | **TypeScript API** | TypeScript 5.x | strict, no `any` |
-| **Capacitor** | `@capacitor/core` `^6.0.0 \|\| ^7.0.0` (podspec `>= 6.0, < 8.0`). **Capacitor 8 is out of scope** — it needs AGP 8.13 / Gradle 8.14.3 / Kotlin 2.2.20 / compileSdk 36 and generates SPM iOS projects; tracked as a follow-up | peer dep |
-| **Android bridge** | Kotlin 2.2.0, Capacitor Android, JDK 21 toolchain / JVM 17 bytecode | `com.braze:android-sdk-ui` **43.2.0** (exact pin) |
-| **iOS bridge** | Swift 5.9+, Capacitor iOS, **Xcode 26+** (BrazeKit ≥ 15 requires it) | `BrazeKit` + `BrazeUI` **18.2.1** (exact pin) |
+| **Capacitor** | `@capacitor/core` `^6.0.0 \|\| ^7.0.0 \|\| ^8.0.0` (podspec `>= 6.0, < 9.0`; `capacitor-swift-pm` `6.0.0..<9.0.0`). `demo/` + `example/` both run 8.5.2. Capacitor 6/7 stay in range but **no app in this repo compiles against them** — see C10's matrix | peer dep |
+| **Android bridge** | Kotlin 2.2.20, AGP 8.13.0, compileSdk/targetSdk 36, minSdk 24 (all Capacitor 8's stock values, all overridable via `rootProject.ext`); JDK 21 toolchain / **JVM 17 bytecode** (verified to link against Capacitor 8's Java-21 `:capacitor-android`) | `com.braze:android-sdk-ui` **43.2.0** (exact pin) |
+| **iOS bridge** | Swift 5.9+, Capacitor iOS, **Xcode 26+** (BrazeKit ≥ 15 requires it; Capacitor 8 does too). Sources at `ios/Sources/BrazePlugin/`; registration is `CAPBridgedPlugin` conformance in Swift — **there is no `.m`** | `BrazeKit` + `BrazeUI` **18.2.1** (exact pin, in *both* the podspec and `Package.swift`) |
 | **Web bridge** | TypeScript | `@braze/web-sdk` **`^6.13.0`** peer dep — a security floor, see SECURITY.md §6 |
 | **Build** | Rollup (Capacitor standard) → ESM + CJS only; the IIFE/`unpkg` bundle was removed in 0.2.0 | — |
 | **Tests** | **vitest** (web, 206 across 18 files, with a `@vitest/coverage-v8` ratchet on `src/web.ts`), **Robolectric/JUnit** (Android, 91), **XCTest** (iOS, 35), **Fastify** mock Braze server (TypeScript, in-process, ephemeral port). No Jest, no Ktor, no Maestro anywhere in this repo | — |
@@ -80,7 +81,7 @@ If you find yourself writing more than ~20 lines for a single method, you're pro
 
 ## Status
 
-Snapshot at `0.2.0`, verified 2026-09-22 (see `package.json` for the live version):
+Snapshot at `0.3.0`, verified 2026-09-22 (see `package.json` for the live version):
 
 | Milestone | Status |
 |---|---|
@@ -109,15 +110,18 @@ Snapshot at `0.2.0`, verified 2026-09-22 (see `package.json` for the live versio
 | Gitleaks CI step | ✅ |
 | CodeQL SAST (`codeql.yml`) — `javascript-typescript` + `actions`, push/PR to `main` + weekly | ✅ — ⏳ not yet a *required* check (needs one run on `main` to name it) |
 | Bundle-size gate (`.github/scripts/assert-size.mjs` in `build-plugin`) | ✅ gzipped ESM budget 20,480 B; measured 17,472 B at `0.2.0` |
-| Capacitor 7 forward-compat (`^6 \|\| ^7` peer dep) | ✅ |
 | Smoke wrappers (`npm run smoke:web/ios/android`) | ✅ scripts exist |
 | Audit cleanup — `docs/audits/2026-05` (17 phases) + `docs/audits/2026-09` (this wave) | ✅ |
 | `0.1.0` to npm | ✅ [npmjs.com/package/capacitor-braze](https://www.npmjs.com/package/capacitor-braze) — published **by hand**, no provenance attestation |
 | `0.2.0` to npm | ⏳ will be the first workflow-published release |
+| `0.3.0` to npm | ⏳ this branch |
 | C11 native test harnesses — integration tier (URLProtocol / MockWebServer intercept) | ⏳ design-only, lives in the C11 MDC |
 | **Layer 4 real-Braze smoke** | ⏳ **never run.** Templates only in `docs/smoke-tests/`; no release is validated against a live Braze backend |
 | Private vulnerability reporting, `enforce_admins`, `v*` tag ruleset, npm Trusted Publishing | ⏳ maintainer actions — commands in `CONTRIBUTING.md` |
-| Capacitor 8 support, SPM, CodeQL for Swift/Kotlin, native coverage instrumentation | ⏳ tracked follow-ups, not started |
+| Capacitor 8 support (peer `^8`, podspec `< 9.0`, demo + example on 8.5.2) | ✅ 0.3.0 |
+| Swift Package Manager (root `Package.swift`, `CAPBridgedPlugin` registration, `example/ios` SPM build in CI) | ✅ 0.3.0 |
+| Capacitor 6/7 still in range but **no longer exercised by CI** (both apps moved to 8) | ⚠️ known limitation, recorded in C10 |
+| CodeQL for Swift/Kotlin, native coverage instrumentation | ⏳ tracked follow-ups, not started |
 
 **This table drifts.** When in doubt, source-of-truth checks:
 - Versions, scripts, dependencies → `package.json`
@@ -149,17 +153,17 @@ capacitor-braze/
 │   ├── definitions.ts                                     # TS interface — SOURCE OF TRUTH
 │   ├── index.ts                                           # registerPlugin('Braze', ...)
 │   └── web.ts                                             # WebPlugin impl (@braze/web-sdk wrapper)
-├── ios/Plugin/
-│   ├── BrazePlugin.swift                                  # CAPPlugin bridge → BrazeKit 18.2.1
+├── Package.swift                                          # SPM manifest (capacitor-swift-pm + braze-swift-sdk)
+├── ios/Sources/BrazePlugin/
+│   ├── BrazePlugin.swift                                  # CAPPlugin + CAPBridgedPlugin bridge → BrazeKit 18.2.1
 │   ├── BrazeIAMDelegate.swift                             # in-app message presenters (rendering + observing)
-│   ├── BrazePlugin.m                                      # CAP_PLUGIN_METHOD obj-c registrations
-│   └── PrivacyInfo.xcprivacy                              # App Store privacy manifest
+│   └── PrivacyInfo.xcprivacy                              # App Store privacy manifest (Pods + SPM resource)
 ├── android/
 │   ├── build.gradle                                       # com.braze:android-sdk-ui:43.2.0
 │   ├── consumer-rules.pro                                 # R8/ProGuard rules consumer apps inherit
 │   └── src/main/java/com/bma342/braze/BrazePlugin.kt      # @CapacitorPlugin bridge
 │   └── src/test/java/com/bma342/braze/                    # 91 Robolectric/JUnit tests
-├── ios/PluginTests/                                       # 35 XCTests (target generated by scripts/)
+├── ios/Tests/BrazePluginTests/                            # 35 XCTests (target generated by scripts/)
 ├── scripts/
 │   ├── ios-add-test-target.rb                             # generates the demo's CapacitorBrazeTests target
 │   └── smoke-{web,ios,android}.sh                         # Layer 4 wrappers (never yet run for real)
@@ -182,7 +186,7 @@ capacitor-braze/
 `CONTRIBUTING.md` and `.github/PULL_REQUEST_TEMPLATE.md` reference C01 rather than restating it —
 four divergent copies of this list is exactly what the 2026-09 audit found (A6-22), so do not add a
 fifth here. The short version: four bridge files (`src/definitions.ts`, `src/web.ts`,
-`ios/Plugin/BrazePlugin.swift` + `ios/Plugin/BrazePlugin.m`,
+`ios/Sources/BrazePlugin/BrazePlugin.swift` (bridge **and** its `pluginMethods` entry),
 `android/src/main/java/com/bma342/braze/BrazePlugin.kt`), the tests, the example app, and the
 CHANGELOG.
 
@@ -312,6 +316,7 @@ not run it as a service container.
 Pinned versions live in:
 - `android/build.gradle` — `com.braze:android-sdk-ui:43.2.0` (exact pin, not range)
 - `CapacitorBraze.podspec` — `s.dependency 'BrazeKit', '18.2.1'` + `s.dependency 'BrazeUI', '18.2.1'` (exact)
+- `Package.swift` — `.package(url: ".../braze-swift-sdk.git", exact: "18.2.1")`. **Same pin, second manifest** — move it with the podspec or CocoaPods and SPM consumers get different Braze versions of one release
 - `package.json` peer dep — `"@braze/web-sdk": "^6.13.0"` (range, web peer dep only per [`C08`](./docs/mdcs/C08-NATIVE-SDK-PINNING.md)). The `6.13.0` floor is a **security** floor — see SECURITY.md §6.
 
 **When bumping native SDK versions:**
@@ -341,17 +346,17 @@ roadmap), walk them in this order:
 
 1. **`src/definitions.ts`** — declare the method signature on the `BrazePlugin` interface. Include JSDoc with at least one `@example` block ([`C01`](./docs/mdcs/C01-METHOD-ANATOMY.md)). Define any new option / result interfaces in the same file. If the method returns a Braze model, define the DTO with a `type` discriminator per [`C02`](./docs/mdcs/C02-DTO-SHAPES.md).
 2. **`src/web.ts`** — implement on `BrazeWeb`. Validate input at the top with `throw new Error('Braze.<method>: \`<field>\` is required (<type>).')` matching the format in [`C01`](./docs/mdcs/C01-METHOD-ANATOMY.md). Gate non-init-independent methods through `this.requireInitialized()` or `this.requireUser()`.
-3. **`ios/Plugin/BrazePlugin.swift`** — `@objc func <method>(_ call: CAPPluginCall)`. Validate with `call.reject(...)` using the byte-identical error string. Gate through `Self.requireInitialized(call)` (or the C07 quartet bypass).
-4. **`ios/Plugin/BrazePlugin.m`** — add the `CAP_PLUGIN_METHOD(<method>, CAPPluginReturnPromise);` registration. Missing this line means the Capacitor bridge can't see the Swift method.
+3. **`ios/Sources/BrazePlugin/BrazePlugin.swift`** — `@objc func <method>(_ call: CAPPluginCall)`. Validate with `call.reject(...)` using the byte-identical error string. Gate through `Self.requireInitialized(call)` (or the C07 quartet bypass).
+4. **The same file's `pluginMethods` array** — add `CAPPluginMethod(name: "<method>", returnType: CAPPluginReturnPromise)`. This is the `CAPBridgedPlugin` conformance that replaced `BrazePlugin.m` in 0.3.0 (an SPM target cannot mix Swift and Obj-C). Missing this entry means the Capacitor bridge can't see the Swift method.
 5. **`android/src/main/java/com/bma342/braze/BrazePlugin.kt`** — `@PluginMethod fun <method>(call: PluginCall)`. Validate with `call.reject(...)`. Gate through `requireInitialized(call)` / `requireUser(call)`.
 6. **`test/web/src/<area>.test.ts`** — vitest behavioral test. Drive the method through `BrazeWeb` against the Fastify mock. Assert the **wire output** (the outbound request body), not just that it resolved — a test that only asserts "does not throw" survives the implementation being replaced by `return;`, and the 2026-09 audit found eleven of those.
 7. **`android/src/test/java/com/bma342/braze/BrazePluginContractTest.kt`** — assert every validation branch byte-exact against `src/web.ts`. `TestSupport.kt`'s `fakePluginCall` replicates `PluginCall`'s strict accessor semantics, and `initializedPlugin()` gives you a Robolectric-backed initialized plugin so post-init paths are reachable.
-8. **`ios/PluginTests/BrazePluginContractTests.swift`** — the same, in XCTest. Then re-run `ruby scripts/ios-add-test-target.rb` and commit the resulting `project.pbxproj`; CI fails if the generated project is out of date with the directory contents.
+8. **`ios/Tests/BrazePluginTests/BrazePluginContractTests.swift`** — the same, in XCTest. Then re-run `ruby scripts/ios-add-test-target.rb` and commit the resulting `project.pbxproj`; CI fails if the generated project is out of date with the directory contents.
 9. **`example/index.html` + `example/src/main.ts`** — add a button that calls the method and logs the result, so the developer testbed exercises the full surface.
 10. **`CHANGELOG.md`** — under `Unreleased`, a one-line entry describing the addition. If the method is new to the roadmap, also update [`SDK_SURFACE.md`](./SDK_SURFACE.md) §1/§2.
 
 If you skip one of these, here is what actually happens:
-- Missing the `BrazePlugin.m` macro → the Swift method is invisible to the Capacitor bridge and the call rejects at runtime with "not implemented". **`verify-ios` will not catch this** — it compiles and runs XCTests, it does not exercise the JS bridge. Add the macro.
+- Missing the `pluginMethods` entry → the Swift method is invisible to the Capacitor bridge and the call rejects at runtime with "not implemented". **`verify-ios` will not catch this** — it compiles and runs XCTests, it does not exercise the JS bridge. Add the entry.
 - Missing a native bridge → the web tests still pass (web is independent), but iOS / Android consumers hit "method not implemented" at runtime. Nothing in CI catches an entirely absent native implementation; the lockstep is the control.
 - Missing the docgen `@example` → `npm run build` regenerates `README.md`, and the diff shows up in review. The `build-plugin` job asserts the `<docgen-api>` block is populated, not that every method has an example.
 - Missing tests → nothing fails. This is why tests are *in* the lockstep and on the PR checklist.
@@ -377,7 +382,7 @@ Short, sharp, codebase-specific patterns that pay off repeatedly:
 4. **Content card type discrimination is `instanceof` (web) / enum-case (iOS) / class-based `when` (Android).** Field-presence heuristics fail on sparse cards. See `serializeContentCard` in each bridge.
 5. **Feature flag properties are a tagged union** `{ type, value }` per [`C02`](./docs/mdcs/C02-DTO-SHAPES.md). Order accessors so image-before-string and timestamp-before-number; BrazeKit's typed accessors return nil if the property isn't of the requested type.
 6. **The init guard is non-negotiable except for the C07 quartet** (`wipeData`, `disableSDK`, `enableSDK`, `isDisabled`). The old iOS asymmetry (`enableSDK` needed init; `isDisabled` reported `false` after a pre-init `disableSDK`) is **gone** as of 0.2.0: the plugin keeps the consent decision in its own state and applies it when `initialize` creates the `Braze` instance, so all three platforms behave identically and this cannot regress on a pin bump. The one genuine platform difference left is iOS's pre-init `wipeData`, which disables the SDK for the rest of the app run.
-7. **`MARK:` / `// MARK:` comments and `@objc` decorations matter.** Removing them confuses Xcode navigation; removing `@objc` from a method breaks the Obj-C registration in `BrazePlugin.m`.
+7. **`MARK:` / `// MARK:` comments and `@objc` decorations matter.** Removing them confuses Xcode navigation; removing `@objc` from a method breaks its `CAPPluginMethod` registration (the bridge resolves the selector by name), and removing `@objc(BrazePlugin)` from the class breaks the CLI's `packageClassList` discovery entirely.
 
 ### Where to find what
 
@@ -411,7 +416,7 @@ Short, sharp, codebase-specific patterns that pay off repeatedly:
 - **`npm test` needs two extra installs on a fresh clone.** There are no npm workspaces, so root
   `npm install` does not populate `test/web/node_modules` or `test/mock-server/node_modules`.
 - **`~40 -strict-concurrency=complete warnings on iOS are expected.`** `CAPPlugin` and
-  `CAPPluginCall` are non-`Sendable` in Capacitor 6/7, so any correct main-actor hop trips the
+  `CAPPluginCall` are non-`Sendable` in Capacitor 6/7/8, so any correct main-actor hop trips the
   checker. Swift 5 mode — what the podspec builds with — is clean.
 
 ### Verifying native changes without a local Xcode / Android Studio

@@ -8,13 +8,21 @@ The CI pipeline catches build-time breakage. Layer 4 smoke testing catches runti
 
 ## Rule
 
-Native SDK pins live in three files and follow three different conventions imposed by their package managers:
+Native SDK pins live in **four** files as of 0.3.0 — iOS is pinned twice, once per install path —
+and follow different conventions imposed by their package managers:
 
 | Platform | File | Form | Current pin |
 |---|---|---|---|
-| iOS | [`CapacitorBraze.podspec`](../../CapacitorBraze.podspec) | `s.dependency 'BrazeKit', '18.2.1'` + `s.dependency 'BrazeUI', '18.2.1'` (exact) | **18.2.1** |
+| iOS (CocoaPods) | [`CapacitorBraze.podspec`](../../CapacitorBraze.podspec) | `s.dependency 'BrazeKit', '18.2.1'` + `s.dependency 'BrazeUI', '18.2.1'` (exact) | **18.2.1** |
+| iOS (SPM) | [`Package.swift`](../../Package.swift) | `.package(url: ".../braze-swift-sdk.git", exact: "18.2.1")` | **18.2.1** |
 | Android | [`android/build.gradle`](../../android/build.gradle) | `implementation 'com.braze:android-sdk-ui:43.2.0'` (exact) | **43.2.0** |
 | Web | [`package.json`](../../package.json) | `peerDependencies: { "@braze/web-sdk": "^6.13.0" }` (caret range) | **^6.13.0** |
+
+**The two iOS pins must move together, in the same commit.** They describe the same plugin build
+under two package managers, and a consumer chooses only one, so a drift between them would ship a
+CocoaPods consumer and an SPM consumer different Braze versions of the "same" plugin release with
+nothing failing. Neither CI nor CocoaPods nor SwiftPM cross-checks them; the bump protocol below is
+the only control.
 
 iOS and Android are exact pins. Web is a caret range because the package is a peer dependency the
 consumer installs themselves — the plugin can't force a precise version on the consumer's npm tree
@@ -41,11 +49,56 @@ The web peer-dep range is the deliberate counterpoint. Web SDKs ship in the cons
 
 ---
 
+## Capacitor is pinned differently on purpose
+
+Braze is a **dependency** the plugin chooses. Capacitor is the **host** the consumer chooses. That
+asymmetry is why Capacitor is the one thing in this repo deliberately expressed as a range:
+
+| File | Form | Current |
+|---|---|---|
+| [`package.json`](../../package.json) peer dep | `"@capacitor/core": "^6.0.0 \|\| ^7.0.0 \|\| ^8.0.0"` | 6, 7, 8 |
+| [`CapacitorBraze.podspec`](../../CapacitorBraze.podspec) | `s.dependency 'Capacitor', '>= 6.0', '< 9.0'` | 6, 7, 8 |
+| [`Package.swift`](../../Package.swift) | `.package(url: ".../capacitor-swift-pm.git", "6.0.0"..<"9.0.0")` | 6, 7, 8 |
+| `demo/` + `example/` `@capacitor/*` | caret, current major | 8.5.2 |
+
+### The rules
+
+1. **All three ranges say the same thing, always.** A consumer who hits a peer-dep warning that
+   `pod install` then contradicts (or vice versa) has no way to tell which is authoritative. The
+   2026-09 audit (A7 §5) found exactly this class of drift — `example/package.json` carrying
+   `@capacitor/cli: ^8.3.4` against `@capacitor/core: ^6.0.0` — and a reviewer grepping
+   `package.json` files finds it in seconds.
+2. **The upper bound is exclusive and explicit, never open.** `< 9.0` / `..<"9.0.0"` means the next
+   Capacitor major cannot silently absorb consumers' installs before anyone has built against it.
+   `from: "6.0.0"` in `Package.swift` would do exactly that, which is why it is a bounded range.
+3. **Widening is a deliberate, verified act.** The trigger is a new Capacitor major reaching
+   `latest` on npm, not a Dependabot PR. What it takes:
+   - bump `@capacitor/*` in `demo/` and `example/`, run `npx cap sync` in both;
+   - read the Capacitor upgrade guide for the new AGP / Gradle / Kotlin / compileSdk / JDK / Xcode
+     floors and re-derive the [C10](./C10-CONSUMER-INTEGRATION-REQUIREMENTS.md) matrix;
+   - confirm `CAPBridgedPlugin` and the CLI's `findPluginClasses` are unchanged in the new
+     `@capacitor/ios` and `@capacitor/cli` (that is what keeps one registration mechanism working
+     across every supported major — see C10);
+   - widen all three ranges in one commit;
+   - land it only with `verify-ios` (CocoaPods **and** SPM) and `verify-android` green.
+4. **Dropping an old major is a breaking change** — pre-1.0 a minor with a `BREAKING:` line, post-1.0
+   a major. Note the honest caveat C10 records: the repo's two apps both sit on the *newest*
+   supported major, so Capacitor 6 and 7 are allowed but not exercised by CI.
+
+### Why not just pin Capacitor exactly, like Braze?
+
+Because the consumer, not the plugin, owns that version. An exact Capacitor pin would make the
+plugin uninstallable alongside any other Capacitor plugin on a different patch, and every Capacitor
+patch release would need a plugin republish. The same reasoning is why `@braze/web-sdk` is a caret
+range — it lives in the consumer's npm tree too.
+
+---
+
 ## Where the pins are documented
 
 Each pin is documented in three places, with a comment pointing at this MDC:
 
-1. **The manifest file** (`.podspec`, `build.gradle`, `package.json` peerDependencies). One-line comment cross-references [`SDK_SURFACE.md §4`](../../SDK_SURFACE.md) — the user-facing pinning policy.
+1. **The manifest files** (`.podspec`, `Package.swift`, `build.gradle`, `package.json` peerDependencies). One-line comment cross-references [`SDK_SURFACE.md §4`](../../SDK_SURFACE.md) — the user-facing pinning policy.
 2. **`CHANGELOG.md`'s `[Unreleased]` section** lists the active pins under "Pinned native SDK versions". Every release inherits this block.
 3. **`docs/mdcs/README.md`** lists C08 in its index, so a contributor finds the policy from the MDC set.
 
@@ -62,8 +115,8 @@ current ones:
 
 | Pin | Floor it imposes | On whom |
 |---|---|---|
-| BrazeKit / BrazeUI 18.2.1 | **Xcode 26+** (BrazeKit 15.0.0 raised it). Also: an Xcode 26 whose iOS simulator runtime is older than its iOS SDK reports *no* simulator destinations — `xcodebuild -downloadPlatform iOS` | every iOS consumer and CI |
-| `com.braze:android-sdk-ui` 43.2.0 | **None from Braze itself** — the AAR metadata declares `minCompileSdk=21`, `minAndroidGradlePluginVersion=1.0.0`. The AGP 8.6.0 / Gradle 8.7 / compileSdk 35 / Kotlin 2.2.0 floor comes from Braze's transitive androidx deps | every Android consumer, via [C10](./C10-CONSUMER-INTEGRATION-REQUIREMENTS.md) |
+| BrazeKit / BrazeUI 18.2.1 | **Xcode 26+** (BrazeKit 15.0.0 raised it). Also: an Xcode 26 whose iOS simulator runtime is older than its iOS SDK reports *no* simulator destinations — `xcodebuild -downloadPlatform iOS`. Capacitor 8 wants Xcode 26 too, so the floors coincide | every iOS consumer and CI |
+| `com.braze:android-sdk-ui` 43.2.0 | **None from Braze itself** — the AAR metadata declares `minCompileSdk=21`, `minAndroidGradlePluginVersion=1.0.0`. The AGP 8.6.0 / Gradle 8.7 / compileSdk 35 / Kotlin 2.2.0 floor comes from Braze's transitive androidx deps, and **Capacitor 8's own floor (AGP 8.13 / Gradle 8.14.3 / compileSdk 36 / JDK 21) is higher still**, so a Capacitor 8 consumer has nothing to configure | every Android consumer, via [C10](./C10-CONSUMER-INTEGRATION-REQUIREMENTS.md) |
 | `@braze/web-sdk` ^6.13.0 | peer-dep resolution failure below 6.13.0 | every web consumer |
 
 **Every bump must re-derive this table**, because a floor that appears without being noticed is how
@@ -82,10 +135,10 @@ When Braze ships a new SDK that the plugin should adopt:
 
 1. **Read the upstream changelog.** Look for behavior changes inside the version bump. BrazeKit and the Android SDK have published changelogs — read them top to bottom, not just the breaking-change section. Behavior changes that aren't called out as breaking are exactly the class of thing the exact pin protects consumers from.
 2. **Branch from `main`.** Don't bump on `main` directly.
-3. **Update the pin in the relevant manifest.** One platform per branch is fine; coordinating all three is also fine, but don't bundle a major Android bump with a minor iOS bump unless they ship together upstream.
+3. **Update the pin in the relevant manifest(s).** One platform per branch is fine; coordinating all three is also fine, but don't bundle a major Android bump with a minor iOS bump unless they ship together upstream. **iOS is two manifests** — `CapacitorBraze.podspec` *and* `Package.swift` — and they move in the same commit.
 4. **Update [`SDK_SURFACE.md §1`](../../SDK_SURFACE.md)** capability table if the bump adds new SDK surface. If it just changes behavior, no SDK_SURFACE change.
 5. **Update CHANGELOG.md** under `[Unreleased]` → `Changed`. Note the upstream version, what changed in the upstream changelog that's relevant, and any consumer migration steps.
-6. **Run the full CI matrix locally.** `npm run build` from repo root + `npm run build` in `example/`. CI runs both on push.
+6. **Run the full CI matrix locally.** `npm run build` from repo root + `npm run build` in `example/`. For an iOS pin, build **both** install paths: `demo/ios` through `pod install` + `xcodebuild test`, and `example/ios` through SPM. CI runs all of it on push.
 7. **Run Layer 4 smoke against a real Braze trial account.** This is the only step that catches a behavior change the upstream changelog didn't surface. See [`docs/SMOKE-TEST-PLAYBOOK.md`](../SMOKE-TEST-PLAYBOOK.md).
 
    **This step has never been performed.** The 0.2.0 bump (14.1.0 → 18.2.1, 42.2.0 → 43.2.0) shipped
@@ -152,7 +205,9 @@ If you maintain the plugin, you are responsible for watching the [BrazeKit](http
 
 ## Forbidden
 
-- **Range pins on native SDKs.** `s.dependency 'BrazeKit', '~> 18.0'` looks innocent but routinely lets behavior changes through. Use exact pins.
+- **Range pins on native SDKs.** `s.dependency 'BrazeKit', '~> 18.0'` looks innocent but routinely lets behavior changes through. Use exact pins. This includes SPM: `Package.swift` uses `exact: "18.2.1"`, never `from:`. (Capacitor is the deliberate exception — see "Capacitor is pinned differently on purpose" above.)
+- **Bumping the podspec's Braze pin without `Package.swift`, or the reverse.** They are the same pin expressed twice; drift ships CocoaPods and SPM consumers different SDK versions of one plugin release, and nothing in CI compares them.
+- **An open-ended Capacitor bound** (`from: "6.0.0"`, or dropping the podspec's `< 9.0`). It hands the next Capacitor major to consumers before anyone has built against it.
 - **Updating one pin without the others when the upstream change is cross-platform.** If Braze ships a CHANGELOG entry that affects both iOS and Android (e.g. consent-API parity), bump both in the same PR. Tracker drift here is the worst kind.
 - **Bumping a pin without running Layer 4 smoke, *and without saying so*.** CI green isn't enough; behaviour changes only surface against real Braze. If you ship the bump anyway, the omission goes in the PR description and the release notes.
 - **Bumping a pin without re-deriving the toolchain-floor table above.** A new Xcode, AGP, compileSdk or JDK floor that reaches a consumer unannounced is worse than the bump being late.

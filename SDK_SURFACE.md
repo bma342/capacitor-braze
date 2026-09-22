@@ -136,6 +136,14 @@ Sessions:
 Handled automatically on Android as of 0.2.0 (`BrazeActivityLifecycleCallbackListener` registered
 once per process during `initialize`). No explicit session methods are exposed on any platform.
 
+Host support (0.3.0):
+Capacitor **6, 7 or 8** (`@capacitor/core` peer `^6.0.0 || ^7.0.0 || ^8.0.0`, podspec
+`>= 6.0, < 9.0`), and on iOS **either CocoaPods or Swift Package Manager** — the root
+`Package.swift` pins `capacitor-swift-pm` `6.0.0..<9.0.0` and `braze-swift-sdk` `exact: "18.2.1"`.
+Shipped in 0.3.0; both items were on this roadmap through 0.2.0. Bounds and the widening protocol
+are [C08](./docs/mdcs/C08-NATIVE-SDK-PINNING.md); the consumer-facing matrix is
+[C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md#the-support-matrix-030).
+
 ### Roadmap — not shipped
 
 Nothing below exists in `src/definitions.ts` today. Grepping for any of these names returns nothing;
@@ -145,8 +153,6 @@ several were described in the present tense in earlier revisions of this documen
 
 | Item | Why it matters | Notes |
 |---|---|---|
-| **Capacitor 8 support** | Capacitor 8 is current (8.5.x); the peer dep is `^6 \|\| ^7` and the podspec `< 8.0`, so `npm install` conflicts on a current project | Needs AGP 8.13.0, Gradle 8.14.3, Kotlin 2.2.20, compileSdk 36. Xcode 26 and iOS 15 are already satisfied |
-| **SPM support** | Capacitor 8's CLI generates SPM iOS projects by default; a CocoaPods-only plugin does not install into one | Needs `Package.swift` + `CAPBridgedPlugin` conformance. Braze ships a `Package.swift`, so the pieces exist. Track separately from Capacitor 8 |
 | `requestPushPermission` | Currently consumers use `@capacitor/push-notifications` for the prompt | See [C07](./docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md)'s worked counter-example — it would keep the init guard |
 | Android `initialize` options for push presentation | `notificationChannelName`, `notificationChannelDescription`, `smallNotificationIcon`, `fallbackFirebaseMessagingServiceClasspath` — all four setters exist on `BrazeConfig.Builder`; today consumers use `braze.xml` (see C10) | Contract change |
 | `setInAppMessageDisplayChoice` or similar | `enableInAppMessageUI: false` is all-or-nothing; there is no per-message veto, and Capacitor listeners cannot provide one | Would need a synchronous native hook, not a listener |
