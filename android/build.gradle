@@ -1,8 +1,6 @@
 ext {
     junitVersion = project.hasProperty('junitVersion') ? rootProject.ext.junitVersion : '4.13.2'
     androidxAppCompatVersion = project.hasProperty('androidxAppCompatVersion') ? rootProject.ext.androidxAppCompatVersion : '1.7.0'
-    androidxJunitVersion = project.hasProperty('androidxJunitVersion') ? rootProject.ext.androidxJunitVersion : '1.2.1'
-    androidxEspressoCoreVersion = project.hasProperty('androidxEspressoCoreVersion') ? rootProject.ext.androidxEspressoCoreVersion : '3.6.1'
 }
 
 buildscript {
@@ -12,12 +10,18 @@ buildscript {
     }
     dependencies {
         // AGP + Kotlin bumped from Capacitor's stock 8.2.2 / 1.9.22 to
-        // match what Braze Android SDK 42.x (com.braze:android-sdk-ui)
-        // demands. Braze 42 ships with Kotlin 2.2.0 metadata; Kotlin
+        // match what the Braze Android SDK (com.braze:android-sdk-ui)
+        // demands. Braze 43.x ships with Kotlin 2.2.0 metadata; Kotlin
         // 1.9.x can only read up to 2.0.0 and aborts the compile with
         // "incompatible version of Kotlin" errors. AGP 8.6.0 is the
         // lowest version compatible with Braze's transitive
-        // androidx.swiperefreshlayout:1.2.0 dep. See plugin MDC C10.
+        // androidx.swiperefreshlayout:1.2.0 dep.
+        //
+        // The 43.2.0 AARs declare minAndroidGradlePluginVersion=1.0.0 and
+        // minCompileSdk=21 in their aar-metadata.properties, so the SDK
+        // itself imposes no AGP or compileSdk floor beyond that — the
+        // 8.6.0 / compileSdk 35 floor comes entirely from the transitive
+        // androidx deps. See plugin MDC C10.
         classpath 'com.android.tools.build:gradle:8.6.0'
         classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0'
     }
@@ -30,7 +34,9 @@ android {
     namespace "com.bma342.braze"
     compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 35
     defaultConfig {
-        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 26
+        // Standalone default matches Capacitor 6's stock template and the
+        // value C10 documents; a consumer's rootProject.ext always wins.
+        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 22
         targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 35
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles 'consumer-rules.pro'
@@ -38,18 +44,18 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
-    lintOptions {
-        abortOnError false
+    lint {
+        // C09: Android Lint is the Kotlin half of the quality gate, and a
+        // gate that can't fail the build isn't one. Warnings stay
+        // advisory; errors stop CI.
+        abortOnError true
+        warningsAsErrors false
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = '17'
     }
     testOptions {
         // Phase 15 / C11: enable Robolectric for the JVM unit-test tier.
@@ -61,17 +67,27 @@ android {
     }
 }
 
+// Kotlin 2.x replacement for the deprecated android.kotlinOptions block.
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}
+
 repositories {
     google()
     mavenCentral()
 }
 
 dependencies {
-    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    // Required on the compile classpath, not merely transitive:
+    // Capacitor's Bridge.getActivity() is typed AppCompatActivity, and
+    // :capacitor-android declares appcompat with `implementation`, so it
+    // is not exported to consumers of that project.
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation project(':capacitor-android')
-    // Braze native SDK pins — see SDK_SURFACE.md §4 (pinning policy).
-    implementation 'com.braze:android-sdk-ui:42.2.0'
+    // Braze native SDK pins — see SDK_SURFACE.md §4 (pinning policy) and C08.
+    implementation 'com.braze:android-sdk-ui:43.2.0'
     testImplementation "junit:junit:$junitVersion"
     // Phase 15 / C11 native-harness deps. Robolectric runs the JVM
     // test tier against a synthesized Android context so the plugin's
@@ -81,6 +97,4 @@ dependencies {
     testImplementation 'org.mockito:mockito-core:5.14.2'
     testImplementation 'org.mockito.kotlin:mockito-kotlin:5.4.0'
     testImplementation 'com.google.truth:truth:1.4.4'
-    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
-    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
 }
