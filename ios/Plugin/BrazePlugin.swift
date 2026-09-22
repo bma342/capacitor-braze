@@ -2,10 +2,12 @@ import BrazeKit
 import BrazeUI
 import Capacitor
 import Foundation
+import os
+import UserNotifications
 
-/// Capacitor bridge for the Braze iOS SDK (BrazeKit 14.1.0).
+/// Capacitor bridge for the Braze iOS SDK (BrazeKit / BrazeUI 18.2.1).
 ///
-/// ## Surface in 0.0.12
+/// ## Surface
 ///
 /// - **Bridge sanity:** `echo(value)`
 /// - **Configuration:** `initialize(apiKey, endpoint, ...)`
@@ -17,7 +19,7 @@ import Foundation
 /// - **User attributes (demographics):** `setDateOfBirth(year, month, day)`,
 ///   `setGender(gender)`, `setHomeCity(homeCity?)`
 /// - **User attributes (custom):** `setCustomUserAttribute(key, value)` —
-///   dispatches on inferred value type
+///   dispatches on the real JSON type of `value`
 /// - **Subscription groups:** `addToSubscriptionGroup(groupId)`,
 ///   `removeFromSubscriptionGroup(groupId)`
 /// - **Events:** `logCustomEvent(name, properties?)`,
@@ -27,76 +29,128 @@ import Foundation
 /// - **Content cards:** `getContentCards`, `requestContentCardsRefresh`,
 ///   `logContentCardClick(cardId)`, `logContentCardImpression(cardId)`
 /// - **Push:** `registerPushToken(token)`
-/// - **Listeners:** `addListener('featureFlagsUpdated', ...)`,
-///   `addListener('contentCardsUpdated', ...)`
+/// - **Listeners:** `featureFlagsUpdated`, `contentCardsUpdated`,
+///   `inAppMessageReceived`, `sdkAuthError`
 /// - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
 ///   `requestImmediateDataFlush`
+///
+/// ## Threading
+///
+/// Capacitor does **not** invoke plugin methods on the main thread:
+/// `CapacitorBridge` owns a serial `DispatchQueue(label: "bridge")` and
+/// `perform(selector:)`s every call on it. BrazeUI's presenter, BrazeKit's
+/// `subscribeToUpdates` callbacks and the delegate protocols are all
+/// `@MainActor`, so every piece of plugin state below is `@MainActor`-isolated
+/// and every `@objc` entry point hops onto the main queue exactly once before
+/// touching it. That gives the plugin a single isolation domain: `initialize`
+/// and `wipeData` are then strictly ordered relative to each other, and the
+/// presenter/delegate wiring can no longer land on an instance a later
+/// `wipeData` already disowned.
 ///
 /// ## Design notes
 ///
 /// The configured `Braze` instance is retained as a `static` property
 /// (`BrazePlugin.braze`) following Braze's own `AppDelegate.braze` convention
-/// from their docs. The static accessor lets future push delegate hooks and
-/// other plugin extensions reach the instance without re-initialization.
+/// from their docs. The static accessor lets push delegate hooks and other
+/// plugin extensions reach the instance without re-initialization.
 ///
 /// Privacy methods (`wipeData`, `disableSDK`, `enableSDK`, `isDisabled`) are
-/// **init-independent** — they call class-level static methods on `Braze` and
-/// work even before `initialize` has been called. This matches the semantics
-/// of GDPR/CCPA consent flows where the SDK may need to be disabled before any
-/// user data is sent.
+/// **init-independent** (C07): they work before `initialize` has been called,
+/// which is what GDPR/CCPA consent flows need. `disableSDK` / `enableSDK` /
+/// `isDisabled` do that by recording the consumer's intent in
+/// `disabledPreInit` and applying it to the instance the moment one exists.
 ///
 /// User attribute setters operate on `braze.user`, which is always non-nil
 /// post-init (the SDK creates an anonymous user profile by default until
 /// `changeUser` is called).
 ///
-/// PII handling per SECURITY.md §3: this bridge never logs attribute values.
+/// PII handling per SECURITY.md §3: this bridge never logs attribute values,
+/// user identifiers or endpoints.
 ///
 /// See PLAN.md, SDK_SURFACE.md, and SECURITY.md for design context.
 @objc(BrazePlugin)
 public class BrazePlugin: CAPPlugin {
 
+    // MARK: - Plugin state (main-actor isolated)
+
     /// Retained Braze instance after successful `initialize`. Static so push
-    /// delegate hooks (added in later versions) can reach it without plugin lookup.
-    /// Nil before `initialize` is called or after `wipeData`.
-    public private(set) static var braze: Braze?
-
-    /// Retained handle for the persistent feature-flag update subscription
-    /// created at `initialize` time. Held to keep the subscription alive
-    /// (BrazeKit cancels when the handle is released) and released during
-    /// `wipeData` so the post-wipe re-init starts from a clean slate.
-    private var featureFlagsSubscription: Braze.Cancellable?
-
-    /// Mirror of `featureFlagsSubscription` for the content-cards update
-    /// stream. Same lifetime: created in `initialize`, released in
-    /// `wipeData`.
-    private var contentCardsSubscription: Braze.Cancellable?
-
-    /// Retained reference to the in-app message UI presenter so we can
-    /// keep its delegate (`iamDelegate`) alive — BrazeUI holds the
-    /// delegate weakly, and the only other strong reference to the
-    /// presenter is on `BrazeKit.Braze`, which itself is unowned.
-    /// Released in `wipeData` alongside the other init artifacts.
-    private var inAppMessagePresenter: BrazeInAppMessageUI?
-
-    /// Bridges `BrazeInAppMessageUIDelegate.displayChoiceForMessage` to
-    /// the plugin's `inAppMessageReceived` listener. Retained at the
-    /// plugin level because BrazeUI's `delegate` property is `weak`.
-    private var iamDelegate: BrazeIAMDelegate?
-
-    /// Bridges `BrazeDelegate.sdkAuthenticationFailedWithError` to the
-    /// plugin's `sdkAuthError` listener event. Retained at the plugin
-    /// level because Braze's `delegate` property is `weak`.
-    private var brazeDelegate: BrazeKitDelegate?
+    /// delegate hooks can reach it without plugin lookup. Nil before
+    /// `initialize` is called or after `wipeData`.
+    @MainActor public private(set) static var braze: Braze?
 
     /// Whether `initialize` was called with `enableSdkAuthentication: true`.
     /// When true, `changeUser` rejects calls that don't carry an
     /// `sdkAuthSignature` (see `SECURITY.md` §2). Persisted as plugin
     /// state because the underlying BrazeKit `Configuration` is not
     /// readable post-init.
-    private static var sdkAuthenticationEnabled: Bool = false
+    @MainActor private static var sdkAuthenticationEnabled: Bool = false
+
+    /// The consumer's last explicit `disableSDK()` / `enableSDK()` intent.
+    ///
+    /// BrazeKit 18.x exposes SDK enablement only as `braze.enabled` on a
+    /// configured instance — the class-level `Braze.disableSDK()` is a
+    /// deprecated AppboyKit compatibility shim whose effect on an instance
+    /// created afterwards is undocumented. Rather than rely on it, the
+    /// plugin records the intent here and applies it to the instance as soon
+    /// as `initialize` creates one. That makes `disableSDK` / `enableSDK` /
+    /// `isDisabled` genuinely init-independent on iOS without depending on a
+    /// deprecated symbol.
+    @MainActor private static var disabledPreInit: Bool = false
+
+    /// Retained handle for the persistent feature-flag update subscription
+    /// created at `initialize` time. Held to keep the subscription alive
+    /// (BrazeKit cancels when the handle is released) and released during
+    /// `wipeData` so the post-wipe re-init starts from a clean slate.
+    @MainActor private var featureFlagsSubscription: Braze.Cancellable?
+
+    /// Mirror of `featureFlagsSubscription` for the content-cards update
+    /// stream. Same lifetime: created in `initialize`, released in `wipeData`.
+    @MainActor private var contentCardsSubscription: Braze.Cancellable?
+
+    /// Retained reference to the in-app message UI presenter so we can
+    /// keep its delegate (`iamDelegate`) alive — BrazeUI holds the
+    /// delegate weakly, and the only other strong reference to the
+    /// presenter is on `BrazeKit.Braze`, which itself is unowned.
+    /// Released in `wipeData` alongside the other init artifacts.
+    @MainActor private var inAppMessagePresenter: BrazeInAppMessageUI?
+
+    /// Retained non-rendering presenter used when `initialize` ran with
+    /// `enableInAppMessageUI: false`. Mutually exclusive with
+    /// `inAppMessagePresenter`.
+    @MainActor private var observingPresenter: BrazeObservingInAppMessagePresenter?
+
+    /// Bridges `BrazeInAppMessageUIDelegate.displayChoiceForMessage` to
+    /// the plugin's `inAppMessageReceived` listener. Retained at the
+    /// plugin level because BrazeUI's `delegate` property is `weak`.
+    @MainActor private var iamDelegate: BrazeIAMDelegate?
+
+    /// Bridges `BrazeSDKAuthDelegate.sdkAuthenticationFailedWithError` to
+    /// the plugin's `sdkAuthError` listener event. Retained at the plugin
+    /// level because `braze.sdkAuthDelegate` is `weak`.
+    @MainActor private var sdkAuthDelegate: BrazeSdkAuthDelegate?
+
+    /// Diagnostics channel for the one advisory the bridge emits (the
+    /// cluster-shape warning). BrazeKit exposes no public logger, and
+    /// `SECURITY.md` §3 forbids logging consumer-supplied values, so the
+    /// message never interpolates the endpoint.
+    private static let logger = Logger(subsystem: "capacitor-braze", category: "initialize")
+
+    /// Hops onto the main queue so the body runs in the plugin's single
+    /// isolation domain. Always asynchronous — including when the caller is
+    /// already on the main queue — so bodies execute in strict FIFO order
+    /// regardless of which queue Capacitor dispatched them from.
+    private static func onMain(_ body: @escaping @MainActor () -> Void) {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                body()
+            }
+        }
+    }
 
     // MARK: - Bridge sanity check
 
+    /// Pure bridge probe — touches no plugin state and no SDK, so it answers
+    /// on Capacitor's own queue without a main-actor hop.
     @objc func echo(_ call: CAPPluginCall) {
         guard let value = call.getString("value") else {
             call.reject("Braze.echo: `value` is required (string).")
@@ -107,21 +161,49 @@ public class BrazePlugin: CAPPlugin {
 
     // MARK: - Configuration
 
+    /// Validated, `Sendable` snapshot of the `initialize` options. Built on
+    /// the main actor from the `CAPPluginCall` and handed to the wiring code
+    /// so no `Braze.Configuration` is constructed before validation passes.
+    private struct InitOptions {
+        let apiKey: String
+        let endpoint: String
+        let enableLogging: Bool
+        let enableSdkAuthentication: Bool
+        let sessionTimeout: TimeInterval?
+        let enableInAppMessageUI: Bool
+        let enablePushAutomation: Bool
+    }
+
     @objc func initialize(_ call: CAPPluginCall) {
+        Self.onMain { [weak self] in
+            guard let self = self else { return }
+            guard let options = Self.validateInitOptions(call) else { return }
+            self.performInitialize(options)
+            call.resolve()
+        }
+    }
+
+    /// Parses and validates the `initialize` payload. Rejects `call` and
+    /// returns nil on the first failure, mirroring `src/web.ts`
+    /// `validateInitializeOptions` field order and error strings byte for
+    /// byte (C04).
+    @MainActor
+    private static func validateInitOptions(_ call: CAPPluginCall) -> InitOptions? {
         guard let apiKey = call.getString("apiKey"), !apiKey.isEmpty else {
             call.reject("Braze.initialize: `apiKey` is required (string).")
-            return
+            return nil
         }
         guard let endpoint = call.getString("endpoint"), !endpoint.isEmpty else {
             call.reject("Braze.initialize: `endpoint` is required (string).")
-            return
+            return nil
         }
 
         let allowInsecure = call.getBool("allowInsecureEndpoint", false)
         if endpoint.hasPrefix("http://") && !allowInsecure {
             call.reject("Braze.initialize: `endpoint` must use HTTPS. " +
-                        "Set `allowInsecureEndpoint: true` only for local mock-server testing.")
-            return
+                        "Set `allowInsecureEndpoint: true` only for local mock-server testing. " +
+                        "See SECURITY.md §4.")
+            return nil
         }
         // L5-03: URL parsing client-side. SECURITY.md §4 promises malformed
         // URLs reject before they reach the SDK; this delivers on that.
@@ -131,92 +213,130 @@ public class BrazePlugin: CAPPlugin {
         let parseTarget = endpoint.contains("://") ? endpoint : "https://\(endpoint)"
         guard URL(string: parseTarget) != nil else {
             call.reject("Braze.initialize: `endpoint` is malformed (must be a parseable URL or bare hostname).")
-            return
+            return nil
         }
+        warnIfNotBrazeCluster(parseTarget)
 
-        let enableLogging = call.getBool("enableLogging", false)
-        let enableSdkAuthentication = call.getBool("enableSdkAuthentication", false)
-
-        let configuration = Braze.Configuration(apiKey: apiKey, endpoint: endpoint)
-        configuration.logger.level = enableLogging ? .debug : .info
-        configuration.api.sdkAuthentication = enableSdkAuthentication
-        if let sessionTimeout = call.getInt("sessionTimeoutInSeconds") {
-            // L5-08: reject sessionTimeoutInSeconds <= 0 explicitly rather
-            // than silently dropping. Web's TS validation already rejects;
-            // matching the natives keeps C04 validation parity.
-            //
-            // `hasOption` was deprecated in BrazeKit-era Capacitor (the
-            // deprecation message: "Use typed accessors to check the value
-            // instead"); `getInt` returns nil for both missing and
-            // non-integer values, which collapses absent-key and null-key
-            // into "treat as default" — that matches the contract.
-            guard sessionTimeout > 0 else {
+        var sessionTimeout: TimeInterval?
+        // Absent, or explicit JSON null, keeps the SDK default (same as web's
+        // `undefined`). Present-but-not-a-positive-integer is a hard reject —
+        // `getInt` alone can't tell those apart, so read the raw value.
+        if let raw = call.getValue("sessionTimeoutInSeconds"), !(raw is NSNull) {
+            guard let seconds = integerValue(raw), seconds > 0 else {
                 call.reject("Braze.initialize: `sessionTimeoutInSeconds` must be a positive integer.")
-                return
+                return nil
             }
             // BrazeKit's sessionTimeout is a TimeInterval (seconds); the
             // plugin contract uses Int seconds for cross-platform parity
             // per C03, so we just cast.
-            configuration.sessionTimeout = TimeInterval(sessionTimeout)
+            sessionTimeout = TimeInterval(seconds)
         }
 
-        // L4-S03 re-entrance fix: if initialize is being called a second
-        // time without an intervening wipeData, tear down the previous
-        // subscriptions and drop the prior Braze instance BEFORE creating
-        // a new one. Otherwise the previous Cancellable would race against
-        // the new one during deinit, briefly fanning notifyListeners()
-        // through two parallel subscriptions tied to two different SDK
-        // instances. Mirrors Android's teardownXxxSubscription pattern.
-        featureFlagsSubscription = nil
-        contentCardsSubscription = nil
-        inAppMessagePresenter = nil
-        iamDelegate = nil
-        brazeDelegate = nil
-        BrazePlugin.braze = nil
+        return InitOptions(
+            apiKey: apiKey,
+            endpoint: endpoint,
+            enableLogging: call.getBool("enableLogging", false),
+            enableSdkAuthentication: call.getBool("enableSdkAuthentication", false),
+            sessionTimeout: sessionTimeout,
+            enableInAppMessageUI: call.getBool("enableInAppMessageUI", true),
+            enablePushAutomation: call.getBool("enablePushAutomation", false)
+        )
+    }
+
+    /// Cluster sanity check (advisory, never fatal). Matches the documented
+    /// Braze cluster naming pattern and the local dev hosts the mock server
+    /// uses; anything else gets one warning that describes the *shape* only —
+    /// the endpoint value itself is never logged (SECURITY.md §3).
+    @MainActor
+    private static func warnIfNotBrazeCluster(_ parseTarget: String) {
+        let host = URLComponents(string: parseTarget)?.host?.lowercased() ?? ""
+        let isBrazeCluster = host.range(
+            of: "^sdk\\.[a-z]+-\\d+\\.braze\\.(com|eu)$",
+            options: .regularExpression
+        ) != nil
+        let isDevHost = host == "localhost"
+            || host == "127.0.0.1"
+            || host.hasSuffix(".test")
+            || host.hasSuffix(".local")
+        guard !isBrazeCluster && !isDevHost else { return }
+        logger.warning(
+            "Braze.initialize: `endpoint` host does not match the documented Braze cluster pattern sdk.<region>-NN.braze.com"
+        )
+    }
+
+    /// Tears down any previous SDK artifacts, creates the `Braze` instance and
+    /// wires subscriptions, presenter and delegates. Runs entirely on the main
+    /// actor so a concurrent `wipeData` can only land before or after it,
+    /// never inside it.
+    @MainActor
+    private func performInitialize(_ options: InitOptions) {
+        let configuration = Braze.Configuration(apiKey: options.apiKey, endpoint: options.endpoint)
+        // C06 / SECURITY.md §12: `enableLogging: false` means errors only.
+        // `.info` is the second-most-verbose BrazeKit level, not "off".
+        configuration.logger.level = options.enableLogging ? .debug : .error
+        configuration.api.sdkAuthentication = options.enableSdkAuthentication
+        // Identify the wrapper to Braze's backend. There is no Capacitor
+        // `SDKFlavor` case, and reporting `.cordova` would be a
+        // misattribution, so the plugin declares its distribution channels
+        // through metadata only.
+        configuration.api.addSDKMetadata([.npm, .cocoapods])
+        if let sessionTimeout = options.sessionTimeout {
+            configuration.sessionTimeout = sessionTimeout
+        }
+        if options.enablePushAutomation {
+            // Opt-in: BrazeKit takes over push token registration, open /
+            // deep-link handling, rich push and background push. Only touch
+            // the notification center when automation is on — otherwise the
+            // host app (or @capacitor/push-notifications) owns it.
+            configuration.push.automation = true
+            UNUserNotificationCenter.current().setNotificationCategories(Braze.Notifications.categories)
+        }
+
+        // Re-entrance: if initialize is called a second time without an
+        // intervening wipeData, drop the previous subscriptions, presenter
+        // and delegates BEFORE creating a new instance. Otherwise the
+        // previous Cancellable would race the new one, fanning
+        // notifyListeners() through two subscriptions tied to two different
+        // SDK instances. Mirrors Android's teardown pattern.
+        teardownSdkArtifacts()
 
         let braze = Braze(configuration: configuration)
         BrazePlugin.braze = braze
-        BrazePlugin.sdkAuthenticationEnabled = enableSdkAuthentication
-
-        // L4-S11 + Phase 3b: wire BrazeUI's in-app message presenter
-        // so IAMs render out of the box on iOS, AND attach a delegate
-        // that intercepts the displayChoiceForMessage hook to emit the
-        // `inAppMessageReceived` listener event. The delegate always
-        // returns `.now` so default-display behavior is preserved;
-        // consumer code reads the listener payload for analytics or
-        // control-variant handling.
-        //
-        // `BrazeInAppMessageUI` (and the delegate's @MainActor methods)
-        // require the main actor for construction. Capacitor invokes
-        // plugin methods on the main thread in practice, but the
-        // `@objc func` entry point is nonisolated as far as Swift's
-        // strict-concurrency checker is concerned — so we hop to the
-        // main actor for the assignment. The presenter only needs to be
-        // set before the first IAM campaign fires, which is well after
-        // `initialize` returns to the consumer.
-        let pluginRef = self
-        DispatchQueue.main.async {
-            let presenter = BrazeInAppMessageUI()
-            let iamDelegate = BrazeIAMDelegate()
-            iamDelegate.plugin = pluginRef
-            presenter.delegate = iamDelegate
-            braze.inAppMessagePresenter = presenter
-
-            // Phase 13: wire BrazeDelegate for sdkAuthError listener
-            // emission. The braze instance holds delegate weakly so
-            // we retain it on the plugin.
-            let brazeDelegate = BrazeKitDelegate()
-            brazeDelegate.plugin = pluginRef
-            braze.delegate = brazeDelegate
-
-            pluginRef.inAppMessagePresenter = presenter
-            pluginRef.iamDelegate = iamDelegate
-            pluginRef.brazeDelegate = brazeDelegate
+        BrazePlugin.sdkAuthenticationEnabled = options.enableSdkAuthentication
+        // Apply a consent decision the consumer made before the SDK existed
+        // (C07): `disableSDK()` pre-init records intent; this is where it
+        // lands on a real instance.
+        if BrazePlugin.disabledPreInit {
+            braze.enabled = false
         }
 
-        // Wire the persistent feature-flag update subscription. Retaining the
-        // returned cancellable keeps the subscription alive; releasing it (in
-        // `wipeData`) cancels at the SDK boundary so a re-init starts clean.
+        if options.enableInAppMessageUI {
+            let presenter = BrazeInAppMessageUI()
+            let iamDelegate = BrazeIAMDelegate()
+            iamDelegate.plugin = self
+            presenter.delegate = iamDelegate
+            braze.inAppMessagePresenter = presenter
+            self.inAppMessagePresenter = presenter
+            self.iamDelegate = iamDelegate
+        } else {
+            // Still observational: the listener fires, nothing renders.
+            let observer = BrazeObservingInAppMessagePresenter()
+            observer.plugin = self
+            braze.inAppMessagePresenter = observer
+            self.observingPresenter = observer
+        }
+
+        // SDK Authentication failures arrive on `sdkAuthDelegate`, not
+        // `delegate`. `braze.delegate` is deliberately left unassigned so a
+        // host app can take it (shouldOpenURL / willPresentModalWithContext).
+        let authDelegate = BrazeSdkAuthDelegate()
+        authDelegate.plugin = self
+        braze.sdkAuthDelegate = authDelegate
+        self.sdkAuthDelegate = authDelegate
+
+        // Retaining the returned cancellables keeps the subscriptions alive;
+        // releasing them (in `wipeData`) cancels at the SDK boundary so a
+        // re-init starts clean.
         featureFlagsSubscription = braze.featureFlags.subscribeToUpdates { [weak self] flags in
             guard let self = self else { return }
             let payload: [[String: Any]] = flags.map { Self.serializeFeatureFlag($0) }
@@ -225,44 +345,68 @@ public class BrazePlugin: CAPPlugin {
 
         contentCardsSubscription = braze.contentCards.subscribeToUpdates { [weak self] cards in
             guard let self = self else { return }
-            // L4-S04 lifetime fix: read lastUpdate off the static accessor
-            // rather than capturing the local `braze` strongly. If wipeData
-            // dropped BrazePlugin.braze between the SDK firing the closure
-            // and us reading lastUpdate, we want a nil — not a stale value
-            // from a now-disowned instance. BrazeKit updates lastUpdate
-            // right before firing the subscription, so reading it via the
-            // static accessor is the deterministic, lifetime-symmetric
-            // path.
-            let payload = Self.serializeContentCards(cards, lastUpdate: BrazePlugin.braze?.contentCards.lastUpdate)
+            // Read lastUpdate off the static accessor rather than capturing
+            // the local `braze` strongly: if wipeData dropped
+            // BrazePlugin.braze between the SDK firing the closure and us
+            // reading lastUpdate we want nil, not a stale value from a
+            // now-disowned instance.
+            let payload = Self.serializeContentCards(
+                cards,
+                lastUpdate: BrazePlugin.braze?.contentCards.lastUpdate
+            )
             self.notifyListeners("contentCardsUpdated", data: payload)
         }
+    }
 
-        call.resolve()
+    /// Drops every artifact `performInitialize` creates. Main-actor only, so
+    /// it can never interleave with the wiring it undoes.
+    @MainActor
+    private func teardownSdkArtifacts() {
+        featureFlagsSubscription = nil
+        contentCardsSubscription = nil
+        inAppMessagePresenter = nil
+        observingPresenter = nil
+        iamDelegate = nil
+        sdkAuthDelegate = nil
+        BrazePlugin.braze = nil
     }
 
     // MARK: - User identity
 
     @objc func changeUser(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let userId = call.getString("userId"), !userId.isEmpty else {
-            call.reject("Braze.changeUser: `userId` is required (string).")
-            return
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let userId = call.getString("userId"), !userId.isEmpty else {
+                call.reject("Braze.changeUser: `userId` is required (string).")
+                return
+            }
+            let sdkAuthSignature = call.getString("sdkAuthSignature")
+            if BrazePlugin.sdkAuthenticationEnabled && (sdkAuthSignature?.isEmpty ?? true) {
+                call.reject("Braze.changeUser: `sdkAuthSignature` is required (string) " +
+                            "when SDK Authentication is enabled. See SECURITY.md §2.")
+                return
+            }
+            braze.changeUser(userId: userId, sdkAuthSignature: sdkAuthSignature)
+            call.resolve()
         }
-        let sdkAuthSignature = call.getString("sdkAuthSignature")
-        if BrazePlugin.sdkAuthenticationEnabled && (sdkAuthSignature == nil || sdkAuthSignature?.isEmpty == true) {
-            call.reject("Braze.changeUser: `sdkAuthSignature` is required (string) when SDK Authentication is enabled. See SECURITY.md §2.")
-            return
-        }
-        braze.changeUser(userId: userId, sdkAuthSignature: sdkAuthSignature)
-        call.resolve()
     }
 
-    /// `braze.user.id` is a sync property as of BrazeKit 14.x (the async
-    /// closure variants are deprecated). Returns nil for anonymous users; we
-    /// surface that as JSON `null`.
+    /// Reads the external user id through BrazeKit's asynchronous accessor.
+    ///
+    /// As of BrazeKit 17.0 the synchronous `braze.user.id` property *blocks*
+    /// until the SDK has settled, and Braze explicitly recommends the async
+    /// getter for latency-sensitive paths — a Capacitor bridge call is one.
+    /// The call resolves inside the completion, so JS still sees a single
+    /// promise resolution. Returns nil for anonymous users (and, since 17.0,
+    /// after `wipeData` — matching Android and Web); we surface that as
+    /// JSON `null`.
     @objc func getUserId(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        call.resolve(["userId": braze.user.id as Any])
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            braze.user.getId { userId in
+                call.resolve(["userId": (userId as Any?) ?? NSNull()])
+            }
+        }
     }
 
     /// Pushes a new SDK Authentication signature into the configured
@@ -270,13 +414,15 @@ public class BrazePlugin: CAPPlugin {
     /// running a fresh `changeUser` round-trip. No-op at the SDK level
     /// when `enableSdkAuthentication` was false at init time.
     @objc func setSdkAuthenticationSignature(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let signature = call.getString("signature"), !signature.isEmpty else {
-            call.reject("Braze.setSdkAuthenticationSignature: `signature` is required (string).")
-            return
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let signature = call.getString("signature"), !signature.isEmpty else {
+                call.reject("Braze.setSdkAuthenticationSignature: `signature` is required (string).")
+                return
+            }
+            braze.set(sdkAuthenticationSignature: signature)
+            call.resolve()
         }
-        braze.set(sdkAuthenticationSignature: signature)
-        call.resolve()
     }
 
     // MARK: - User attributes (standard)
@@ -286,134 +432,181 @@ public class BrazePlugin: CAPPlugin {
     // labeled `braze.user.set(...)` method.
 
     @objc func setEmail(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        let email = call.getString("email")
-        braze.user.set(email: email)
-        call.resolve()
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            braze.user.set(email: call.getString("email"))
+            call.resolve()
+        }
     }
 
     @objc func setPhoneNumber(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        let phoneNumber = call.getString("phoneNumber")
-        braze.user.set(phoneNumber: phoneNumber)
-        call.resolve()
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            braze.user.set(phoneNumber: call.getString("phoneNumber"))
+            call.resolve()
+        }
     }
 
     @objc func setFirstName(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        let firstName = call.getString("firstName")
-        braze.user.set(firstName: firstName)
-        call.resolve()
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            braze.user.set(firstName: call.getString("firstName"))
+            call.resolve()
+        }
     }
 
     @objc func setLastName(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        let lastName = call.getString("lastName")
-        braze.user.set(lastName: lastName)
-        call.resolve()
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            braze.user.set(lastName: call.getString("lastName"))
+            call.resolve()
+        }
     }
 
     @objc func setLanguage(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        let language = call.getString("language")
-        braze.user.set(language: language)
-        call.resolve()
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            braze.user.set(language: call.getString("language"))
+            call.resolve()
+        }
     }
 
     @objc func setCountry(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        let country = call.getString("country")
-        braze.user.set(country: country)
-        call.resolve()
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            braze.user.set(country: call.getString("country"))
+            call.resolve()
+        }
     }
 
     // MARK: - User attributes (custom)
 
-    /// Dispatches `setCustomAttribute(key:value:)` to the appropriate Braze
-    /// SDK overload based on the inferred type of `value`. Order matters:
-    /// `getBool` first (so JSON booleans aren't misread as ints), then string,
-    /// then numeric. For numerics, we check `getDouble` first so the bridge
-    /// can detect a fractional component before falling back to the Int
-    /// overload (per L4-S02). The previous order `getInt` → `getDouble`
-    /// silently truncated 42.5 to 42 because Capacitor's `getInt` returns
-    /// the rounded value for any numeric NSNumber.
-    @objc func setCustomUserAttribute(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let key = call.getString("key"), !key.isEmpty else {
-            call.reject("Braze.setCustomUserAttribute: `key` is required (string).")
-            return
-        }
+    /// The four shapes `setCustomUserAttribute` can forward to BrazeKit.
+    /// Factored out of the bridge method so the classification — the part
+    /// that is easy to get wrong and impossible to reach through a
+    /// `CAPPluginCall` in a unit test — is directly testable.
+    enum CustomAttributeValue: Equatable {
+        case boolean(Bool)
+        case string(String)
+        case integer(Int)
+        case double(Double)
+        case unsupported
+    }
 
-        if let boolValue = call.getBool("value") {
-            braze.user.setCustomAttribute(key: key, value: boolValue)
-        } else if let stringValue = call.getString("value") {
-            braze.user.setCustomAttribute(key: key, value: stringValue)
-        } else if let doubleValue = call.getDouble("value") {
-            // L4-S02 fix. If the int form of the value losslessly
-            // round-trips through Double, the value is an integer
-            // (no fractional component) and we dispatch to the Int
-            // overload to match Android's type narrowing (Android
-            // org.json parses 42 as Integer, not Double). Otherwise
-            // the value is genuinely fractional and we preserve it
-            // by dispatching to Double.
-            if let intValue = call.getInt("value"), Double(intValue) == doubleValue {
-                braze.user.setCustomAttribute(key: key, value: intValue)
-            } else {
-                braze.user.setCustomAttribute(key: key, value: doubleValue)
-            }
-        } else {
-            call.reject("Braze.setCustomUserAttribute: `value` must be string, number, or boolean.")
-            return
+    /// Classifies a raw bridge value into the BrazeKit overload it belongs to.
+    ///
+    /// `CAPPluginCall.getBool` cannot be used here: `JSTypes.coerceToJSValue`
+    /// keeps every JSON number as an `NSNumber`, and Swift's `NSNumber → Bool`
+    /// conditional bridge is *value*-preserving rather than *type*-preserving,
+    /// so `1` and `0` both succeed as `Bool`. Reading them as booleans would
+    /// write `true` / `false` to the Braze profile for the two most common
+    /// integer attribute values (order counts, tier levels, streaks) and lock
+    /// the dashboard attribute to a boolean type — permanently, and only on
+    /// iOS. `CFGetTypeID` separates `__NSCFBoolean` from `__NSCFNumber`
+    /// exactly; `CFNumberIsFloatType` plus a lossless round-trip separates
+    /// `42` from `42.5` so integers reach the Int overload the way Android's
+    /// `org.json` type dispatch does.
+    static func classifyAttributeValue(_ raw: Any?) -> CustomAttributeValue {
+        guard let raw = raw, !(raw is NSNull) else { return .unsupported }
+        if let number = raw as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
+            return .boolean(number.boolValue)
         }
-        call.resolve()
+        if let string = raw as? String {
+            return .string(string)
+        }
+        if let number = raw as? NSNumber {
+            let double = number.doubleValue
+            if CFNumberIsFloatType(number as CFNumber), Double(number.intValue) != double {
+                return .double(double)
+            }
+            if let integer = raw as? Int {
+                return .integer(integer)
+            }
+            return .double(double)
+        }
+        return .unsupported
+    }
+
+    @objc func setCustomUserAttribute(_ call: CAPPluginCall) {
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let key = call.getString("key"), !key.isEmpty else {
+                call.reject("Braze.setCustomUserAttribute: `key` is required (string).")
+                return
+            }
+            switch Self.classifyAttributeValue(call.getValue("value")) {
+            case .boolean(let value):
+                braze.user.setCustomAttribute(key: key, value: value)
+            case .string(let value):
+                braze.user.setCustomAttribute(key: key, value: value)
+            case .integer(let value):
+                braze.user.setCustomAttribute(key: key, value: value)
+            case .double(let value):
+                braze.user.setCustomAttribute(key: key, value: value)
+            case .unsupported:
+                call.reject("Braze.setCustomUserAttribute: `value` must be string, number, or boolean.")
+                return
+            }
+            call.resolve()
+        }
     }
 
     // MARK: - Subscription groups
 
     @objc func addToSubscriptionGroup(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let groupId = call.getString("groupId"), !groupId.isEmpty else {
-            call.reject("Braze.addToSubscriptionGroup: `groupId` is required (string).")
-            return
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let groupId = call.getString("groupId"), !groupId.isEmpty else {
+                call.reject("Braze.addToSubscriptionGroup: `groupId` is required (string).")
+                return
+            }
+            braze.user.addToSubscriptionGroup(id: groupId)
+            call.resolve()
         }
-        braze.user.addToSubscriptionGroup(id: groupId)
-        call.resolve()
     }
 
     @objc func removeFromSubscriptionGroup(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let groupId = call.getString("groupId"), !groupId.isEmpty else {
-            call.reject("Braze.removeFromSubscriptionGroup: `groupId` is required (string).")
-            return
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let groupId = call.getString("groupId"), !groupId.isEmpty else {
+                call.reject("Braze.removeFromSubscriptionGroup: `groupId` is required (string).")
+                return
+            }
+            braze.user.removeFromSubscriptionGroup(id: groupId)
+            call.resolve()
         }
-        braze.user.removeFromSubscriptionGroup(id: groupId)
-        call.resolve()
     }
 
     // MARK: - Aliases
 
     @objc func addAlias(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let alias = call.getString("alias"), !alias.isEmpty else {
-            call.reject("Braze.addAlias: `alias` is required (string).")
-            return
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let alias = call.getString("alias"), !alias.isEmpty else {
+                call.reject("Braze.addAlias: `alias` is required (string).")
+                return
+            }
+            guard let label = call.getString("label"), !label.isEmpty else {
+                call.reject("Braze.addAlias: `label` is required (string).")
+                return
+            }
+            braze.user.add(alias: alias, label: label)
+            call.resolve()
         }
-        guard let label = call.getString("label"), !label.isEmpty else {
-            call.reject("Braze.addAlias: `label` is required (string).")
-            return
-        }
-        braze.user.add(alias: alias, label: label)
-        call.resolve()
     }
 
     // MARK: - Device ID
 
-    /// `braze.deviceId` is an instance property on the configured SDK and is
-    /// non-nil post-init. The Web SDK's `getDeviceId()` can return undefined
-    /// before bootstrap; on iOS BrazeKit it does not, so we forward directly.
+    /// Reads the Braze device id through the asynchronous accessor added in
+    /// BrazeKit 17.0. The synchronous `braze.deviceId` property blocks until
+    /// the SDK has settled; a bridge call should not.
     @objc func getDeviceId(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        call.resolve(["deviceId": braze.deviceId])
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            braze.getDeviceId { deviceId in
+                call.resolve(["deviceId": deviceId])
+            }
+        }
     }
 
     // MARK: - Demographics
@@ -421,83 +614,95 @@ public class BrazePlugin: CAPPlugin {
     /// Constructs a `Date` from `(year, month, day)` using a Gregorian
     /// calendar pinned to UTC. Pinning to UTC keeps the stored DOB stable
     /// regardless of device timezone, matching how the Android `Month` enum
-    /// and the Web SDK's three-int signature behave.
+    /// and the Web SDK's three-int signature behave. `month` is 1-indexed
+    /// on the wire (C03).
     @objc func setDateOfBirth(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        // L2-07: per-field error messages, byte-identical to the web bridge.
-        // Order matters — year is validated first so a missing year reports
-        // as the year error rather than a generic "all required" message.
-        guard let year = call.getInt("year"), year >= 1900, year <= 2100 else {
-            call.reject("Braze.setDateOfBirth: `year` must be an integer between 1900 and 2100.")
-            return
-        }
-        guard let month = call.getInt("month"), month >= 1, month <= 12 else {
-            call.reject("Braze.setDateOfBirth: `month` must be an integer between 1 and 12.")
-            return
-        }
-        guard let day = call.getInt("day"), day >= 1, day <= 31 else {
-            call.reject("Braze.setDateOfBirth: `day` must be an integer between 1 and 31.")
-            return
-        }
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            // Per-field error messages, byte-identical to the web bridge.
+            // Order matters — year is validated first so a missing year
+            // reports as the year error rather than a generic message.
+            guard let year = call.getInt("year"), year >= 1900, year <= 2100 else {
+                call.reject("Braze.setDateOfBirth: `year` must be an integer between 1900 and 2100.")
+                return
+            }
+            guard let month = call.getInt("month"), month >= 1, month <= 12 else {
+                call.reject("Braze.setDateOfBirth: `month` must be an integer between 1 and 12.")
+                return
+            }
+            guard let day = call.getInt("day"), day >= 1, day <= 31 else {
+                call.reject("Braze.setDateOfBirth: `day` must be an integer between 1 and 31.")
+                return
+            }
 
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
-        var components = DateComponents()
-        components.year = year
-        components.month = month
-        components.day = day
-        guard let date = calendar.date(from: components) else {
-            call.reject("Braze.setDateOfBirth: invalid date components.")
-            return
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+            var components = DateComponents()
+            components.year = year
+            components.month = month
+            components.day = day
+            guard let date = calendar.date(from: components) else {
+                call.reject("Braze.setDateOfBirth: invalid date components.")
+                return
+            }
+            braze.user.set(dateOfBirth: date)
+            call.resolve()
         }
-        braze.user.set(dateOfBirth: date)
-        call.resolve()
     }
 
     /// Maps the plugin's stable string gender values to `Braze.User.Gender`
     /// cases. Keeping the mapping at the bridge layer means consumers never
     /// see the SDK's enum names directly.
     @objc func setGender(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let raw = call.getString("gender"), !raw.isEmpty else {
-            call.reject("Braze.setGender: `gender` is required (string).")
-            return
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let raw = call.getString("gender"), !raw.isEmpty else {
+                call.reject("Braze.setGender: `gender` is required (string).")
+                return
+            }
+            let gender: Braze.User.Gender
+            switch raw {
+            case "male": gender = .male
+            case "female": gender = .female
+            case "other": gender = .other
+            case "unknown": gender = .unknown
+            case "not_applicable": gender = .notApplicable
+            case "prefer_not_to_say": gender = .preferNotToSay
+            default:
+                call.reject("Braze.setGender: unknown gender \"\(raw)\". " +
+                            "Allowed: male, female, other, unknown, not_applicable, prefer_not_to_say.")
+                return
+            }
+            braze.user.set(gender: gender)
+            call.resolve()
         }
-        let gender: Braze.User.Gender
-        switch raw {
-        case "male": gender = .male
-        case "female": gender = .female
-        case "other": gender = .other
-        case "unknown": gender = .unknown
-        case "not_applicable": gender = .notApplicable
-        case "prefer_not_to_say": gender = .preferNotToSay
-        default:
-            call.reject("Braze.setGender: unknown gender \"\(raw)\". " +
-                        "Allowed: male, female, other, unknown, not_applicable, prefer_not_to_say.")
-            return
-        }
-        braze.user.set(gender: gender)
-        call.resolve()
     }
 
     @objc func setHomeCity(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        let homeCity = call.getString("homeCity")
-        braze.user.set(homeCity: homeCity)
-        call.resolve()
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            braze.user.set(homeCity: call.getString("homeCity"))
+            call.resolve()
+        }
     }
 
     // MARK: - Custom events
 
     @objc func logCustomEvent(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let name = call.getString("name"), !name.isEmpty else {
-            call.reject("Braze.logCustomEvent: `name` is required (string).")
-            return
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let name = call.getString("name"), !name.isEmpty else {
+                call.reject("Braze.logCustomEvent: `name` is required (string).")
+                return
+            }
+            let properties: [String: Any]? = call.getObject("properties")
+            if let error = Self.propertiesError(properties, method: "logCustomEvent") {
+                call.reject(error)
+                return
+            }
+            braze.logCustomEvent(name: name, properties: properties)
+            call.resolve()
         }
-        let properties = call.getObject("properties") as? [String: Any]
-        braze.logCustomEvent(name: name, properties: properties)
-        call.resolve()
     }
 
     // MARK: - Purchases
@@ -507,88 +712,97 @@ public class BrazePlugin: CAPPlugin {
     /// Quantity defaults to 1 to match the SDK default; price is a Double
     /// matching the Swift SDK API.
     @objc func logPurchase(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let productId = call.getString("productId"), !productId.isEmpty else {
-            call.reject("Braze.logPurchase: `productId` is required (string).")
-            return
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let productId = call.getString("productId"), !productId.isEmpty else {
+                call.reject("Braze.logPurchase: `productId` is required (string).")
+                return
+            }
+            guard let currency = call.getString("currency"), !currency.isEmpty else {
+                call.reject("Braze.logPurchase: `currency` is required (ISO 4217 string).")
+                return
+            }
+            guard let price = call.getDouble("price"), price.isFinite, price >= 0 else {
+                call.reject("Braze.logPurchase: `price` must be a non-negative finite number.")
+                return
+            }
+            var quantity = 1
+            // Absent / JSON null keeps the default; present-but-malformed is a
+            // reject, not a silent coercion to 1.
+            if let raw = call.getValue("quantity"), !(raw is NSNull) {
+                guard let parsed = Self.integerValue(raw), parsed >= 1, parsed <= 100 else {
+                    call.reject("Braze.logPurchase: `quantity` must be an integer between 1 and 100.")
+                    return
+                }
+                quantity = parsed
+            }
+            let properties: [String: Any]? = call.getObject("properties")
+            if let error = Self.propertiesError(properties, method: "logPurchase") {
+                call.reject(error)
+                return
+            }
+            braze.logPurchase(
+                productId: productId,
+                currency: currency,
+                price: price,
+                quantity: quantity,
+                properties: properties
+            )
+            call.resolve()
         }
-        guard let currency = call.getString("currency"), !currency.isEmpty else {
-            call.reject("Braze.logPurchase: `currency` is required (ISO 4217 string).")
-            return
-        }
-        guard let price = call.getDouble("price"), price.isFinite, price >= 0 else {
-            call.reject("Braze.logPurchase: `price` must be a non-negative finite number.")
-            return
-        }
-        let quantity = call.getInt("quantity") ?? 1
-        guard quantity >= 1, quantity <= 100 else {
-            call.reject("Braze.logPurchase: `quantity` must be an integer between 1 and 100.")
-            return
-        }
-        let properties = call.getObject("properties") as? [String: Any]
-        braze.logPurchase(
-            productId: productId,
-            currency: currency,
-            price: price,
-            quantity: quantity,
-            properties: properties
-        )
-        call.resolve()
     }
 
     // MARK: - Feature flags
     //
-    // BrazeKit exposes feature flags via `braze.featureFlags`:
-    //   - featureFlag(id:) -> Braze.FeatureFlag?
-    //   - featureFlags     -> [Braze.FeatureFlag]
-    //   - requestRefresh   -> kicks off a refresh (callback-based; we
-    //     fire-and-forget here and rely on a future subscribeToUpdates
-    //     listener API for completion semantics)
-    //   - logFeatureFlagImpression(id:)
-    //
     // The plugin's portable `BrazeFeatureFlag` DTO matches the Web SDK
     // wire format `{ id, enabled, properties: { key: { type, value } } }`.
-    // `serializeFeatureFlag` adapts BrazeKit's `Braze.FeatureFlag.Property`
-    // enum cases into the same shape.
+    // `serializeFeatureFlag` adapts BrazeKit's typed property accessors
+    // into the same shape.
 
     @objc func getFeatureFlag(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let id = call.getString("id"), !id.isEmpty else {
-            call.reject("Braze.getFeatureFlag: `id` is required (string).")
-            return
-        }
-        let raw = braze.featureFlags.featureFlag(id: id)
-        if let raw = raw {
-            call.resolve(["flag": Self.serializeFeatureFlag(raw)])
-        } else {
-            call.resolve(["flag": NSNull()])
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let id = call.getString("id"), !id.isEmpty else {
+                call.reject("Braze.getFeatureFlag: `id` is required (string).")
+                return
+            }
+            if let raw = braze.featureFlags.featureFlag(id: id) {
+                call.resolve(["flag": Self.serializeFeatureFlag(raw)])
+            } else {
+                call.resolve(["flag": NSNull()])
+            }
         }
     }
 
     @objc func getAllFeatureFlags(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        let raw = braze.featureFlags.featureFlags
-        let flags = raw.map { Self.serializeFeatureFlag($0) }
-        call.resolve(["flags": flags])
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            let flags = braze.featureFlags.featureFlags.map { Self.serializeFeatureFlag($0) }
+            call.resolve(["flags": flags])
+        }
     }
 
     @objc func refreshFeatureFlags(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        // requestRefresh accepts an optional completion handler; we ignore
-        // the result here (fire-and-forget). Consumers needing completion
-        // semantics use the (forthcoming) subscribe-to-updates listener.
-        braze.featureFlags.requestRefresh()
-        call.resolve()
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            // requestRefresh accepts an optional completion handler; we ignore
+            // the result here (fire-and-forget). Consumers needing completion
+            // semantics use the `featureFlagsUpdated` listener.
+            braze.featureFlags.requestRefresh()
+            call.resolve()
+        }
     }
 
     @objc func logFeatureFlagImpression(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let id = call.getString("id"), !id.isEmpty else {
-            call.reject("Braze.logFeatureFlagImpression: `id` is required (string).")
-            return
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let id = call.getString("id"), !id.isEmpty else {
+                call.reject("Braze.logFeatureFlagImpression: `id` is required (string).")
+                return
+            }
+            braze.featureFlags.logFeatureFlagImpression(id: id)
+            call.resolve()
         }
-        braze.featureFlags.logFeatureFlagImpression(id: id)
-        call.resolve()
     }
 
     /// Serializes a `Braze.FeatureFlag` to the C02 tagged-union wire
@@ -598,18 +812,15 @@ public class BrazePlugin: CAPPlugin {
     ///
     ///     string | number | boolean | image | datetime | jsonobject
     ///
-    /// Wire shape is reconciled with the Web SDK so a consumer reading
-    /// `flag.properties[key].type` gets the same tag on all three
-    /// platforms (per C02 / L2-01).
+    /// Implementation: enumerate `flag.properties.keys` and probe the typed
+    /// accessors in priority order. BrazeKit's accessors return nil unless
+    /// the underlying property is of the requested type, so the first
+    /// non-nil hit names the type. Image is checked before string and
+    /// timestamp before number because both tagged types are stored on top
+    /// of the looser type under the hood.
     ///
-    /// Implementation: enumerate `flag.properties.keys` and probe the
-    /// typed accessors in priority order. BrazeKit's accessors return
-    /// nil unless the underlying property is of the requested type, so
-    /// the first non-nil hit names the type. Image is checked before
-    /// string and timestamp is checked before number because both
-    /// tagged types are stored on top of the looser type under the
-    /// hood — order keeps us conservative against accidental
-    /// reinterpretation.
+    /// `timestampProperty(key:)` already returns Unix **milliseconds**
+    /// (Braze CHANGELOG, 14.x), so it passes through untouched.
     private static func serializeFeatureFlag(_ flag: Braze.FeatureFlag) -> [String: Any] {
         var properties: [String: Any] = [:]
         for key in flag.properties.keys {
@@ -625,85 +836,81 @@ public class BrazePlugin: CAPPlugin {
                 properties[key] = ["type": "number", "value": value]
             } else if let value = flag.jsonProperty(key: key) {
                 properties[key] = ["type": "jsonobject", "value": value]
+            } else {
+                // A property type none of the six accessors claims. The union
+                // is closed at six tags, so emit nothing for this key — but
+                // say so, rather than dropping SDK data in silence.
+                logger.warning("Braze: dropped a feature-flag property of an unrecognized type")
             }
-            // Else: an unknown property type the bridge can't classify.
-            // Drop silently rather than emit a degenerate entry; the
-            // contract documents the union as closed at six tags.
         }
         return [
             "id": flag.id,
             "enabled": flag.enabled,
-            "properties": properties,
+            "properties": properties
         ]
     }
 
     // MARK: - Content cards
     //
-    // BrazeKit exposes content cards via `braze.contentCards`:
-    //   - cards          -> [Braze.ContentCard]  (cached list)
-    //   - lastUpdate     -> Date? (most-recent server sync time)
-    //   - requestRefresh(_:) -> async refresh with optional Result callback
-    //   - subscribeToUpdates(_:) -> ([ContentCard]) -> Void callback
-    //
-    // Click + impression logging is NOT on the `ContentCards` manager
-    // but on the individual cards themselves: `card.logClick(using:)`
-    // and `card.logImpression(using:)`. We resolve cardId → card via
-    // the cached list before forwarding.
-    //
-    // Wire-format note: each card's serialization pattern-matches the
-    // BrazeKit `Braze.ContentCard` enum cases and emits the plugin's
-    // C02 four-string discriminator (`classic` | `captionedImage` |
-    // `imageOnly` | `control`). BrazeKit's `ClassicImage` collapses
-    // into the contract's `classic` variant because the plugin contract
-    // treats the small-image variant as optional `imageUrl` on the
-    // classic card — same shape the Web SDK uses. (Per L2-02 fix.)
+    // Click + impression logging is NOT on the `ContentCards` manager but on
+    // the individual cards themselves: `card.logClick(using:)` and
+    // `card.logImpression(using:)`. We resolve cardId → card via the cached
+    // list before forwarding.
 
     @objc func getContentCards(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        call.resolve(Self.serializeContentCards(
-            braze.contentCards.cards,
-            lastUpdate: braze.contentCards.lastUpdate
-        ))
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            call.resolve(Self.serializeContentCards(
+                braze.contentCards.cards,
+                lastUpdate: braze.contentCards.lastUpdate
+            ))
+        }
     }
 
     @objc func requestContentCardsRefresh(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        braze.contentCards.requestRefresh()
-        call.resolve()
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            braze.contentCards.requestRefresh()
+            call.resolve()
+        }
     }
 
     @objc func logContentCardClick(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let cardId = call.getString("cardId"), !cardId.isEmpty else {
-            call.reject("Braze.logContentCardClick: `cardId` is required (string).")
-            return
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let cardId = call.getString("cardId"), !cardId.isEmpty else {
+                call.reject("Braze.logContentCardClick: `cardId` is required (string).")
+                return
+            }
+            guard let card = Self.findCard(by: cardId, in: braze) else {
+                call.reject("Braze.logContentCardClick: no cached content card with id \"\(cardId)\". " +
+                            "Call getContentCards() to verify the id, or wait for the next refresh.")
+                return
+            }
+            card.logClick(using: braze)
+            call.resolve()
         }
-        guard let card = Self.findCard(by: cardId, in: braze) else {
-            call.reject("Braze.logContentCardClick: no cached content card with id \"\(cardId)\".")
-            return
-        }
-        card.logClick(using: braze)
-        call.resolve()
     }
 
     @objc func logContentCardImpression(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let cardId = call.getString("cardId"), !cardId.isEmpty else {
-            call.reject("Braze.logContentCardImpression: `cardId` is required (string).")
-            return
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let cardId = call.getString("cardId"), !cardId.isEmpty else {
+                call.reject("Braze.logContentCardImpression: `cardId` is required (string).")
+                return
+            }
+            guard let card = Self.findCard(by: cardId, in: braze) else {
+                call.reject("Braze.logContentCardImpression: no cached content card with id \"\(cardId)\". " +
+                            "Call getContentCards() to verify the id, or wait for the next refresh.")
+                return
+            }
+            card.logImpression(using: braze)
+            call.resolve()
         }
-        guard let card = Self.findCard(by: cardId, in: braze) else {
-            call.reject("Braze.logContentCardImpression: no cached content card with id \"\(cardId)\".")
-            return
-        }
-        card.logImpression(using: braze)
-        call.resolve()
     }
 
     /// Looks up a cached content card by id. Returns nil if no match.
-    /// Used by logContentCardClick / logContentCardImpression since
-    /// BrazeKit's log methods are on the card instance, not the
-    /// ContentCards manager.
+    @MainActor
     private static func findCard(by cardId: String, in braze: Braze) -> Braze.ContentCard? {
         return braze.contentCards.cards.first(where: { $0.data.id == cardId })
     }
@@ -720,51 +927,46 @@ public class BrazePlugin: CAPPlugin {
         let lastUpdated: Any = lastUpdate.map { Int($0.timeIntervalSince1970 * 1000) } ?? NSNull()
         return [
             "cards": serialized,
-            "lastUpdated": lastUpdated,
+            "lastUpdated": lastUpdated
         ]
     }
 
-    /// Serializes a `Braze.ContentCard` enum case to the plugin's
-    /// portable DTO. Pattern-matches the enum case to populate the
-    /// C02 `type` discriminator and the variant-specific fields.
+    /// Serializes a `Braze.ContentCard` enum case to the plugin's portable
+    /// DTO. Pattern-matches the enum case to populate the C02 `type`
+    /// discriminator and the variant-specific fields.
     ///
     /// Field mapping vs the TS contract:
-    ///   - `linkText` ← BrazeKit `card.domain` (the human-readable URL
-    ///      text shown under classic/captioned cards in BrazeUI)
-    ///   - `url`      ← `data.clickAction.url?.absoluteString` (only
-    ///      emitted when the click action is a URL action; processed
-    ///      `.url(URL, useWebView)` cases lose the `useWebView` flag
-    ///      because the contract has no shape for it)
-    ///   - `imageUrl` ← `card.image.absoluteString` (variants that
-    ///      carry an image only)
-    ///   - `aspectRatio` ← `card.imageAspectRatio` (variants that
-    ///      carry one; null otherwise)
-    ///   - `altImageText` ← BrazeKit `card.imageAltText`
-    ///   - `updated`   ← `data.createdAt` as epoch ms (BrazeKit doesn't
-    ///      track a separate "last modified" timestamp; `createdAt` is
-    ///      the closest analog and matches what the Web SDK exposes
-    ///      via its `updated` field).
-    ///   - `expiresAt` ← `data.expiresAt` as epoch ms, with the SDK's
-    ///      -1 sentinel surfacing as JSON null.
+    ///   - `linkText`     ← BrazeKit `card.domain`
+    ///   - `url`          ← `data.clickAction.url?.absoluteString`
+    ///   - `imageUrl`     ← `card.image.absoluteString` (image variants)
+    ///   - `aspectRatio`  ← `card.imageAspectRatio`, `null` on the variants
+    ///                      BrazeKit gives no aspect ratio (classic and
+    ///                      classic-with-image); always present so the
+    ///                      contract's `number | null` holds on every card
+    ///   - `altImageText` ← `card.imageAltText`
+    ///   - `updated`      ← `data.createdAt` as epoch ms (BrazeKit tracks no
+    ///                      separate "last modified" timestamp)
+    ///   - `expiresAt`    ← `data.expiresAt` as epoch ms, with the SDK's
+    ///                      -1 "never expires" sentinel surfacing as null
     ///
-    /// Never returns nil — every BrazeKit case maps to a contract
-    /// variant. Kept optional in the signature so the call site can
-    /// stay symmetric with the Android bridge.
+    /// Returns nil for a card variant this BrazeKit version introduced and the
+    /// contract has no tag for; `serializeContentCards` drops those rather
+    /// than emitting a card with no `type` discriminator.
     private static func serializeContentCard(_ card: Braze.ContentCard) -> [String: Any]? {
         let data = card.data
         var dto: [String: Any] = [
             "id": data.id,
             "viewed": data.viewed,
             "pinned": data.pinned,
-            "extras": Self.coerceExtras(data.extras),
+            "extras": BrazeExtras.coerce(data.extras),
             "updated": Self.epochMillis(fromSeconds: data.createdAt),
-            "expiresAt": Self.expiresAtEpochMillis(seconds: data.expiresAt),
+            "expiresAt": Self.epochMillis(fromSeconds: data.expiresAt)
         ]
         let clickUrl: Any = data.clickAction?.url?.absoluteString ?? NSNull()
         let nonControl: [String: Any] = [
             "clicked": data.clicked,
             "dismissed": data.removed,
-            "dismissible": data.dismissible,
+            "dismissible": data.dismissible
         ]
         switch card {
         case .control:
@@ -776,6 +978,9 @@ public class BrazePlugin: CAPPlugin {
             dto["url"] = clickUrl
             dto["linkText"] = c.domain ?? NSNull()
             dto["language"] = c.language ?? NSNull()
+            // BrazeKit's Classic carries no image and therefore no aspect
+            // ratio; the contract still declares the field.
+            dto["aspectRatio"] = NSNull()
             dto.merge(nonControl) { _, new in new }
         case .classicImage(let c):
             // BrazeKit ClassicImage → contract 'classic' with optional imageUrl.
@@ -787,6 +992,9 @@ public class BrazePlugin: CAPPlugin {
             dto["linkText"] = c.domain ?? NSNull()
             dto["language"] = c.language ?? NSNull()
             dto["altImageText"] = c.imageAltText ?? NSNull()
+            // BrazeKit.ContentCard.ClassicImage has no `imageAspectRatio`
+            // (verified against the 18.2.1 swiftinterface).
+            dto["aspectRatio"] = NSNull()
             dto.merge(nonControl) { _, new in new }
         case .imageOnly(let c):
             dto["type"] = "imageOnly"
@@ -807,48 +1015,29 @@ public class BrazePlugin: CAPPlugin {
             dto["language"] = c.language ?? NSNull()
             dto["altImageText"] = c.imageAltText ?? NSNull()
             dto.merge(nonControl) { _, new in new }
+        @unknown default:
+            logger.warning("Braze: dropped an unrecognized content card variant")
+            return nil
         }
         return dto
     }
 
-    /// Converts BrazeKit's `[String: Any]` extras dict to the
-    /// `Record<string, string>` shape declared by the TS contract.
-    /// Non-string values are stringified via `String(describing:)`;
-    /// the only risk is for SDK-internal types whose description
-    /// is verbose, but Braze dashboard extras are configured as
-    /// string-typed metadata so non-string values are expected to
-    /// be rare in practice.
-    private static func coerceExtras(_ extras: [String: Any]) -> [String: String] {
-        var result: [String: String] = [:]
-        for (key, value) in extras {
-            if let s = value as? String {
-                result[key] = s
-            } else {
-                result[key] = String(describing: value)
-            }
-        }
-        return result
-    }
-
-    /// Converts a Foundation.TimeInterval (epoch seconds) to epoch
-    /// milliseconds as the wire format expects, or `NSNull()` if
-    /// the input is the BrazeKit "never set" sentinel (0).
+    /// Converts a `Foundation.TimeInterval` (epoch seconds) to epoch
+    /// milliseconds as the wire format expects.
+    ///
+    /// Non-positive inputs map to JSON `null`: `Braze.ContentCard.Data`
+    /// defaults `createdAt` to `0` and uses `-1` for "never expires", so both
+    /// sentinels mean "the SDK has no value here". A card genuinely created
+    /// at the Unix epoch would also report null — an accepted, harmless
+    /// collision.
     private static func epochMillis(fromSeconds seconds: TimeInterval) -> Any {
-        if seconds <= 0 { return NSNull() }
-        return Int(seconds * 1000)
-    }
-
-    /// Same as `epochMillis(fromSeconds:)` but treats the BrazeKit
-    /// "never expires" sentinel (-1 specifically) as NSNull. A 0
-    /// expiresAt also means unset and is treated as null.
-    private static func expiresAtEpochMillis(seconds: TimeInterval) -> Any {
-        if seconds < 0 || seconds == 0 { return NSNull() }
+        guard seconds > 0 else { return NSNull() }
         return Int(seconds * 1000)
     }
 
     // MARK: - Push token registration
     //
-    // Consumer flow:
+    // Consumer flow (when `enablePushAutomation` is left off):
     //   1. @capacitor/push-notifications calls UNUserNotificationCenter
     //      and fires its `registration` event with the APNs device
     //      token as a hex string.
@@ -862,29 +1051,37 @@ public class BrazePlugin: CAPPlugin {
     // every time.
 
     @objc func registerPushToken(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        guard let token = call.getString("token"), !token.isEmpty else {
-            call.reject("Braze.registerPushToken: `token` is required (string).")
-            return
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            guard let token = call.getString("token"), !token.isEmpty else {
+                call.reject("Braze.registerPushToken: `token` is required (string).")
+                return
+            }
+            guard let tokenData = Self.dataFromHex(token) else {
+                call.reject("Braze.registerPushToken: `token` must be a valid hex string.")
+                return
+            }
+            braze.notifications.register(deviceToken: tokenData)
+            call.resolve()
         }
-        guard let tokenData = Self.dataFromHex(token) else {
-            call.reject("Braze.registerPushToken: `token` must be a valid hex string.")
-            return
-        }
-        braze.notifications.register(deviceToken: tokenData)
-        call.resolve()
     }
 
-    /// Hex-string → Data. Returns nil for malformed input (odd length,
-    /// non-hex characters). Whitespace and the iOS Data debug-print
-    /// wrapper characters (`<`, `>`) are tolerated so the consumer can
-    /// pass either the raw hex or the result of `String(describing: data)`.
-    private static func dataFromHex(_ hex: String) -> Data? {
+    /// Hex-string → Data. Returns nil for malformed input.
+    ///
+    /// All whitespace (including tabs and a trailing newline from a paste)
+    /// and the `Data` debug-print wrapper characters `<`/`>` are stripped, so
+    /// both the raw hex and `String(describing: data)` are accepted. What is
+    /// *not* accepted: anything that decodes to zero bytes — `"<>"` and
+    /// `"   "` survive the non-empty check on the original string, reduce to
+    /// `""` and would otherwise register an empty APNs token, which is a
+    /// silent push outage. APNs tokens are 32 bytes (64 hex chars) today and
+    /// 100 bytes at most, so an upper bound catches paste errors too.
+    static func dataFromHex(_ hex: String) -> Data? {
         let cleaned = hex
-            .replacingOccurrences(of: " ", with: "")
+            .components(separatedBy: .whitespacesAndNewlines).joined()
             .replacingOccurrences(of: "<", with: "")
             .replacingOccurrences(of: ">", with: "")
-        guard cleaned.count % 2 == 0 else { return nil }
+        guard !cleaned.isEmpty, cleaned.count % 2 == 0, cleaned.count <= 200 else { return nil }
         var data = Data(capacity: cleaned.count / 2)
         var index = cleaned.startIndex
         while index < cleaned.endIndex {
@@ -898,83 +1095,71 @@ public class BrazePlugin: CAPPlugin {
 
     // MARK: - Privacy / lifecycle
     //
-    // BrazeKit 14.x reshapes the iOS API away from what C07 originally
-    // described. The actual surface in this SDK version:
+    // BrazeKit 18.x models SDK enablement as `braze.enabled` on a configured
+    // instance. The class-level `Braze.disableSDK()` still exists but is a
+    // deprecated AppboyKit compatibility shim, and `Braze(configuration:)` —
+    // the path this plugin uses — is documented to disable most compatibility
+    // features, so its effect on a later instance is not established.
     //
-    //   - `Braze.disableSDK()` is still a class func (init-independent).
-    //   - `Braze.wipeDataAndDisableForAppRun()` is the class-level
-    //     wipe (init-independent), formerly `Braze.wipeData()`.
-    //   - `braze.wipeData()` exists on the instance (post-init).
-    //   - `braze.enabled = true/false` replaces `disableSDK()/enableSDK()`
-    //     on the instance.
-    //   - `Braze.enableSDK()` and `Braze.isDisabled` (the static)
-    //     no longer exist.
-    //
-    // What this means for the public plugin contract: `disableSDK` and
-    // `wipeData` stay genuinely init-independent (class-level fallbacks
-    // exist). `enableSDK` and `isDisabled` only work post-init in
-    // BrazeKit 14.x — there's no class-level form. The bridge handles
-    // both cases (pre-init vs post-init) per method, and a planned
-    // follow-up updates C07 to record this divergence.
+    // The plugin therefore keeps the contract's init-independence by recording
+    // intent (`disabledPreInit`) and applying it at `initialize`. The one
+    // remaining class-level call is the pre-init `wipeData` path, where
+    // BrazeKit offers no non-deprecated equivalent.
 
     @objc func wipeData(_ call: CAPPluginCall) {
-        if let braze = BrazePlugin.braze {
-            // Post-init: wipe via the instance method (BrazeKit 14.x
-            // canonical form). Drop subscriptions + the instance
-            // reference at the same time so subsequent
-            // requireInitialized calls fail until re-init.
-            braze.wipeData()
-        } else {
-            // Pre-init: fall back to the class-level wipe that also
-            // disables the SDK for the rest of this app run. Matches
-            // the consent-revocation flow this method is designed
-            // around (see C07 + SECURITY.md §10).
-            Braze.wipeDataAndDisableForAppRun()
+        Self.onMain { [weak self] in
+            if let braze = BrazePlugin.braze {
+                // Post-init: wipe via the instance method.
+                braze.wipeData()
+            } else {
+                // Pre-init: the only class-level wipe BrazeKit exposes. It
+                // also disables the SDK for the remainder of this app run —
+                // a subsequent `initialize` no-ops until relaunch. That is a
+                // BrazeKit constraint, documented in the `wipeData` JSDoc and
+                // C07, and it matches the consent-revocation flow this method
+                // exists for (SECURITY.md §10). The deprecation warning this
+                // emits is accepted deliberately: there is no replacement
+                // that works without a configured instance.
+                Braze.wipeDataAndDisableForAppRun()
+            }
+            self?.teardownSdkArtifacts()
+            BrazePlugin.sdkAuthenticationEnabled = false
+            call.resolve()
         }
-        featureFlagsSubscription = nil
-        contentCardsSubscription = nil
-        inAppMessagePresenter = nil
-        iamDelegate = nil
-        brazeDelegate = nil
-        BrazePlugin.braze = nil
-        BrazePlugin.sdkAuthenticationEnabled = false
-        call.resolve()
     }
 
     @objc func disableSDK(_ call: CAPPluginCall) {
-        // Class-level disable is still available pre-init in
-        // BrazeKit 14.x — use it unconditionally so disableSDK stays
-        // genuinely init-independent per C07's intent.
-        Braze.disableSDK()
-        // Mirror the change on the instance if one exists, so an
-        // immediately-following isDisabled() read returns the new state
-        // without waiting for the SDK to re-sync its instance view.
-        BrazePlugin.braze?.enabled = false
-        call.resolve()
+        Self.onMain {
+            BrazePlugin.disabledPreInit = true
+            BrazePlugin.braze?.enabled = false
+            call.resolve()
+        }
     }
 
     @objc func enableSDK(_ call: CAPPluginCall) {
-        // BrazeKit 14.x has NO class-level enable — only the instance
-        // `enabled` setter. Require an initialized Braze instance.
-        // This deviates from C07's claim of init-independence; the
-        // deviation is iOS-specific and tracked for a C07 update.
-        guard let braze = Self.requireInitialized(call) else { return }
-        braze.enabled = true
-        call.resolve()
+        Self.onMain {
+            BrazePlugin.disabledPreInit = false
+            BrazePlugin.braze?.enabled = true
+            call.resolve()
+        }
     }
 
     @objc func isDisabled(_ call: CAPPluginCall) {
-        // Pre-init: report as not disabled (the SDK simply hasn't
-        // been configured; that isn't a disabled state). Post-init:
-        // negate the instance's `enabled` property.
-        let disabled: Bool = BrazePlugin.braze.map { !$0.enabled } ?? false
-        call.resolve(["disabled": disabled])
+        Self.onMain {
+            // Post-init the instance is authoritative. Pre-init we report the
+            // recorded intent, so a consent gate that calls `disableSDK()`
+            // before `initialize` and then reads this back gets `true`.
+            let disabled = BrazePlugin.braze.map { !$0.enabled } ?? BrazePlugin.disabledPreInit
+            call.resolve(["disabled": disabled])
+        }
     }
 
     @objc func requestImmediateDataFlush(_ call: CAPPluginCall) {
-        guard let braze = Self.requireInitialized(call) else { return }
-        braze.requestImmediateDataFlush()
-        call.resolve()
+        Self.onMain {
+            guard let braze = Self.requireInitialized(call) else { return }
+            braze.requestImmediateDataFlush()
+            call.resolve()
+        }
     }
 
     // MARK: - Helpers
@@ -983,13 +1168,36 @@ public class BrazePlugin: CAPPlugin {
     /// with a clear error and returns nil.
     ///
     /// Use in any bridge method that needs the live `Braze` instance — i.e.
-    /// methods that mutate user state or queue events. Init-independent methods
-    /// (privacy/lifecycle statics) bypass this helper.
+    /// methods that mutate user state or queue events. Init-independent
+    /// methods (the C07 privacy/lifecycle quartet) bypass this helper.
+    @MainActor
     private static func requireInitialized(_ call: CAPPluginCall) -> Braze? {
         guard let braze = braze else {
             call.reject("Braze.initialize() must be called before any other Braze method.")
             return nil
         }
         return braze
+    }
+
+    /// Reads a bridge value as an integer, rejecting values that merely
+    /// *convert*. `NSNumber(42.5) as? Int` is already nil, but a JSON boolean
+    /// bridges to `Int` as 0/1, so booleans are excluded explicitly.
+    static func integerValue(_ raw: Any) -> Int? {
+        guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        return raw as? Int
+    }
+
+    /// Validates an event / purchase property bag: Braze property values must
+    /// be JSON scalars. Returns the C04 error string for the first offending
+    /// key (keys are walked in sorted order so the message is deterministic),
+    /// or nil when every value is acceptable.
+    static func propertiesError(_ properties: [String: Any]?, method: String) -> String? {
+        guard let properties = properties else { return nil }
+        for key in properties.keys.sorted() {
+            let value = properties[key]
+            if value is String || value is NSNumber { continue }
+            return "Braze.\(method): `properties.\(key)` must be string, number, or boolean."
+        }
+        return nil
     }
 }
