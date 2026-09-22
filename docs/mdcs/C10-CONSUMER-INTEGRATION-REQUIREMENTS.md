@@ -36,20 +36,33 @@ Capacitor 8, `npx cap add ios` generates an **SPM** project by default, so a Coc
 does not install into a stock Capacitor 8 app at all — it installs only into an app whose
 maintainer deliberately chose the Podfile path.
 
+Every cell below is a build that runs in CI. **A ⚠️ or a "should work" in this table is a bug** —
+either add the job or narrow the range.
+
 | Capacitor | npm install | iOS — CocoaPods | iOS — SPM | Android | Web |
 |---|---|---|---|---|---|
-| **6.x** | ✅ peer `^6.0.0` | ✅ podspec `>= 6.0, < 9.0` | ⚠️ *possible, unverified* — `cap add ios` in Cap 6 has no `--packagemanager SPM` flag, so there is no stock SPM project to test against | ✅ your `variables.gradle` overrides the plugin's Cap-8 defaults | ✅ |
-| **7.x** | ✅ peer `^7.0.0` | ✅ | ⚠️ *possible, unverified* — same reason; Capacitor 7 gained SPM as opt-in but the repo has no Cap 7 app | ✅ same | ✅ |
-| **8.x** | ✅ peer `^8.0.0` | ✅ **verified** — `demo/ios` | ✅ **verified** — `example/ios` | ✅ **verified** — `demo/android` | ✅ |
+| **6.x** (6.2.2) | ✅ peer `^6.0.0` | ✅ `verify-capacitor-compat-ios` — needs the 2 Podfile edits | ✅ `verify-capacitor-compat-ios` — CLI flag is marked *experimental*; needs the app's iOS target at 15.0 | ✅ `verify-capacitor-compat-android` — needs the 3 Gradle edits | ✅ |
+| **7.x** (7.6.9) | ✅ peer `^7.0.0` | ✅ `verify-capacitor-compat-ios` — needs the 2 Podfile edits | ✅ `verify-capacitor-compat-ios` — needs the app's iOS target at 15.0 | ✅ `verify-capacitor-compat-android` — **no edits**, the stock template already clears every floor | ✅ |
+| **8.x** (8.5.2) | ✅ peer `^8.0.0` | ✅ `verify-ios` — `demo/ios` | ✅ `verify-ios` — `example/ios` | ✅ `verify-android` — `demo/android` | ✅ |
 | **9.x** | ❌ by design | ❌ podspec `< 9.0` | ❌ `capacitor-swift-pm` range is `..<"9.0.0"` | — | — |
 
-**What "verified" means here** is a CI job, not a claim: `verify-ios` builds `demo/ios` through
-`pod install` + `xcodebuild test`, then builds `example/ios` through SPM; `verify-android` builds
-`demo/android` on JDK 21 with compileSdk 36. What is **unverified** is Capacitor 6/7 — nothing in
-this repo compiles against them any more, because both apps moved to Capacitor 8. The peer dep and
-the podspec still *allow* 6 and 7 and the mechanisms are shared (see the registration note below),
-but a 6/7 regression would reach a consumer before it reached CI. Say so rather than implying a
-matrix that is actually tested.
+**What "✅" means here** is a named CI job, not a claim. `verify-ios` builds `demo/ios` through
+`pod install` + `xcodebuild test` and `example/ios` through SPM; `verify-android` builds
+`demo/android` on JDK 21 with compileSdk 36. The two `verify-capacitor-compat-*` jobs
+(0.3.0, matrix over majors 6 and 7) run [`scripts/compat-app.sh`](../../scripts/compat-app.sh),
+which scaffolds a throwaway copy of `example/`, pins `@capacitor/{core,cli,ios,android}` to the
+**latest release of that major**, applies exactly the edits listed in this MDC, builds, and then
+asserts the bridge actually shipped — `_OBJC_CLASS_$_BrazePlugin` linked into `App.debug.dylib` on
+iOS, `Lcom/bma342/braze/BrazePlugin;` in the APK's dex on Android. "It compiled" is not "the plugin
+is in there".
+
+Because the script resolves the major at run time rather than pinning a patch, a newly published
+6.x or 7.x that breaks the plugin turns CI red on the next run. That is deliberate; the alternative
+is hearing it from a consumer.
+
+**Keep this table and the script in lockstep.** The script *is* the executable copy of the edit
+lists below — if you change an edit in one place and not the other, the job fails and tells you
+which.
 
 ### One plugin-registration mechanism for all three majors
 
@@ -118,6 +131,33 @@ Things worth knowing:
 - **The privacy manifest ships as an SPM resource** (`resources: [.copy("PrivacyInfo.xcprivacy")]`),
   so both install paths give Xcode the same manifest to aggregate.
 
+### SPM on Capacitor 6 / 7 — one extra step
+
+Both majors can generate an SPM project (`npx cap add ios --packagemanager SPM`; Capacitor 6 prints
+`SPM Support is still experimental`), and both work — `verify-capacitor-compat-ios` builds them. One
+thing differs from Capacitor 8, and it is not obvious:
+
+**Raise the App target's `IPHONEOS_DEPLOYMENT_TARGET` to 15.0 before `npx cap sync ios`.** On the
+SPM path there is no Podfile, so this is where the plugin's iOS 15 floor gets met. The CLI *derives*
+`CapApp-SPM/Package.swift`'s `platforms: [.iOS(.vN)]` from the app target — `getMajoriOSVersion()`
+in `@capacitor/cli` literally substrings `IPHONEOS_DEPLOYMENT_TARGET = ` out of your `project.pbxproj`
+— and the generated file carries a `DO NOT MODIFY THIS FILE` banner and is rewritten on every sync,
+so editing it directly is not a fix. Capacitor 6's template ships `13.0` and Capacitor 7's ships
+`14.0`, and leaving either produces:
+
+```
+error: The package product 'CapacitorBraze' requires minimum platform version 15.0
+for the iOS platform, but this target supports 14.0 (in target 'CapApp-SPM' from
+project 'CapApp-SPM')
+```
+
+Capacitor 8's template already ships `15.0`, which is why this step has no Capacitor 8 equivalent.
+
+One Capacitor 7 CLI quirk worth naming so it does not read as a plugin fault: `npx cap add ios
+--packagemanager SPM` generates the SPM project correctly and *then* fails trying to run `pod
+install` (`ENOENT ... ios/App/Podfile`). `npx cap sync ios` afterwards takes the SPM path and
+finishes the job. Capacitor 6 and 8 do not do this.
+
 ## iOS — install path B: CocoaPods
 
 Still fully supported, and still what `demo/ios` uses. Two Podfile lines are **non-optional**, and
@@ -148,13 +188,18 @@ platform :ios, '15.0'
 use_frameworks! :linkage => :static
 ```
 
-Both are non-optional. Capacitor's stock `cap add ios` template ships with `platform :ios, '13.0'` and `use_frameworks!` (dynamic) — those defaults will fail `pod install` against this plugin.
+Both are non-optional, on every major that still uses a Podfile. The stock `cap add ios` template
+ships `platform :ios, '13.0'` on Capacitor 6 and `'14.0'` on Capacitor 7 (Capacitor 8 ships `15.0`),
+and plain `use_frameworks!` (dynamic) on all three — those defaults fail `pod install` against this
+plugin. Raise the App target's `IPHONEOS_DEPLOYMENT_TARGET` to 15.0 too, so the app is not deploying
+below its own dependencies; `verify-capacitor-compat-ios` does both.
 
 ### Why `platform :ios, '15.0'`
 
 **This is the plugin's own floor, not BrazeKit's.** `CapacitorBraze.podspec` sets
 `s.ios.deployment_target = '15.0'`, and CocoaPods aborts with `"required a higher minimum deployment
-target"` when the consumer's Podfile sets a lower one. Capacitor's stock template ships `13.0`.
+target"` when the consumer's Podfile sets a lower one — the exact failure a stock Capacitor 6 or 7
+`npx cap add ios` hits.
 
 An earlier version of this MDC — and the README — said BrazeKit required iOS 15. **That is false,
 and verifiably so:** `BrazeKit.podspec` declares `12.0` at tag 14.1.0, at 15.0.0 and at 18.2.1, and
@@ -276,15 +321,23 @@ mentions AGP 9.2.1, which describes how Braze *builds* the SDK and is not a cons
 template already exceeds every Braze floor. This is new in 0.3.0 — through 0.2.0 the README listed
 three mandatory Gradle edits, and all three are now the template's own defaults.
 
-**A Capacitor 6 or 7 consumer still needs the three edits**, because Capacitor 6/7's templates ship
-AGP 8.2.x / Gradle 8.2.1 / Kotlin 1.9.x / compileSdk 34:
+**A Capacitor 7 consumer has nothing to configure either.** Capacitor 7.6.9's template ships
+AGP 8.7.2 / Gradle 8.11.1 / compileSdk 35, which clears every Braze floor above.
+`verify-capacitor-compat-android` builds Capacitor 7 with **zero** edits to prove it.
+
+**A Capacitor 6 consumer needs three edits**, because Capacitor 6.2.2's template ships AGP 8.2.1 /
+Gradle 8.2.1 / compileSdk 34 — under every floor:
+
+```
+# android/gradle/wrapper/gradle-wrapper.properties — AGP 8.6.0 needs Gradle 8.7+
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
+```
 
 ```groovy
 // android/build.gradle
 buildscript {
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.6.0'              // from 8.2.x
-        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0'   // from 1.9.x
+        classpath 'com.android.tools.build:gradle:8.6.0'   // from 8.2.1
     }
 }
 ```
@@ -296,12 +349,19 @@ ext {
 }
 ```
 
-```
-# android/gradle/wrapper/gradle-wrapper.properties — AGP 8.6.0 needs Gradle 8.7+
-distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
-```
+Those exact three values — not "use the latest" — are what
+`verify-capacitor-compat-android` applies, so they are a tested minimum rather than a guess. JDK 21
+works once the wrapper is at 8.7; Capacitor 6's *stock* Gradle 8.2.1 predates Java 21 support, which
+is one more reason the wrapper bump is not optional.
 
-Skipping them produces, respectively:
+Skipping the edits produces, in the order you will hit them:
+
+```
+Failed to create Jar file .../caches/jars-9/.../bcprov-jdk18on-1.79.jar
+```
+— Gradle 8.2.1 choking on a Java-21 multi-release jar it pulls in while configuring
+`:capacitor-braze`. It names neither AGP nor Braze, so it reads like a corrupt cache; it is the
+wrapper being too old. Then:
 
 ```
 Dependency 'androidx.swiperefreshlayout:swiperefreshlayout:1.2.0' requires
@@ -312,9 +372,11 @@ applications that depend on it to compile against version 35 or later of
 the Android APIs.
 ```
 
-**The Kotlin plugin bump is not optional.** Braze 43.x ships Kotlin **2.2.0** metadata; Kotlin 1.9.x
-reads up to 2.0.0 and aborts the compile with "incompatible version of Kotlin" errors against every
-Braze class.
+**No Kotlin classpath entry is needed.** Earlier revisions of this MDC listed one; that was wrong.
+Braze 43.x does ship Kotlin **2.2.0** metadata, which Kotlin 1.9.x cannot read — but the plugin's
+own `android/build.gradle` puts `kotlin-gradle-plugin:2.2.20` on its `buildscript` classpath, and
+Capacitor's app template declares no Kotlin plugin at all, so there is nothing to conflict with. The
+Capacitor 6 build above succeeds with an untouched Kotlin setup.
 
 ### Why the plugin's raised defaults do not break Capacitor 6/7
 
@@ -330,6 +392,15 @@ A Capacitor 6 app's `variables.gradle` sets all three, so it gets its own number
 defaults never apply. The defaults matter only when the module is built standalone, with no host
 app — which is why they track the newest Capacitor major rather than the oldest.
 
+The same logic covers the `buildscript` classpath, which is *not* `rootProject.ext`-driven and is
+the one thing here that could plausibly have broken an older app. It does not, because Gradle
+resolves a subproject's buildscript classes parent-first: the AGP the app's own root
+`build.gradle` declares is the AGP that configures `:capacitor-braze`, and the plugin's
+`com.android.tools.build:gradle:8.13.0` line is inert inside a host app. Verified, not assumed —
+`verify-capacitor-compat-android` builds Capacitor 6 with root AGP **8.6.0** and the plugin's 8.13.0
+line untouched. Removing that line would not lower any consumer floor either, since Braze's
+transitive androidx deps demand AGP 8.6.0 regardless.
+
 ### Bytecode level — deliberately still 17
 
 The library emits **JVM 17** bytecode (`compileOptions` + the `kotlin { compilerOptions { jvmTarget } }`
@@ -341,7 +412,10 @@ That mix is fine, and it was **checked rather than assumed**: `demo/android`'s
 succeeds. Staying at 17 keeps the plugin loadable from a Capacitor 6/7 app whose own modules are
 still at Java 17 — raising it would be a consumer-facing break for no gain.
 
-**JDK 21 is required to build** either way (AGP 8.13 needs it), even though the output is 17.
+**On Capacitor 8, JDK 21 is required to build** (its AGP 8.13 needs it), even though the output is
+17. On Capacitor 6/7 the JDK floor is the consumer's own AGP: the Capacitor 6 compat build runs on
+JDK 17 *and* on JDK 21 once its wrapper is at Gradle 8.7, and CI uses 21 for both majors so one
+`setup-java` step covers the matrix.
 
 ### Sessions are handled by the plugin
 

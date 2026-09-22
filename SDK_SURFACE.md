@@ -29,7 +29,7 @@ Braze SDKs are not monolithic — each platform has multiple sub-modules. The pl
 | `com.braze:android-sdk-jetpack-compose` | Compose integration | ❌ N/A (Capacitor is WebView-based) |
 | `com.braze:android-sdk-unity` | Unity engine | ❌ N/A |
 
-**Min SDK:** the plugin's `android/build.gradle` defaults to `minSdkVersion 22`, matching Capacitor 6's stock template and [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md); a consumer's `rootProject.ext.minSdkVersion` always wins. Braze's AAR metadata declares `minCompileSdk=21`. (This number disagreed across three documents until 0.2.0 — if you change it, change `android/build.gradle`, C10 and here together.)
+**Min SDK:** the plugin's `android/build.gradle` defaults to `minSdkVersion 24` as of 0.3.0, matching **Capacitor 8's** stock template and [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md); a consumer's `rootProject.ext.minSdkVersion` always wins, so a Capacitor 6 app keeps its template's 22 and a Capacitor 7 app keeps 23 — both verified building by `verify-capacitor-compat-android`. Braze's AAR metadata declares `minCompileSdk=21`. (This number disagreed across three documents until 0.2.0 — if you change it, change `android/build.gradle`, C10 and here together.)
 
 **Kotlin / Build deps:** Kotlin 2.2.x, FCM 24.1.x — these are Braze's pins; the plugin inherits.
 
@@ -143,6 +143,11 @@ Capacitor **6, 7 or 8** (`@capacitor/core` peer `^6.0.0 || ^7.0.0 || ^8.0.0`, po
 Shipped in 0.3.0; both items were on this roadmap through 0.2.0. Bounds and the widening protocol
 are [C08](./docs/mdcs/C08-NATIVE-SDK-PINNING.md); the consumer-facing matrix is
 [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md#the-support-matrix-030).
+
+Every major in that range is built in CI as of 0.3.0, on every install path it offers:
+`verify-capacitor-compat-android` and `verify-capacitor-compat-ios` matrix over Capacitor 6 and 7
+(`scripts/compat-app.sh`), and `verify-ios` / `verify-android` cover 8 through `demo/` + `example/`.
+A widening or narrowing of the range is therefore a CI change as well as a manifest change.
 
 ### Roadmap — not shipped
 

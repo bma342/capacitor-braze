@@ -34,11 +34,12 @@ Snapshot at **0.3.0** (2026-09-22). This table drifts — `package.json`, `git l
 | **Developer testbed** (`example/`) | Every plugin method has a button; clicking invokes + logs |
 | **Reference app** (`demo/`) | React 19 + Tailwind 4 + TanStack Router; restaurant ordering + e-commerce flows; iOS + Android Capacitor projects committed |
 | **MDC design contracts** | [C01–C11](./docs/mdcs/) codify the patterns; CI gates enforce them |
-| **CI** | 9 jobs in [`test.yml`](./.github/workflows/test.yml) plus 2 CodeQL analyses (`javascript-typescript`, `actions`) in [`codeql.yml`](./.github/workflows/codeql.yml); all GitHub Actions pinned to commit SHAs; release publishing gated on the full suite. `build-plugin` enforces a gzipped-ESM bundle budget of 20,480 B (measured 17,472 B at 0.2.0; 0.3.0 changed no TypeScript) |
+| **CI** | 11 jobs in [`test.yml`](./.github/workflows/test.yml) plus 2 CodeQL analyses (`javascript-typescript`, `actions`) in [`codeql.yml`](./.github/workflows/codeql.yml); all GitHub Actions pinned to commit SHAs; release publishing gated on the full suite. Two of the 11 are matrix jobs over Capacitor 6 and 7, so the range the peer dep advertises is the range CI builds. `build-plugin` enforces a gzipped-ESM bundle budget of 20,480 B (measured 17,472 B at 0.2.0; 0.3.0 changed no TypeScript) |
 | **Branch protection** | `main` requires the CI checks (strict), signed commits, no force pushes, no deletions. Admin enforcement, a release-tag ruleset and private vulnerability reporting are **maintainer steps not yet performed** — see [CONTRIBUTING → Maintainer pre-tag checklist](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
 | **Published to npm** | ✅ [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) — `0.1.0` published 2026-05-22 (by hand, no provenance attestation). `0.2.0` was the first release published by the workflow with `--provenance` |
 | **Smoke-tested against real Braze** | ❌ **Not yet.** The Layer 4 playbook and capture templates are staged in [`docs/smoke-tests/`](./docs/smoke-tests/) but have never been run — no claim in this repo is backed by a live Braze backend |
-| **Capacitor 8 + SPM** | ✅ New in 0.3.0. Peer dep `^6.0.0 \|\| ^7.0.0 \|\| ^8.0.0`, podspec `>= 6.0, < 9.0`, and a root [`Package.swift`](./Package.swift) so the plugin installs into the SPM project Capacitor 8's CLI now generates by default. `demo/` (Pods + Android) and `example/` (SPM) both build in CI on Capacitor 8.5.2. **Capacitor 6/7 remain in range but no longer have an app in this repo — see the honest caveat in [C10's matrix](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md#the-support-matrix-030)** |
+| **Capacitor 8 + SPM** | ✅ New in 0.3.0. Peer dep `^6.0.0 \|\| ^7.0.0 \|\| ^8.0.0`, podspec `>= 6.0, < 9.0`, and a root [`Package.swift`](./Package.swift) so the plugin installs into the SPM project Capacitor 8's CLI now generates by default. `demo/` (Pods + Android) and `example/` (SPM) both build in CI on Capacitor 8.5.2 |
+| **Capacitor 6 / 7 still supported** | ✅ New in 0.3.0, and now *tested* rather than merely allowed. `verify-capacitor-compat-{ios,android}` build a scratch app against the latest 6.x and 7.x on CocoaPods, SPM and Android every PR, applying only the consumer edits [C10's matrix](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md#the-support-matrix-030) documents |
 
 See [`SDK_SURFACE.md` §2](./SDK_SURFACE.md#2-plugin-version-roadmap) for the version roadmap and what is still unshipped (banners, push-permission helpers, geofences).
 
@@ -52,7 +53,7 @@ Stated plainly so a reviewer does not have to find them:
 - **`inAppMessageReceived`'s end-to-end delivery test is web-only.** The mock server now returns real trigger envelopes, so the Web SDK's own trigger engine builds the message and the tests assert what a consumer's listener receives. On iOS and Android the DTO is still covered only at the serializer level, against real SDK message classes.
 - **No coverage instrumentation on the native bridges.** The web bridge has a measured, ratcheted coverage number; the 91 Android and 35 iOS tests are counts, not coverage. JaCoCo / `-enableCodeCoverage` is a tracked follow-up.
 - **CodeQL does not analyse Swift or Kotlin.** `javascript-typescript` and `actions` are analysed on every push and PR to `main` plus weekly; the native languages need a traced compile that would roughly double the `verify-ios` / `verify-android` runtime, so they are a deliberate deferral.
-- **Capacitor 6 and 7 are supported but not exercised.** The peer dep and podspec still allow them, and the iOS registration mechanism was verified identical across the 6.2.2 / 7.6.9 / 8.5.2 runtimes — but `demo/` and `example/` both moved to Capacitor 8, so no CI job compiles against 6 or 7. A 6/7 regression would reach a consumer before it reached CI.
+- **The Capacitor 6/7 compat jobs build a scratch app, not the demo.** `verify-capacitor-compat-{ios,android}` scaffold a throwaway copy of `example/` against the latest 6.x and 7.x, so the *bridge* is compiled and linked on every install path — but `demo/`'s richer flows and the 35 iOS / 91 Android tests still only run against Capacitor 8. They also resolve the latest release of each major at run time, so a newly published 6.x/7.x can turn CI red without a commit; that is intended.
 
 ## Quick start
 
@@ -71,9 +72,11 @@ Capacitor 8 Android template already exceeds every floor Braze imposes. You need
 
 **On Capacitor 6 or 7, or on any Capacitor version with a CocoaPods iOS project**, apply the
 [platform setup](#platform-setup) below first — [iOS/CocoaPods](#ios--install-path-b-cocoapods)
-needs two Podfile lines, and [Android on Capacitor 6/7](#android--gradle-config) needs three Gradle
-bumps. Neither is optional; both are what the pinned Braze SDKs force. Full rationale and the
-support matrix are in [MDC C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md).
+needs two Podfile lines on every major, iOS/SPM on 6/7 needs the App target raised to 15.0, and
+[Android on Capacitor 6](#android--gradle-config) needs three Gradle bumps (Capacitor 7's Android
+template needs none). None of it is optional; all of it is what the pinned Braze SDKs force. Full
+rationale and the support matrix are in
+[MDC C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md).
 
 ```ts
 import { Braze } from 'capacitor-braze';
@@ -2096,18 +2099,20 @@ Some consumer-side configuration is non-optional because of how the underlying B
 
 ### Platform requirements at a glance
 
-| | Capacitor 8 | Capacitor 6 / 7 |
-|---|---|---|
-| **iOS project type** | SPM (default) or CocoaPods | CocoaPods |
-| **iOS — SPM** | nothing to configure | opt-in, and untested here |
-| **iOS — CocoaPods** | 2 Podfile lines | 2 Podfile lines |
-| **Xcode** | **26+** (BrazeKit 18.x *and* Capacitor 8 both require it) | **26+** (BrazeKit 18.x) |
-| **iOS deployment target** | 15.0 | 15.0 |
-| **Android** | nothing to configure — the stock template's AGP 8.13 / Gradle 8.14.3 / compileSdk 36 already clears every Braze floor | 3 Gradle bumps (below) |
-| **JDK** | 21 | 21 |
-| **Web** | `@braze/web-sdk` peer dep | `@braze/web-sdk` peer dep |
+| | Capacitor 8 | Capacitor 7 | Capacitor 6 |
+|---|---|---|---|
+| **iOS project type** | SPM (default) or CocoaPods | CocoaPods (default) or SPM | CocoaPods (default) or SPM *(experimental)* |
+| **iOS — SPM** | nothing to configure | set the App target to iOS 15.0 | set the App target to iOS 15.0 |
+| **iOS — CocoaPods** | 2 Podfile lines | 2 Podfile lines | 2 Podfile lines |
+| **Xcode** | **26+** (BrazeKit 18.x *and* Capacitor 8 both require it) | **26+** (BrazeKit 18.x) | **26+** (BrazeKit 18.x) |
+| **iOS deployment target** | 15.0 | 15.0 | 15.0 |
+| **Android** | nothing to configure — the stock template's AGP 8.13 / Gradle 8.14.3 / compileSdk 36 already clears every Braze floor | nothing to configure — AGP 8.7.2 / Gradle 8.11.1 / compileSdk 35 also clear it | 3 Gradle bumps (below) |
+| **JDK** | 21 | 21 | 17 or 21 |
+| **Web** | `@braze/web-sdk` peer dep | `@braze/web-sdk` peer dep | `@braze/web-sdk` peer dep |
 
-Capacitor 6 and 7 are in the supported range but no app in this repo builds against them — see the
+Every cell is a CI job, including the Capacitor 6 and 7 ones: `verify-capacitor-compat-ios` and
+`verify-capacitor-compat-android` build a scratch copy of `example/` against the latest 6.x and 7.x
+on each iOS install path and on Android, applying exactly the edits this section lists. See the
 [support matrix in C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md#the-support-matrix-030).
 
 ### iOS — install path A: Swift Package Manager
@@ -2124,6 +2129,14 @@ Two things to expect: the first resolve downloads `BrazeKit.zip` (a binary targe
 Releases and is slow, and `swift build` from the command line will not work for this package
 because `capacitor-swift-pm` ships iOS-only xcframeworks. Build through Xcode or `xcodebuild` with
 an iOS destination. See [`example/ios`](./example/ios) for the canonical working SPM project.
+
+**On Capacitor 6 or 7** the SPM path works too (`npx cap add ios --packagemanager SPM`; Capacitor 6
+calls it experimental), with one extra step: **set the App target's iOS Deployment Target to 15.0
+before `npx cap sync ios`.** There is no Podfile on this path, so the app target is where the
+plugin's iOS 15 floor gets met — and the CLI *derives* the generated `CapApp-SPM/Package.swift`'s
+platform from it, so editing that file instead does not work. Leaving Capacitor 6's `13.0` or
+Capacitor 7's `14.0` fails the build with `The package product 'CapacitorBraze' requires minimum
+platform version 15.0`.
 
 ### iOS — install path B: CocoaPods — `ios/App/Podfile`
 
@@ -2165,40 +2178,50 @@ compileSdk 36, minSdk 24 and JDK 21 — all above the floors Braze's transitive 
 impose (the Braze AARs themselves declare only `minCompileSdk=21` / `minAndroidGradlePluginVersion=1.0.0`).
 This was three mandatory edits through 0.2.0; Capacitor 8 absorbed all three.
 
-**On Capacitor 6 or 7 the stock template is still not sufficient**, and the same three edits apply:
+**On Capacitor 7 there is nothing to do either.** Its template ships AGP 8.7.2, Gradle 8.11.1 and
+compileSdk 35, which also clear every floor — `verify-capacitor-compat-android` builds Capacitor 7
+with zero edits to prove it.
 
-```groovy
-// android/build.gradle — bump AGP from Capacitor 6/7's stock 8.2.x
-classpath 'com.android.tools.build:gradle:8.6.0'
-classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0'
-```
-
-```groovy
-// android/variables.gradle — bump compileSdk from Capacitor 6/7's stock 34
-ext {
-    compileSdkVersion = 35
-}
-```
+**On Capacitor 6 the stock template is not sufficient.** Its AGP 8.2.1 / Gradle 8.2.1 / compileSdk 34
+are all below the floor, so three edits apply:
 
 ```properties
 # android/gradle/wrapper/gradle-wrapper.properties — AGP 8.6.0 needs Gradle 8.7+
 distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
 ```
 
-Skipping them produces, respectively:
+```groovy
+// android/build.gradle — bump AGP from Capacitor 6's stock 8.2.1
+classpath 'com.android.tools.build:gradle:8.6.0'
+```
+
+```groovy
+// android/variables.gradle — bump compileSdk from Capacitor 6's stock 34
+ext {
+    compileSdkVersion = 35
+}
+```
+
+Skipping them produces, in the order you hit them: a `Failed to create Jar file
+... bcprov-jdk18on-1.79.jar` that looks like a corrupt Gradle cache but is really the 8.2.1 wrapper
+being too old, then
 
 ```
 Dependency 'androidx.swiperefreshlayout:swiperefreshlayout:1.2.0' requires Android Gradle plugin 8.6.0 or higher.
 Dependency 'androidx.recyclerview:recyclerview:1.4.0' requires libraries and applications that depend on it to compile against version 35 or later of the Android APIs.
 ```
 
-Kotlin 2.2.0 is needed because Braze 43.x ships Kotlin 2.2.0 metadata that Kotlin 1.9.x cannot read.
+You do **not** need to add a Kotlin Gradle plugin classpath. Braze 43.x does ship Kotlin 2.2.0
+metadata that Kotlin 1.9.x cannot read, but the plugin puts `kotlin-gradle-plugin:2.2.20` on its own
+`buildscript` classpath and Capacitor's app template declares none, so there is nothing to bump.
 
 The plugin's own standalone defaults are Capacitor 8's (compileSdk 36 / targetSdk 36 / minSdk 24,
 AGP 8.13.0, Kotlin 2.2.20), but **every one of them is read from `rootProject.ext` first**, so your
-`variables.gradle` always wins and a Capacitor 6/7 project keeps its own numbers. The library still
-emits **JVM 17** bytecode; JDK 21 is required to build it. See [`demo/android/`](./demo/android/)
-for the canonical working example.
+`variables.gradle` always wins and a Capacitor 6/7 project keeps its own numbers. The plugin's AGP
+classpath line is likewise inert inside your app — Gradle resolves buildscript classes parent-first,
+so your root `build.gradle`'s AGP is the one that configures the plugin module. The library emits
+**JVM 17** bytecode; building it needs JDK 21 on Capacitor 8 and JDK 17 or 21 on Capacitor 6/7. See
+[`demo/android/`](./demo/android/) for the canonical working example.
 
 **Sessions are handled for you.** As of 0.2.0 the plugin registers `BrazeActivityLifecycleCallbackListener` on your `Application` once per process during `initialize` and opens a session for the host Activity — do **not** register your own, or sessions will be double-counted.
 

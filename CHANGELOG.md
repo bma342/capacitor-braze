@@ -32,7 +32,9 @@ Unchanged from 0.2.0 — no Braze SDK moved in this release:
 - Podspec dependency: `Capacitor` **`>= 6.0, < 9.0`** (was `>= 6.0, < 8.0`)
 - `Package.swift`: `capacitor-swift-pm` **`"6.0.0"..<"9.0.0"`** — a bounded range, not `from:`, so
   Capacitor 9 cannot absorb consumers' installs before anyone has built against it
-- `demo/` and `example/` both run **Capacitor 8.5.2**
+- `demo/` and `example/` both run **Capacitor 8.5.2**; Capacitor **6.2.2** and **7.6.9** are built
+  every PR by the new `verify-capacitor-compat-*` jobs (below), so the advertised range and the
+  built range are now the same range
 
 ### Added
 
@@ -46,16 +48,24 @@ Unchanged from 0.2.0 — no Braze SDK moved in this release:
   built in CI by `verify-ios`. Between it and `demo/ios` (CocoaPods), every cell of the
   Pods × SPM matrix compiles on every PR.
 - **A support matrix in [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md#the-support-matrix-030)**
-  stating which combinations are CI-verified and which are merely allowed, and a Capacitor range
-  policy in [C08](./docs/mdcs/C08-NATIVE-SDK-PINNING.md) covering what widening to Capacitor 9 will
-  require.
+  in which every cell is a named CI job, plus a Capacitor range policy in
+  [C08](./docs/mdcs/C08-NATIVE-SDK-PINNING.md) covering what widening to Capacitor 9 will require.
+- **Capacitor 6 and 7 are now built by CI, not merely allowed by the manifests.** Two new jobs —
+  `verify-capacitor-compat-android` (ubuntu) and `verify-capacitor-compat-ios` (macOS), each a
+  matrix over majors 6 and 7 — run [`scripts/compat-app.sh`](./scripts/compat-app.sh), which
+  scaffolds a throwaway copy of `example/` against the **latest release of that major**, applies
+  exactly the consumer edits C10 documents, builds it (CocoaPods *and* SPM on iOS, Gradle on
+  Android) and then asserts the bridge actually shipped: `_OBJC_CLASS_$_BrazePlugin` linked into
+  `App.debug.dylib`, `Lcom/bma342/braze/BrazePlugin;` in the APK's dex. Verified at Capacitor
+  **6.2.2** and **7.6.9**. Because the script resolves the major at run time, a newly published
+  6.x/7.x that breaks the plugin turns CI red without a commit behind it — deliberate.
 
 ### Changed
 
 - **Android: no Gradle edits are required on Capacitor 8.** Its stock template ships AGP 8.13.0,
   Gradle 8.14.3, compileSdk 36, minSdk 24 and JDK 21, all above the floors Braze's transitive
   androidx dependencies impose. The three edits the README demanded through 0.2.0 now apply only to
-  Capacitor 6/7 projects.
+  Capacitor **6** projects — Capacitor 7's template clears the floors too (see below).
 - The plugin's own standalone Android defaults move to Capacitor 8's: AGP **8.13.0** (was 8.6.0),
   Kotlin **2.2.20** (was 2.2.0), compileSdk **36** (was 35), targetSdk **36** (was 35), minSdk **24**
   (was 22). Every one is still read from `rootProject.ext` first, so a Capacitor 6/7 consumer's
@@ -64,7 +74,18 @@ Unchanged from 0.2.0 — no Braze SDK moved in this release:
   `:app:assembleDebug` links the JVM-17 plugin AAR against Capacitor 8's Java-21
   `:capacitor-android` and succeeds.
 - `verify-android` installs `platforms;android-36` / `build-tools;36.0.0`; `verify-ios` builds the
-  SPM leg in addition to the Pods leg.
+  SPM leg in addition to the Pods leg. `test.yml` is now **11 jobs**, and because `release.yml`
+  gates publishing on the whole workflow via `workflow_call`, the compat matrix gates releases too.
+- **The Capacitor 6/7 Android edit list is shorter and more accurate than 0.2.0's docs said.**
+  Capacitor **7** needs *no* Android edits at all — its template's AGP 8.7.2 / Gradle 8.11.1 /
+  compileSdk 35 already clear every Braze floor. Capacitor **6** needs three (Gradle wrapper 8.7,
+  AGP 8.6.0, compileSdk 35) and **not** the Kotlin-plugin classpath bump the README and C10 used to
+  demand: the plugin puts `kotlin-gradle-plugin:2.2.20` on its own buildscript classpath, and
+  Capacitor's app template declares none. Both corrections come from the new compat builds.
+- **C10 now documents the SPM path on Capacitor 6/7**, whose one non-obvious requirement is that the
+  **App target's** `IPHONEOS_DEPLOYMENT_TARGET` must be 15.0 before `cap sync` — the CLI derives the
+  generated `CapApp-SPM/Package.swift`'s platform from the pbxproj, and that file is regenerated on
+  every sync, so editing it is not a fix.
 - Dependabot no longer ignores `@capacitor/*` majors. The ignore rule existed because the plugin
   capped at Capacitor 7; now that it tracks current Capacitor, the rule only hid drift. Majors are
   still maintainer-verified via CI rather than auto-merged.
@@ -97,12 +118,12 @@ three; these matter to forks, patches and anyone who vendored the source.
 
 ### Known limitations
 
-- **Capacitor 6 and 7 are in range but no longer exercised by CI.** Both apps in this repo moved to
-  Capacitor 8, so a 6/7 regression would reach a consumer before it reached a CI job. The
-  mechanisms were verified identical across the three runtimes (above), which is evidence, not a
-  test. Recorded in [C10's matrix](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md#the-support-matrix-030).
-- **SPM on Capacitor 6/7 is untested.** Capacitor 6's CLI has no `--packagemanager SPM` flag, so
-  there is no stock project to test against.
+- **The Capacitor 6/7 compat jobs compile and link the bridge; they do not run the native tests.**
+  `demo/`'s richer flows and the 35 iOS / 91 Android tests still only run against Capacitor 8. A
+  behavioural difference between majors inside the bridge would not be caught.
+- **`use_frameworks! :linkage => :static` and `platform :ios, '15.0'` remain mandatory Podfile edits
+  on every major that uses CocoaPods**, including Capacitor 8 when you opt out of SPM. The plugin
+  cannot apply them for you; C10 explains why each is non-optional.
 - **Still no Layer 4 smoke against a live Braze backend**, exactly as at 0.2.0.
 
 ## [0.2.0] — 2026-09-22 — Native SDK bumps, real native test tiers, and an audited release pipeline

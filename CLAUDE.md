@@ -68,14 +68,14 @@ If you find yourself writing more than ~20 lines for a single method, you're pro
 | Layer | Tech | Version pin |
 |---|---|---|
 | **TypeScript API** | TypeScript 5.x | strict, no `any` |
-| **Capacitor** | `@capacitor/core` `^6.0.0 \|\| ^7.0.0 \|\| ^8.0.0` (podspec `>= 6.0, < 9.0`; `capacitor-swift-pm` `6.0.0..<9.0.0`). `demo/` + `example/` both run 8.5.2. Capacitor 6/7 stay in range but **no app in this repo compiles against them** — see C10's matrix | peer dep |
+| **Capacitor** | `@capacitor/core` `^6.0.0 \|\| ^7.0.0 \|\| ^8.0.0` (podspec `>= 6.0, < 9.0`; `capacitor-swift-pm` `6.0.0..<9.0.0`). `demo/` + `example/` both run 8.5.2; **Capacitor 6 and 7 are built every PR** by `verify-capacitor-compat-{ios,android}`, which scaffold a scratch app via `scripts/compat-app.sh` — see C10's matrix for the per-major consumer edits | peer dep |
 | **Android bridge** | Kotlin 2.2.20, AGP 8.13.0, compileSdk/targetSdk 36, minSdk 24 (all Capacitor 8's stock values, all overridable via `rootProject.ext`); JDK 21 toolchain / **JVM 17 bytecode** (verified to link against Capacitor 8's Java-21 `:capacitor-android`) | `com.braze:android-sdk-ui` **43.2.0** (exact pin) |
 | **iOS bridge** | Swift 5.9+, Capacitor iOS, **Xcode 26+** (BrazeKit ≥ 15 requires it; Capacitor 8 does too). Sources at `ios/Sources/BrazePlugin/`; registration is `CAPBridgedPlugin` conformance in Swift — **there is no `.m`** | `BrazeKit` + `BrazeUI` **18.2.1** (exact pin, in *both* the podspec and `Package.swift`) |
 | **Web bridge** | TypeScript | `@braze/web-sdk` **`^6.13.0`** peer dep — a security floor, see SECURITY.md §6 |
 | **Build** | Rollup (Capacitor standard) → ESM + CJS only; the IIFE/`unpkg` bundle was removed in 0.2.0 | — |
 | **Tests** | **vitest** (web, 206 across 18 files, with a `@vitest/coverage-v8` ratchet on `src/web.ts`), **Robolectric/JUnit** (Android, 91), **XCTest** (iOS, 35), **Fastify** mock Braze server (TypeScript, in-process, ephemeral port). No Jest, no Ktor, no Maestro anywhere in this repo | — |
 | **Lint** | **ESLint 10** flat config (`eslint.config.cjs`) on `@ionic/eslint-config` 0.5.0 — the preset's flat rewrite, which peer-requires ESLint 10 — plus Prettier 3.9 (`@ionic/prettier-config`, 120-char width) and SwiftLint. `npm run eslint` runs `--max-warnings=0` | see `package.json` |
-| **CI** | GitHub Actions, all actions SHA-pinned: **9 jobs in `test.yml`** (`lint`, `build-plugin`, `pack-check`, `build-example`, `build-demo`, `test-web`, `audit`, `verify-ios`, `verify-android`) **+ 2 CodeQL analyses** in `codeql.yml` (`javascript-typescript`, `actions`) | ubuntu + macOS |
+| **CI** | GitHub Actions, all actions SHA-pinned: **11 jobs in `test.yml`** (`lint`, `build-plugin`, `pack-check`, `build-example`, `build-demo`, `test-web`, `audit`, `verify-ios`, `verify-android`, `verify-capacitor-compat-android`, `verify-capacitor-compat-ios` — the last two a matrix over Capacitor 6 and 7) **+ 2 CodeQL analyses** in `codeql.yml` (`javascript-typescript`, `actions`) | ubuntu + macOS |
 
 ---
 
@@ -120,7 +120,7 @@ Snapshot at `0.3.0`, verified 2026-09-22 (see `package.json` for the live versio
 | Private vulnerability reporting, `enforce_admins`, `v*` tag ruleset, npm Trusted Publishing | ⏳ maintainer actions — commands in `CONTRIBUTING.md` |
 | Capacitor 8 support (peer `^8`, podspec `< 9.0`, demo + example on 8.5.2) | ✅ 0.3.0 |
 | Swift Package Manager (root `Package.swift`, `CAPBridgedPlugin` registration, `example/ios` SPM build in CI) | ✅ 0.3.0 |
-| Capacitor 6/7 still in range but **no longer exercised by CI** (both apps moved to 8) | ⚠️ known limitation, recorded in C10 |
+| Capacitor 6/7 built in CI (`verify-capacitor-compat-{ios,android}`, matrix × CocoaPods/SPM/Android, via `scripts/compat-app.sh`) | ✅ 0.3.0 |
 | CodeQL for Swift/Kotlin, native coverage instrumentation | ⏳ tracked follow-ups, not started |
 
 **This table drifts.** When in doubt, source-of-truth checks:

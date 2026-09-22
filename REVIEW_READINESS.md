@@ -16,10 +16,10 @@ standard to aim at; this block is what is true.
 | **Web tests** | **206** vitest across **18 files**, ~3.4s, against an in-process Fastify mock |
 | **Android tests** | **91** Robolectric/JUnit — run in CI |
 | **iOS tests** | **35** XCTest — run in CI via a generated target (`scripts/ios-add-test-target.rb`) |
-| **CI jobs** | **9** in `test.yml` + **2** CodeQL analyses in `codeql.yml`, all actions SHA-pinned, per-job least-privilege permissions |
+| **CI jobs** | **11** in `test.yml` (two of them matrix jobs over Capacitor 6 and 7) + **2** CodeQL analyses in `codeql.yml`, all actions SHA-pinned, per-job least-privilege permissions |
 | **Lint** | **ESLint 10** flat config (`eslint.config.cjs`) on `@ionic/eslint-config` 0.5.0, run with `--max-warnings=0`; Prettier 3.9; SwiftLint `--strict`; Android Lint `abortOnError true`. `npm audit` including dev deps: **0 vulnerabilities** |
 | **Native pins** | BrazeKit/BrazeUI **18.2.1** (Xcode 26+), `com.braze:android-sdk-ui` **43.2.0**, `@braze/web-sdk` peer **`^6.13.0`** (security floor) |
-| **Capacitor** | `^6.0.0 \|\| ^7.0.0 \|\| ^8.0.0` (podspec `>= 6.0, < 9.0`). iOS installs under **CocoaPods or SPM**; `demo/` + `example/` both on 8.5.2. **Capacitor 6/7 are in range but no longer built by CI** |
+| **Capacitor** | `^6.0.0 \|\| ^7.0.0 \|\| ^8.0.0` (podspec `>= 6.0, < 9.0`). iOS installs under **CocoaPods or SPM**; `demo/` + `example/` both on 8.5.2. **Every major in the range is built by CI**: `verify-capacitor-compat-{ios,android}` build a scratch app against the latest 6.x and 7.x on CocoaPods, SPM and Android |
 | **Coverage instrumentation** | **web only**: `src/web.ts` measured at 97.45% statements/lines, 90.80% branches, 100% functions, with ratcheted thresholds enforced in the `test-web` job. **Native: none** — the Android and iOS numbers are test counts. `docs/TEST-COVERAGE-AUDIT.md` reports the measurement |
 | **Layer 4 (real Braze)** | **never run.** No release is validated against a live Braze backend |
 | **e2e runner (Maestro/Detox)** | **none, and none planned** — decided against; see `PLAN.md` §14 |
@@ -549,7 +549,7 @@ Plus, before tagging: ☐ **triage the six open Dependabot PRs** — the per-PR 
 ### Still open, and honestly so
 
 - ☐ **Layer 4 manual smoke.** Walk [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) on all three platforms against a real trial and commit the captures. **Neither `0.1.0` nor `0.2.0` is validated against a live Braze backend**, and the README, CHANGELOG and C08 all say so rather than implying otherwise. This is the single largest gap in the project.
-- ☐ **Capacitor 6/7 are supported but unexercised.** Both apps moved to Capacitor 8 in 0.3.0, so no CI job compiles against 6 or 7. The registration mechanism was verified identical across the 6.2.2 / 7.6.9 / 8.5.2 runtimes, which is evidence rather than a test. (Capacitor 8 support and SPM packaging themselves shipped in 0.3.0.)
+- ☐ **The Capacitor 6/7 compat jobs compile the bridge, not the demo's behaviour.** `verify-capacitor-compat-{ios,android}` build a scratch copy of `example/` against 6.2.2 and 7.6.9 on every install path and assert the bridge class is linked into the artifact — so the supported range is no longer a claim. What still only runs on Capacitor 8 is the demo's richer surface and the 35 iOS / 91 Android tests. The jobs also resolve the latest release of each major at run time, so a new 6.x/7.x can turn CI red with no commit behind it.
 - ☐ **C11's integration tier** — URLProtocol on iOS, MockWebServer on Android, asserting real HTTP rather than DTO shape.
 - ☐ **`inAppMessageReceived` delivery-path coverage on iOS and Android.** Web is covered end to end as of `0.2.0` (the mock server returns real trigger envelopes); the native tiers still cover the DTO only, at the serializer level.
 - ☐ **Setter return values** (audit A1-10): `setEmail('nonsense')` resolves everywhere. Deferred as a cross-platform contract change.
