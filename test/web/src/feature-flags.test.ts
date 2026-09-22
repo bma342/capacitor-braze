@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { BrazeWeb } from '../../../src/web';
 
-import { freshMockServer } from './test-utils';
+import { freshMockServer, teardownPlugin } from './test-utils';
 
 /**
  * Behavioral tests for the Feature Flags surface (refreshFeatureFlags,
@@ -15,14 +15,11 @@ import { freshMockServer } from './test-utils';
  * and the no-data initial-state behavior the mock server can reproduce
  * without modeling the SDK's feature-flag refresh response format.
  *
- * What this file does NOT cover yet (mock-server enhancement needed):
- *   - getFeatureFlag returning a real flag from a refreshed cache
- *   - getAllFeatureFlags returning a populated list
- *   - serializeFeatureFlag's output reaching the consumer via the bridge
- * Those tests need the mock to return the SDK's exact feature-flag
- * envelope shape. Filed in the test-coverage gap audit; deferred to a
- * follow-up that enhances the mock-server to optionally return populated
- * feature-flag payloads.
+ * The populated-cache half — getFeatureFlag / getAllFeatureFlags returning
+ * real flags from a refreshed cache, every property type round-tripping
+ * through serializeFeatureFlag, and the impression event on the wire — now
+ * lives in `feature-flags-populated.test.ts`, which stages the SDK's exact
+ * feature-flag envelope on the mock via `freshPluginWithConfig`.
  */
 describe('feature flags (web bridge → @braze/web-sdk → mock)', () => {
   let mock: MockServer;
@@ -43,10 +40,7 @@ describe('feature flags (web bridge → @braze/web-sdk → mock)', () => {
   });
 
   afterAll(async () => {
-    try {
-      await plugin.wipeData();
-    } catch {}
-    await mock.stop();
+    await teardownPlugin(plugin, mock);
   });
 
   it('refreshFeatureFlags does not throw and reaches the SDK', async () => {
@@ -81,14 +75,9 @@ describe('feature flags (web bridge → @braze/web-sdk → mock)', () => {
     await expect(plugin.logFeatureFlagImpression({ id: '' })).rejects.toThrow(/id.*required/i);
   });
 
-  // Populated-cache tests (refresh → getFeatureFlag returns real flag DTO end-to-end)
-  // are deferred. The MockServer.respondTo() API is wired and works, but the SDK
-  // gates refreshFeatureFlags on server-config that is delivered in the FIRST data
-  // POST response during initialize(). The shared-plugin `beforeAll` pattern this
-  // file uses initializes the plugin once before any test can script that initial
-  // response. Closing this requires either per-test plugin lifecycle (significant
-  // restructure) or a small helper that boots `freshMockServer + initialize` with
-  // a config-bearing script in place before init fires. Tracked in
-  // docs/TEST-COVERAGE-AUDIT.md; the spike that proved respondTo() works is on
-  // record in the mock-server commit message.
+  // Populated-cache coverage lives in feature-flags-populated.test.ts. It
+  // needs the server-config block that the SDK only reads from the response
+  // to the FIRST data POST of initialize(), which the shared-plugin
+  // `beforeAll` pattern used here cannot stage in time — hence the separate
+  // file and the `freshPluginWithConfig` helper it uses.
 });

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { BrazeWeb } from '../../../src/web';
 
-import { freshPluginWithConfig } from './test-utils';
+import { freshPluginWithConfig, teardownPlugin } from './test-utils';
 
 /**
  * Populated-cache feature-flag tests: refreshFeatureFlags returns
@@ -43,10 +43,7 @@ describe('feature flags (populated cache via refresh end-to-end)', () => {
   });
 
   afterEach(async () => {
-    try {
-      await plugin.wipeData();
-    } catch {}
-    await mock.stop();
+    await teardownPlugin(plugin, mock);
   });
 
   it('refreshFeatureFlags surfaces every flag + every property type via the bridge', async () => {

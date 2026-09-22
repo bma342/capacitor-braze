@@ -3,21 +3,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BrazeWeb } from '../../../src/web';
 
-import { freshPluginWithConfig } from './test-utils';
+import { freshPluginWithConfig, teardownPlugin } from './test-utils';
 
 /**
- * End-to-end listener lifecycle tests for the two events the plugin
- * surfaces:
+ * End-to-end listener lifecycle tests.
  *
  *   `featureFlagsUpdated` -> fired after a successful FF refresh
  *   `contentCardsUpdated` -> fired after a successful CC refresh
+ *   `sdkAuthError`        -> fired when Braze rejects a signature (below)
  *
- * The plugin's `initialize()` eagerly subscribes once to the underlying
- * `@braze/web-sdk` `subscribeToFeatureFlagsUpdates` and
- * `subscribeToContentCardsUpdates` hooks (guarded by a boolean so the
- * second initialize doesn't queue duplicate callbacks). When the SDK
- * fires those callbacks, the plugin's `notifyListeners` invokes every
- * consumer-registered `addListener` handler.
+ * The plugin's `initialize()` eagerly subscribes to the underlying
+ * `@braze/web-sdk` hooks and retains each subscription's GUID, so a later
+ * `initialize` tears the old subscriptions down through the SDK's
+ * `removeSubscription` before creating new ones — no duplicate callbacks,
+ * no dead listeners. When the SDK fires a callback, the plugin's
+ * `notifyListeners` invokes every consumer-registered `addListener`
+ * handler. The subscription-lifecycle transitions themselves
+ * (wipe / disable / enable) are covered in `lifecycle.test.ts`.
  *
  * Pattern (C05): eager-on-init, shared native subscription, no replay.
  * Adding a listener AFTER a refresh fires won't get a replay; the
@@ -157,5 +159,87 @@ describe('addListener / notifyListeners end-to-end', () => {
     await plugin.refreshFeatureFlags();
     await new Promise((r) => setTimeout(r, 200));
     expect(callback.mock.calls.length).toBe(callsAfterFirstRefresh);
+  });
+});
+
+/**
+ * `sdkAuthError` (A5-10) — the SDK Authentication recovery path, and the
+ * security-relevant half of the two listener events that previously had no
+ * test on any platform.
+ *
+ * Braze signals a rejected signature by returning `auth_error` in the body
+ * of an otherwise-200 `/api/v3/data/` response; the Web SDK parses it and
+ * notifies `subscribeToSdkAuthenticationFailures` subscribers with the
+ * error code, the reason, the user id the request carried, and the
+ * signature that was rejected. Scripting that body on the mock drives the
+ * real code path rather than a stub.
+ *
+ * The sibling event, `inAppMessageReceived`, is NOT covered end-to-end
+ * here: triggering it requires reproducing Braze's trigger-delivery
+ * envelope (trigger definitions in the data response, then the SDK's
+ * trigger engine deciding to fire). Its DTO is covered directly in
+ * `serializers.test.ts` against real SDK message classes; the remaining
+ * gap is the delivery path itself.
+ */
+describe('sdkAuthError listener', () => {
+  let mock: MockServer;
+  let plugin: BrazeWeb;
+
+  beforeEach(async () => {
+    ({ mock, plugin } = await freshPluginWithConfig({ enableSdkAuthentication: true }));
+  });
+
+  afterEach(async () => {
+    await teardownPlugin(plugin, mock);
+  });
+
+  it('fires with the rejected user id, error code, reason and signature', async () => {
+    const callback = vi.fn();
+    await plugin.addListener('sdkAuthError', callback);
+    await plugin.changeUser({ userId: 'sdkauth_user_91B4', sdkAuthSignature: 'expired.jwt.signature' });
+
+    mock.respondTo({
+      pathPattern: /\/api\/v3\/data\/?$/,
+      method: 'POST',
+      body: { auth_error: { error_code: 401, reason: 'signature expired' } },
+      oneShot: false,
+    });
+
+    await plugin.logCustomEvent({ name: 'sdkauth_probe_event' });
+    // The flush fails by design here — an auth_error is exactly the case
+    // where the SDK reports the flush did not land.
+    await plugin.requestImmediateDataFlush().catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 300));
+
+    expect(callback, 'sdkAuthError never fired for an auth_error response').toHaveBeenCalled();
+    expect(callback.mock.calls.at(-1)?.[0]).toEqual({
+      userId: 'sdkauth_user_91B4',
+      errorCode: 401,
+      errorReason: 'signature expired',
+      signature: 'expired.jwt.signature',
+      // Reserved on every platform today; declared so populating it later
+      // is not a breaking change.
+      errorEventId: null,
+    });
+  });
+
+  it('reports userId as null (not an empty string) for an anonymous request', async () => {
+    // C03 forbids empty-string sentinels; `null` is the canonical "absent".
+    const callback = vi.fn();
+    await plugin.addListener('sdkAuthError', callback);
+
+    mock.respondTo({
+      pathPattern: /\/api\/v3\/data\/?$/,
+      method: 'POST',
+      body: { auth_error: { error_code: 400, reason: 'no signature' } },
+      oneShot: false,
+    });
+
+    await plugin.logCustomEvent({ name: 'anonymous_sdkauth_probe' });
+    await plugin.requestImmediateDataFlush().catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 300));
+
+    expect(callback).toHaveBeenCalled();
+    expect(callback.mock.calls.at(-1)?.[0]).toMatchObject({ userId: null, errorCode: 400 });
   });
 });

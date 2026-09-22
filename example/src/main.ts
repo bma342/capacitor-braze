@@ -133,6 +133,11 @@ const runMethods: Record<string, () => Promise<unknown>> = {
       enableLogging: checked('enableLogging'),
       enableSdkAuthentication: checked('enableSdkAuthentication'),
       allowInsecureEndpoint: checked('allowInsecureEndpoint'),
+      // Defaults to true in the contract; the checkbox ships checked so the
+      // testbed's default matches the plugin's.
+      enableInAppMessageUI: checked('enableInAppMessageUI'),
+      // iOS only — ignored on Android and web.
+      enablePushAutomation: checked('enablePushAutomation'),
       sessionTimeoutInSeconds: sessionTimeoutRaw ? parseInt(sessionTimeoutRaw, 10) : undefined,
     });
   },
@@ -196,6 +201,26 @@ const runMethods: Record<string, () => Promise<unknown>> = {
   subscribeContentCardsUpdated: async () => {
     const handle = await Braze.addListener('contentCardsUpdated', ({ cards }) => {
       log(`event contentCardsUpdated: ${cards.length} card(s)`, 'ok');
+    });
+    activeListeners.push(handle);
+    return { listenerHandles: activeListeners.length };
+  },
+
+  subscribeInAppMessageReceived: async () => {
+    const handle = await Braze.addListener('inAppMessageReceived', ({ message }) => {
+      // The listener is observational — the message displays regardless of
+      // what happens here (unless initialize ran with
+      // enableInAppMessageUI: false, in which case nothing is drawn at all).
+      const summary = message.type === 'modal' || message.type === 'full' ? `"${message.header}"` : message.type;
+      log(`event inAppMessageReceived: ${message.type} ${summary} (trigger ${message.id ?? 'none'})`, 'ok');
+    });
+    activeListeners.push(handle);
+    return { listenerHandles: activeListeners.length };
+  },
+  subscribeSdkAuthError: async () => {
+    const handle = await Braze.addListener('sdkAuthError', ({ userId, errorCode, errorReason }) => {
+      // Never log the rejected signature — SECURITY.md §3.
+      log(`event sdkAuthError: code ${errorCode} (${errorReason}) for user ${userId ?? '<anonymous>'}`, 'err');
     });
     activeListeners.push(handle);
     return { listenerHandles: activeListeners.length };

@@ -38,6 +38,10 @@
           <label><input id="enableSdkAuthentication" type="checkbox" /> enableSdkAuthentication</label>
           <label><input id="allowInsecureEndpoint" type="checkbox" /> allowInsecureEndpoint</label>
         </div>
+        <div class="row checks">
+          <label><input id="enableInAppMessageUI" type="checkbox" checked /> enableInAppMessageUI (default on)</label>
+          <label><input id="enablePushAutomation" type="checkbox" /> enablePushAutomation (iOS only)</label>
+        </div>
         <div class="row">
           <label
             >sessionTimeoutInSeconds (optional)
@@ -231,6 +235,22 @@
         </div>
         <div class="row">
           <button data-method="subscribeContentCardsUpdated">addListener('contentCardsUpdated')</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- In-app messages + SDK Authentication events                    -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>Event listeners</h2>
+        <p class="hint">
+          Subscribe, then trigger a campaign from the Braze dashboard. In-app message listeners are observational — they
+          cannot block display. Initialize with <code>enableInAppMessageUI</code> unchecked to present messages
+          yourself.
+        </p>
+        <div class="row">
+          <button data-method="subscribeInAppMessageReceived">addListener('inAppMessageReceived')</button>
+          <button data-method="subscribeSdkAuthError">addListener('sdkAuthError')</button>
         </div>
       </section>
 

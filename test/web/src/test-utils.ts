@@ -1,5 +1,7 @@
+import * as braze from '@braze/web-sdk';
 import { startMockServer, type MockServer, type CapturedRequest } from 'capacitor-braze-mock-server';
 
+import type { BrazeInitializeOptions } from '../../../src/definitions';
 import { BrazeWeb } from '../../../src/web';
 
 /**
@@ -35,10 +37,13 @@ export async function freshMockServer(): Promise<MockServer> {
  * refresh response, and the config we injected here is what lets
  * `refreshFeatureFlags` / `requestContentCardsRefresh` actually fetch.
  *
- * Caller is responsible for `await plugin.wipeData()` + `await mock.stop()`
- * in the test's teardown.
+ * Pass `initOverrides` to change how the plugin is initialized (e.g.
+ * `{ enableSdkAuthentication: true }`); everything else stays.
  *
- * Wire format reference (verified against @braze/web-sdk 6.7.x):
+ * Caller is responsible for `await teardownPlugin(plugin, mock)` in the
+ * test's teardown.
+ *
+ * Wire format reference (verified against @braze/web-sdk 6.13.0):
  *   - server config envelope: `{ message: "success", config: { time, content_cards, feature_flags, ... } }`
  *   - content_cards: `{ enabled: boolean, refresh_rate_limit?: number }`
  *   - feature_flags: `{ enabled: boolean, refresh_rate_limit: number }`
@@ -49,7 +54,9 @@ export interface FreshPluginWithConfig {
   plugin: BrazeWeb;
 }
 
-export async function freshPluginWithConfig(): Promise<FreshPluginWithConfig> {
+export async function freshPluginWithConfig(
+  initOverrides: Partial<BrazeInitializeOptions> = {},
+): Promise<FreshPluginWithConfig> {
   const mock = await freshMockServer();
   mock.respondTo({
     pathPattern: /\/api\/v3\/data\/?$/,
@@ -70,9 +77,50 @@ export async function freshPluginWithConfig(): Promise<FreshPluginWithConfig> {
     apiKey: 'test-public-sdk-key',
     endpoint: mock.baseUrl,
     allowInsecureEndpoint: true,
+    ...initOverrides,
   });
 
   return { mock, plugin };
+}
+
+/**
+ * Teardown counterpart to {@link freshPluginWithConfig}.
+ *
+ * Order matters (L6-04 / A5-16). `wipeData()` clears storage but leaves the
+ * SDK's flush/retry timer armed, so the old sequence (wipe, then stop the
+ * server) left a live SDK firing XHRs at a port that had just been freed —
+ * the ECONNREFUSED stack traces that flooded stderr, and, worse, a zombie
+ * SDK that can land a stray request on another test file's freshly bound
+ * mock. `braze.destroy()` is the SDK's own teardown: it clears the retry
+ * timeout and sets the "stop rescheduling" flag. The macrotask yield then
+ * lets any in-flight XHR settle before the listener closes.
+ *
+ * `destroy()` is called on the module singleton directly rather than
+ * through the plugin because the plugin deliberately doesn't expose it —
+ * it's an SDK lifecycle primitive, not part of the Braze plugin contract.
+ */
+export async function teardownPlugin(plugin: BrazeWeb, mock: MockServer): Promise<void> {
+  try {
+    await plugin.removeAllListeners();
+  } catch {}
+  // `disableSDK()` writes an opt-out cookie that jsdom keeps for the whole
+  // file, and the Web SDK refuses to initialize while it is present
+  // ("Ignoring all activity due to previous opt out"). Always clear it so a
+  // test that disabled the SDK can't poison its siblings.
+  try {
+    await plugin.enableSDK();
+  } catch {}
+  try {
+    await plugin.wipeData();
+  } catch {}
+  try {
+    braze.destroy();
+  } catch {}
+  // One macrotask is enough for the SDK's synchronous teardown to settle;
+  // the extra few milliseconds let an XHR that was already on the wire when
+  // `destroy()` ran finish against a server that still exists.
+  await new Promise((r) => setTimeout(r, 25));
+  await mock.stop();
 }
 
 /**

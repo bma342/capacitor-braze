@@ -47,8 +47,13 @@ import type {
  * Maps the plugin's stable string gender values to the Web SDK's
  * `User.Genders` single-letter constants. Keeping the mapping here (not in
  * the bridge) means consumers never see the SDK's `'m'`/`'f'` shorthand.
+ *
+ * Typed as the literal union rather than `string` so the values stay
+ * assignable to the SDK's own `Genders` union with no cast — if Braze ever
+ * changes a code, `tsc` fails here instead of the value silently going out
+ * on the wire.
  */
-const WEB_GENDER_MAP: Readonly<Record<BrazeGender, string>> = {
+const WEB_GENDER_MAP: Readonly<Record<BrazeGender, 'm' | 'f' | 'o' | 'u' | 'n' | 'p'>> = {
   male: 'm',
   female: 'f',
   other: 'o',
@@ -81,33 +86,27 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   private initialized = false;
 
   /**
-   * Cancels the native feature flag update subscription. The Braze Web SDK
-   * does not return an unsubscribe handle from `subscribeToFeatureFlagsUpdates`
-   * (the API is fire-and-forget), so this stays `null` on web; we use it as
-   * a "subscribed already" guard so we don't re-subscribe on every init.
+   * Subscription GUID for the feature-flag update subscription, or `null`
+   * when not subscribed.
+   *
+   * Every `braze.subscribeTo*` function returns the GUID of the subscription
+   * it created (`string | undefined`; `undefined` means the SDK wasn't
+   * initialized and no subscription was made), and `braze.removeSubscription`
+   * cancels it. Retaining the GUID is the web equivalent of iOS's
+   * `Braze.Cancellable` and Android's `IEventSubscriber` identity — it is
+   * what lets `wipeData` / `disableSDK` / `enableSDK` tear the subscription
+   * down so the next `initialize` doesn't stack a second one (C05).
    */
-  private featureFlagsSubscribed = false;
+  private featureFlagsSubscription: string | null = null;
 
-  /**
-   * Mirror of {@link featureFlagsSubscribed} for content cards. Same
-   * rationale: the Web SDK's `subscribeToContentCardsUpdates` doesn't
-   * return an unsubscribe handle, so we guard against duplicate
-   * subscriptions across re-init with a boolean.
-   */
-  private contentCardsSubscribed = false;
+  /** Subscription GUID for content-card updates. See {@link featureFlagsSubscription}. */
+  private contentCardsSubscription: string | null = null;
 
-  /**
-   * Mirror of {@link featureFlagsSubscribed} for in-app messages
-   * (Phase 3b). The Web SDK's `subscribeToInAppMessage` doesn't return
-   * an unsubscribe handle either; the boolean guards re-init.
-   */
-  private inAppMessageSubscribed = false;
+  /** Subscription GUID for in-app message triggers. See {@link featureFlagsSubscription}. */
+  private inAppMessageSubscription: string | null = null;
 
-  /**
-   * Mirror of {@link featureFlagsSubscribed} for SDK Authentication
-   * failures (L5-04). Same rationale.
-   */
-  private sdkAuthErrorSubscribed = false;
+  /** Subscription GUID for SDK-authentication failures. See {@link featureFlagsSubscription}. */
+  private sdkAuthErrorSubscription: string | null = null;
 
   /**
    * Whether {@link BrazeWeb.initialize} was called with
@@ -117,11 +116,22 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    */
   private sdkAuthenticationEnabled = false;
 
+  /**
+   * Whether the plugin lets the Web SDK render triggered in-app messages
+   * (`enableInAppMessageUI`, default `true`). When `false` the plugin still
+   * subscribes and fires `inAppMessageReceived`, but never calls
+   * `braze.showInAppMessage`, leaving presentation to the consumer.
+   */
+  private inAppMessageUiEnabled = true;
+
   // ---------------------------------------------------------------------------
   // Bridge sanity check
   // ---------------------------------------------------------------------------
 
   async echo(options: BrazeEchoOptions): Promise<BrazeEchoResult> {
+    if (!options.value || typeof options.value !== 'string') {
+      throw new Error('Braze.echo: `value` is required (string).');
+    }
     return { value: options.value };
   }
 
@@ -129,11 +139,42 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   // Configuration
   // ---------------------------------------------------------------------------
 
+  /**
+   * Initializes the Braze Web SDK and wires the four event subscriptions.
+   *
+   * Ordering is load-bearing and follows the Web SDK's own guidance:
+   *
+   *   1. Validate options (nothing reaches the SDK until they pass).
+   *   2. If the SDK is already initialized — this plugin instance or any
+   *      other holder of the module singleton — tear down our subscriptions
+   *      and `destroy()` it. The SDK ignores a second `initialize()` and
+   *      keeps the first API key / base URL, so without the destroy a
+   *      consumer switching workspace at runtime would keep talking to the
+   *      old one while the plugin reported success.
+   *   3. `initialize()` and **check its boolean**. `false` means the SDK
+   *      declined (bad key, bad base URL, opted-out user, crawler UA); the
+   *      subsequent `subscribeTo*` calls would all silently no-op and every
+   *      listener would be dead for the page lifetime.
+   *   4. Subscribe to feature flags, content cards, in-app messages and
+   *      SDK-auth failures, retaining each subscription GUID.
+   *   5. `openSession()` **last** — the SDK's docs are explicit that content
+   *      cards only refresh on session open when the subscription already
+   *      exists, and a session-start in-app message is dropped outright when
+   *      there is no IAM subscriber at fire time.
+   */
   async initialize(options: BrazeInitializeOptions): Promise<void> {
     this.validateInitializeOptions(options);
 
     const braze = await this.loadSdk();
-    braze.initialize(options.apiKey, {
+
+    if (this.initialized || braze.isInitialized()) {
+      this.teardownSubscriptions(braze);
+      braze.destroy();
+      this.initialized = false;
+      this.sdkAuthenticationEnabled = false;
+    }
+
+    const started = braze.initialize(options.apiKey, {
       baseUrl: options.endpoint,
       enableLogging: options.enableLogging ?? false,
       enableSdkAuthentication: options.enableSdkAuthentication ?? false,
@@ -141,54 +182,55 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
         sessionTimeoutInSeconds: options.sessionTimeoutInSeconds,
       }),
     });
-    braze.openSession();
+    if (!started) {
+      throw new Error(
+        'Braze.initialize: the Braze Web SDK refused to initialize ' +
+          '(check `apiKey` and `endpoint`; crawler user-agents are ignored by design).',
+      );
+    }
+
     this.initialized = true;
     this.sdkAuthenticationEnabled = options.enableSdkAuthentication === true;
+    this.inAppMessageUiEnabled = options.enableInAppMessageUI !== false;
 
-    // Wire the persistent native feature-flag subscription once. The Web SDK
-    // doesn't expose an unsubscribe handle, so subscribing twice would queue
-    // duplicate callbacks — the boolean guards against that.
-    if (!this.featureFlagsSubscribed) {
+    this.featureFlagsSubscription =
       braze.subscribeToFeatureFlagsUpdates((flags) => {
         const serialized = flags.map((flag) => this.serializeFeatureFlag(flag));
         this.notifyListeners('featureFlagsUpdated', { flags: serialized });
-      });
-      this.featureFlagsSubscribed = true;
-    }
-    if (!this.contentCardsSubscribed) {
+      }) ?? null;
+
+    this.contentCardsSubscription =
       braze.subscribeToContentCardsUpdates((cards) => {
         this.notifyListeners('contentCardsUpdated', this.serializeContentCards(cards));
-      });
-      this.contentCardsSubscribed = true;
-    }
-    if (!this.inAppMessageSubscribed) {
+      }) ?? null;
+
+    this.inAppMessageSubscription =
       braze.subscribeToInAppMessage((message) => {
-        this.notifyListeners('inAppMessageReceived', {
-          message: this.serializeInAppMessage(message, braze),
-        });
-        // The plugin's default policy is to let Braze's UI render the
-        // message after the listener fires. The Web SDK's
-        // subscribeToInAppMessage callback signature doesn't return a
-        // display decision — that's handled implicitly by whether the
-        // consumer calls `braze.showInAppMessage(message)` themselves.
-        // Mirror the SDK default by calling showInAppMessage here so
-        // out-of-the-box rendering works without consumer intervention.
-        braze.showInAppMessage(message);
-      });
-      this.inAppMessageSubscribed = true;
-    }
-    if (!this.sdkAuthErrorSubscribed) {
+        // Listeners are observational: they see the message but cannot
+        // block display. Notify first so a consumer's analytics call
+        // happens before the SDK paints, then hand the message to the
+        // SDK's presenter unless the consumer opted out of the built-in UI.
+        const serialized = this.serializeInAppMessage(message, braze);
+        if (serialized !== null) {
+          this.notifyListeners('inAppMessageReceived', { message: serialized });
+        }
+        if (this.inAppMessageUiEnabled) {
+          braze.showInAppMessage(message);
+        }
+      }) ?? null;
+
+    this.sdkAuthErrorSubscription =
       braze.subscribeToSdkAuthenticationFailures((error) => {
         this.notifyListeners('sdkAuthError', {
-          userId: error.userId ?? '',
+          userId: error.userId ?? null,
           errorCode: error.errorCode,
           errorReason: error.reason ?? '',
           signature: error.signature ?? null,
           errorEventId: null,
         });
-      });
-      this.sdkAuthErrorSubscribed = true;
-    }
+      }) ?? null;
+
+    braze.openSession();
   }
 
   // ---------------------------------------------------------------------------
@@ -318,7 +360,10 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   // ---------------------------------------------------------------------------
 
   async getDeviceId(): Promise<BrazeGetDeviceIdResult> {
-    const braze = await this.loadSdk();
+    // Init-gated on all three platforms even though the Web SDK exposes a
+    // true static here — C07 keeps the contract uniform, and a device id
+    // read before init is meaningless anyway.
+    const braze = this.requireInitialized();
     const deviceId = braze.getDeviceId();
     if (!deviceId) {
       throw new Error(
@@ -341,16 +386,16 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
 
   async setGender(options: BrazeSetGenderOptions): Promise<void> {
     const user = this.requireUser();
+    if (!options.gender || typeof options.gender !== 'string') {
+      throw new Error('Braze.setGender: `gender` is required (string).');
+    }
     const code = WEB_GENDER_MAP[options.gender];
     if (!code) {
       throw new Error(
         `Braze.setGender: unknown gender "${options.gender}". ` + `Allowed: ${Object.keys(WEB_GENDER_MAP).join(', ')}.`,
       );
     }
-    // Cast through `unknown` because the Web SDK types the gender param as
-    // its private `Genders` union; the WEB_GENDER_MAP values match exactly
-    // (`'m' | 'f' | ...`) but TS can't see through the typeof-static lookup.
-    user.setGender(code as unknown as Parameters<typeof user.setGender>[0]);
+    user.setGender(code);
   }
 
   async setHomeCity(options: BrazeSetHomeCityOptions): Promise<void> {
@@ -367,6 +412,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     if (!options.name || typeof options.name !== 'string') {
       throw new Error('Braze.logCustomEvent: `name` is required (string).');
     }
+    this.validateProperties(options.properties, 'logCustomEvent');
     braze.logCustomEvent(options.name, options.properties);
   }
 
@@ -397,7 +443,13 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
 
   async refreshFeatureFlags(): Promise<void> {
     const braze = this.requireInitialized();
-    braze.refreshFeatureFlags();
+    // Fire-and-forget by contract, but the SDK's error callback is the only
+    // signal that a refresh failed — surface it as a non-PII warning rather
+    // than letting a failed refresh look identical to a successful one.
+    braze.refreshFeatureFlags(undefined, () => {
+      // eslint-disable-next-line no-console
+      console.warn('Braze.refreshFeatureFlags: the Braze SDK reported the refresh failed.');
+    });
   }
 
   async logFeatureFlagImpression(options: BrazeLogFeatureFlagImpressionOptions): Promise<void> {
@@ -426,7 +478,10 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
 
   async requestContentCardsRefresh(): Promise<void> {
     const braze = this.requireInitialized();
-    braze.requestContentCardsRefresh();
+    braze.requestContentCardsRefresh(undefined, () => {
+      // eslint-disable-next-line no-console
+      console.warn('Braze.requestContentCardsRefresh: the Braze SDK reported the refresh failed.');
+    });
   }
 
   async logContentCardClick(options: BrazeLogContentCardClickOptions): Promise<void> {
@@ -448,6 +503,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   async logPurchase(options: BrazeLogPurchaseOptions): Promise<void> {
     const braze = this.requireInitialized();
     this.validatePurchase(options);
+    this.validateProperties(options.properties, 'logPurchase');
     // Web SDK arg order: (productId, price, currencyCode?, quantity?, props?).
     // Currency is required on our contract; pass through unconditionally.
     braze.logPurchase(options.productId, options.price, options.currency, options.quantity, options.properties);
@@ -461,34 +517,57 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   // ever having initialized.
   // ---------------------------------------------------------------------------
 
+  /**
+   * Wipes locally stored SDK data.
+   *
+   * Subscriptions are dropped **before** the wipe: the SDK's `clearData()`
+   * publishes an empty ContentCards collection to its subscribers
+   * synchronously, so tearing down first avoids firing a spurious
+   * "0 cards" update at consumers mid-wipe.
+   *
+   * Pre-init this is a no-op inside the SDK (its storage manager doesn't
+   * exist yet, so `wipeData()` logs a warning and returns). The promise
+   * still resolves — documented on the TS contract — because rejecting
+   * would break the C07 consent-revocation flow on the other two platforms.
+   */
   async wipeData(): Promise<void> {
     const braze = await this.loadSdk();
+    this.teardownSubscriptions(braze);
     braze.wipeData();
-    // Wiping clears the device ID; consider plugin re-init invalid until
-    // explicit `initialize` is called again. Also reset:
-    //   - the SDK Auth flag so a subsequent `initialize({ enableSdk... })`
-    //     doesn't carry the previous run's enforcement;
-    //   - the subscription-wired flags (L4-T06) so a subsequent initialize
-    //     re-wires `subscribeToFeatureFlagsUpdates` / `…ContentCards…`. The
-    //     Web SDK doesn't expose unsubscribe handles, so without resetting
-    //     these flags the next initialize would skip subscription setup
-    //     and listeners would silently go dead.
+    // Wiping clears the device ID; treat the plugin as uninitialized until
+    // `initialize` runs again. The SDK-auth flag resets too so a subsequent
+    // `initialize({ enableSdkAuthentication: false })` doesn't inherit the
+    // previous run's enforcement.
     this.initialized = false;
     this.sdkAuthenticationEnabled = false;
-    this.featureFlagsSubscribed = false;
-    this.contentCardsSubscribed = false;
-    this.inAppMessageSubscribed = false;
-    this.sdkAuthErrorSubscribed = false;
   }
 
+  /**
+   * Disables the SDK. The Web SDK's `disableSDK()` ends in `destroy()`,
+   * which removes every subscription and marks the instance uninitialized —
+   * so the plugin mirrors that state rather than claiming it is still
+   * initialized (which would send consumers to `getUser() returned null`).
+   */
   async disableSDK(): Promise<void> {
     const braze = await this.loadSdk();
+    this.teardownSubscriptions(braze);
     braze.disableSDK();
+    this.initialized = false;
+    this.sdkAuthenticationEnabled = false;
   }
 
+  /**
+   * Re-enables the SDK. Never a true no-op on web: `enableSDK()` also ends
+   * in `destroy()`, and the SDK's own docs require a fresh `initialize()`
+   * afterwards — so the plugin clears its state the same way
+   * {@link BrazeWeb.disableSDK} does.
+   */
   async enableSDK(): Promise<void> {
     const braze = await this.loadSdk();
+    this.teardownSubscriptions(braze);
     braze.enableSDK();
+    this.initialized = false;
+    this.sdkAuthenticationEnabled = false;
   }
 
   async isDisabled(): Promise<BrazeIsDisabledResult> {
@@ -496,9 +575,26 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     return { disabled: braze.isDisabled() };
   }
 
+  /**
+   * Flushes queued data, resolving on the SDK's completion callback rather
+   * than on dispatch — the method exists precisely for callers who need the
+   * round-trip to have happened (smoke tests, "app may be killed next").
+   *
+   * A disabled SDK never invokes the callback (the SDK returns early), so
+   * that case resolves immediately: there is nothing queued to flush.
+   */
   async requestImmediateDataFlush(): Promise<void> {
     const braze = this.requireInitialized();
-    braze.requestImmediateDataFlush();
+    if (braze.isDisabled()) return;
+    await new Promise<void>((resolve, reject) => {
+      braze.requestImmediateDataFlush((success) => {
+        if (success) {
+          resolve();
+        } else {
+          reject(new Error('Braze.requestImmediateDataFlush: the Braze SDK reported the flush failed.'));
+        }
+      });
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -558,20 +654,79 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
 
   /**
    * Dynamic-imports `@braze/web-sdk` on first use, caches the module reference.
-   * Throws with a clear error if the peer dependency is missing.
+   *
+   * Any failure here is reported with the underlying error attached: the
+   * import can also fail because of a CSP violation on the chunk, a bundler
+   * interop problem, or evaluation in a non-DOM context (the SDK touches
+   * `document` / `navigator`), and telling those consumers "not installed"
+   * sends them down the wrong debugging path.
    */
   private async loadSdk(): Promise<BrazeWebSdk> {
     if (!this.braze) {
       try {
         this.braze = await import('@braze/web-sdk');
       } catch (err) {
-        throw new Error(
-          'capacitor-braze: `@braze/web-sdk` peer dependency is not installed. ' +
-            'Run `npm install @braze/web-sdk` and rebuild.',
+        // `cause` is set via Object.assign rather than the ES2022 Error
+        // options argument because this package compiles against the es2017
+        // lib; the runtime property is what debuggers and loggers read.
+        throw Object.assign(
+          new Error(
+            'capacitor-braze: `@braze/web-sdk` could not be loaded. If it is not installed, run ' +
+              '`npm install @braze/web-sdk` and rebuild; otherwise the import itself failed ' +
+              `(CSP, bundler interop, or a non-DOM context). Underlying error: ${String(err)}`,
+          ),
+          { cause: err },
         );
       }
     }
     return this.braze;
+  }
+
+  /**
+   * Cancels every retained SDK subscription and clears the stored GUIDs.
+   *
+   * Called before any operation that invalidates the SDK instance
+   * (`initialize` on an already-initialized SDK, `wipeData`, `disableSDK`,
+   * `enableSDK`). Without it, `initialize` after a wipe would stack a second
+   * subscription and every event would fan out to `notifyListeners` twice —
+   * the exact failure C05 lists under Forbidden.
+   */
+  private teardownSubscriptions(braze: BrazeWebSdk): void {
+    for (const guid of [
+      this.featureFlagsSubscription,
+      this.contentCardsSubscription,
+      this.inAppMessageSubscription,
+      this.sdkAuthErrorSubscription,
+    ]) {
+      if (guid !== null) {
+        braze.removeSubscription(guid);
+      }
+    }
+    this.featureFlagsSubscription = null;
+    this.contentCardsSubscription = null;
+    this.inAppMessageSubscription = null;
+    this.sdkAuthErrorSubscription = null;
+  }
+
+  /**
+   * Validates an event / purchase property map. The TS contract narrows
+   * values to scalars, but that narrowing is erased at runtime — a map from
+   * `JSON.parse` or `any`-typed code can carry nested objects, arrays or
+   * `null`. Web and iOS would forward those verbatim while Android silently
+   * dropped the key, so the same event would arrive differently shaped per
+   * platform. All three bridges now reject with this message (C04).
+   */
+  private validateProperties(
+    properties: Record<string, unknown> | undefined,
+    method: 'logCustomEvent' | 'logPurchase',
+  ): void {
+    if (properties === undefined || properties === null) return;
+    for (const [key, value] of Object.entries(properties)) {
+      const valueType = typeof value;
+      if (valueType !== 'string' && valueType !== 'number' && valueType !== 'boolean') {
+        throw new Error(`Braze.${method}: \`properties.${key}\` must be string, number, or boolean.`);
+      }
+    }
   }
 
   /**
@@ -607,10 +762,15 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    *
    * The SDK exposes `properties` as `PropertiesJson` whose entries are
    * `{ type, value }` records in exactly the wire format our public
-   * `BrazeFeatureFlagPropertyValue` type expects, so we shallow-copy
-   * entries through unchanged. Entries with a type the public type does
-   * not enumerate (future SDK additions) are dropped to keep the DTO
-   * faithful to its declared shape.
+   * `BrazeFeatureFlagPropertyValue` type expects. Entries with a type the
+   * public type does not enumerate (future SDK additions) are dropped to
+   * keep the DTO faithful to its declared shape.
+   *
+   * Each entry is **copied**, and a `jsonobject` entry's nested value is
+   * deep-copied, so the returned DTO shares no object identity with the
+   * SDK's cache. On web there is no Capacitor JSON hop to do that for us;
+   * without the copy a consumer mutating `flag.properties.x.value` would
+   * mutate the SDK's cached flag and get behaviour iOS / Android don't have.
    */
   private serializeFeatureFlag(raw: ReturnType<BrazeWebSdk['getFeatureFlag']> & object): BrazeFeatureFlag {
     const allowedTypes: ReadonlySet<BrazeFeatureFlagPropertyValue['type']> = new Set([
@@ -632,7 +792,13 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
         typeof entry.type === 'string' &&
         allowedTypes.has(entry.type as BrazeFeatureFlagPropertyValue['type'])
       ) {
-        properties[key] = entry as BrazeFeatureFlagPropertyValue;
+        const copied = { ...entry } as BrazeFeatureFlagPropertyValue;
+        properties[key] =
+          copied.type === 'jsonobject'
+            ? // The value came off the wire as JSON, so a JSON round-trip is
+              // a complete and dependency-free deep copy here.
+              { type: 'jsonobject', value: JSON.parse(JSON.stringify(copied.value)) as Record<string, unknown> }
+            : copied;
       }
     }
     return { id: raw.id, enabled: raw.enabled, properties };
@@ -660,7 +826,9 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   /**
    * Maps a single Web SDK `Card` instance to the plugin's portable DTO.
    * Returns `null` for cards we can't classify (future SDK card types);
-   * the caller filters them out so the DTO stays a strict union.
+   * the caller filters them out so the DTO stays a strict union, and a
+   * single non-PII console warning tells the consumer a card was dropped
+   * rather than letting it vanish silently.
    *
    * Card-type discrimination uses `instanceof` against the Web SDK's
    * concrete `Card` subclasses (`ControlCard`, `CaptionedImage`,
@@ -677,14 +845,21 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       id: card.id ?? '',
       viewed: card.viewed,
       pinned: card.pinned,
-      extras: card.extras,
+      // Copied, not passed by reference — see serializeFeatureFlag for why
+      // the web path has to do explicitly what the Capacitor JSON hop does
+      // for the native bridges.
+      extras: { ...card.extras },
       updated: card.updated ? card.updated.getTime() : null,
       expiresAt: card.expiresAt ? card.expiresAt.getTime() : null,
     };
 
     const braze = this.braze;
     const type = this.classifyContentCard(card, braze);
-    if (type === null) return null;
+    if (type === null) {
+      // eslint-disable-next-line no-console
+      console.warn('Braze: dropped an unrecognized content card variant');
+      return null;
+    }
 
     if (type === 'control') {
       return { ...base, type: 'control' };
@@ -734,6 +909,7 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
       imageUrl: cc.imageUrl,
       url: cc.url,
       linkText: cc.linkText,
+      aspectRatio: cc.aspectRatio ?? null,
       ...sharedNonControl,
     };
   }
@@ -777,10 +953,17 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
    * Serializes the Web SDK's `InAppMessage` / `ControlMessage` to the
    * plugin's portable 5-variant DTO. Variant discrimination uses
    * `instanceof` against the loaded SDK module — same pattern as
-   * content-card classification (per L2-05). Field access casts the
-   * narrowed instance to a typed shape; the SDK's class hierarchy
-   * splits message fields across subclasses and we only read what
-   * each variant actually carries.
+   * content-card classification (per L2-05).
+   *
+   * Fields are read off the narrowed subclass directly rather than through
+   * a widening structural cast: the SDK's class hierarchy splits message
+   * fields across subclasses, and reading the real declarations means a
+   * renamed or removed field fails `tsc` here instead of quietly becoming
+   * `undefined` at runtime.
+   *
+   * Returns `null` for a variant the SDK may add in a future minor. The
+   * caller skips the event rather than fabricating a variant — see the
+   * unknown-variant policy on `BrazeInAppMessage`.
    *
    * @param message - The Web SDK's InAppMessage or ControlMessage.
    * @param braze - The loaded SDK module, used for instanceof.
@@ -788,106 +971,100 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
   private serializeInAppMessage(
     message: BrazeWebSdkModule.InAppMessage | BrazeWebSdkModule.ControlMessage,
     braze: BrazeWebSdk,
-  ): BrazeInAppMessage {
-    const base = {
-      id: message.triggerId ?? null,
-      clickAction: this.serializeIamClickAction(message as BrazeWebSdkModule.InAppMessage),
-      extras: message.extras ?? {},
-    };
+  ): BrazeInAppMessage | null {
+    const id = message.triggerId ?? null;
+    const extras = { ...(message.extras ?? {}) };
+
     if (message instanceof braze.ControlMessage) {
-      return { ...base, type: 'control' };
+      // Control and HTML messages carry no click action of their own
+      // (the SDK declares clickAction only on slideup / modal / full).
+      return { type: 'control', id, extras, clickAction: { type: 'none' } };
     }
     if (message instanceof braze.HtmlMessage) {
-      return { ...base, type: 'html', message: message.message ?? '' };
+      return { type: 'html', id, extras, clickAction: { type: 'none' }, message: message.message ?? '' };
     }
     if (message instanceof braze.SlideUpMessage) {
-      const slideup = message as BrazeWebSdkModule.SlideUpMessage & {
-        imageUrl?: string;
-        altImageText?: string;
-        language?: string;
-        slideFrom?: string;
-      };
       return {
-        ...base,
         type: 'slideup',
-        message: slideup.message ?? '',
-        slideFrom: slideup.slideFrom === 'TOP' ? 'top' : 'bottom',
-        ...(slideup.imageUrl ? { imageUrl: slideup.imageUrl } : {}),
-        ...(slideup.altImageText ? { imageAltText: slideup.altImageText } : {}),
-        ...(slideup.language ? { language: slideup.language } : {}),
+        id,
+        extras,
+        clickAction: this.serializeIamClickAction(message),
+        message: message.message ?? '',
+        slideFrom: message.slideFrom === 'TOP' ? 'top' : 'bottom',
+        ...(message.imageUrl ? { imageUrl: message.imageUrl } : {}),
+        ...(message.altImageText ? { imageAltText: message.altImageText } : {}),
+        ...(message.language ? { language: message.language } : {}),
+        ...(message.icon ? { icon: message.icon } : {}),
       };
     }
     if (message instanceof braze.ModalMessage) {
-      return this.serializeImmersiveIam(message as BrazeWebSdkModule.ModalMessage, 'modal', base, braze);
+      return this.serializeImmersiveIam(message, 'modal', id, extras);
     }
     if (message instanceof braze.FullScreenMessage) {
-      return this.serializeImmersiveIam(message as BrazeWebSdkModule.FullScreenMessage, 'full', base, braze);
+      return this.serializeImmersiveIam(message, 'full', id, extras);
     }
-    // Unknown subclass — surface as a slideup with empty fields so the
-    // contract stays a strict union. Consumers can detect via
-    // empty-message + no-image and ignore.
-    return { ...base, type: 'slideup', message: message.message ?? '', slideFrom: 'bottom' };
+    // eslint-disable-next-line no-console
+    console.warn('Braze: dropped an unrecognized in-app message variant');
+    return null;
   }
 
   /**
    * Shared serialization for ModalMessage / FullScreenMessage — both
    * carry header, message, optional imageUrl, and a buttons array.
+   *
+   * Buttons inherit the **message's** `openTarget`: `InAppMessageButton`
+   * has no `openTarget` of its own, so deriving `useWebView` from the
+   * button alone hard-coded it to `true` and made every button URL open
+   * in-app regardless of how the campaign was configured.
    */
   private serializeImmersiveIam(
     message: BrazeWebSdkModule.ModalMessage | BrazeWebSdkModule.FullScreenMessage,
     type: 'modal' | 'full',
-    base: {
-      id: string | null;
-      clickAction: BrazeInAppMessageClickAction;
-      extras: Record<string, string>;
-    },
-    braze: BrazeWebSdk,
+    id: string | null,
+    extras: Record<string, string>,
   ): BrazeInAppMessage {
-    const immersive = message as (BrazeWebSdkModule.ModalMessage | BrazeWebSdkModule.FullScreenMessage) & {
-      header?: string;
-      imageUrl?: string;
-      buttons?: BrazeWebSdkModule.InAppMessageButton[];
-      altImageText?: string;
-      language?: string;
-    };
-    const buttons: BrazeInAppMessageButton[] = (immersive.buttons ?? []).map((btn) => ({
+    const buttons: BrazeInAppMessageButton[] = (message.buttons ?? []).map((btn) => ({
       id: btn.id ?? 0,
       text: btn.text ?? '',
-      clickAction: this.serializeIamClickAction(btn as unknown as BrazeWebSdkModule.InAppMessage),
+      clickAction: this.serializeIamClickAction({
+        clickAction: btn.clickAction,
+        uri: btn.uri,
+        openTarget: message.openTarget,
+      }),
     }));
-    // braze param is unused at runtime but kept for symmetry with the
-    // caller and to anchor the typing context.
-    void braze;
     return {
-      ...base,
       type,
-      header: immersive.header ?? '',
+      id,
+      extras,
+      clickAction: this.serializeIamClickAction(message),
+      header: message.header ?? '',
       message: message.message ?? '',
       buttons,
-      ...(immersive.imageUrl ? { imageUrl: immersive.imageUrl } : {}),
-      ...(immersive.altImageText ? { imageAltText: immersive.altImageText } : {}),
-      ...(immersive.language ? { language: immersive.language } : {}),
+      ...(message.imageUrl ? { imageUrl: message.imageUrl } : {}),
+      ...(message.altImageText ? { imageAltText: message.altImageText } : {}),
+      ...(message.language ? { language: message.language } : {}),
     };
   }
 
   /**
    * Normalizes the Web SDK's click-action representation onto the
    * plugin's tagged union. The SDK exposes a string enum (`'URI'` or
-   * `'NONE'`) on each subclass (not on the base `InAppMessage`),
-   * with the actual URL on a sibling `uri` field. We accept an
-   * `unknown`-shaped object and probe defensively because both
-   * messages and buttons share the click-action surface but expose
-   * it on different concrete types.
+   * `'NONE'`) on each subclass (not on the base `InAppMessage`), with the
+   * actual URL on a sibling `uri` field and the open target on a third.
+   * Callers pass either a message instance or a synthesized
+   * `{ clickAction, uri, openTarget }` triple for a button.
    */
-  private serializeIamClickAction(msg: unknown): BrazeInAppMessageClickAction {
-    if (typeof msg !== 'object' || msg === null) return { type: 'none' };
-    const m = msg as { clickAction?: string; uri?: string; openTarget?: string };
-    if (m.clickAction === 'URI' && typeof m.uri === 'string' && m.uri.length > 0) {
+  private serializeIamClickAction(source: {
+    clickAction?: string;
+    uri?: string;
+    openTarget?: string;
+  }): BrazeInAppMessageClickAction {
+    if (source.clickAction === 'URI' && typeof source.uri === 'string' && source.uri.length > 0) {
       // Web SDK's openTarget is 'BLANK' (new tab/window) or 'NONE'
       // (same tab). Map 'NONE' to useWebView=true so a Capacitor
       // consumer that proxies to a WebView keeps the user in-app.
-      const useWebView = m.openTarget !== 'BLANK';
-      return { type: 'url', uri: m.uri, useWebView };
+      const useWebView = source.openTarget !== 'BLANK';
+      return { type: 'url', uri: source.uri, useWebView };
     }
     return { type: 'none' };
   }
@@ -964,9 +1141,9 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     // own examples accept) both parse fine once we prefix with a
     // dummy scheme.
     const parseTarget = options.endpoint.includes('://') ? options.endpoint : `https://${options.endpoint}`;
+    let host: string;
     try {
-      // eslint-disable-next-line no-new
-      new URL(parseTarget);
+      host = new URL(parseTarget).hostname.toLowerCase();
     } catch {
       throw new Error('Braze.initialize: `endpoint` is malformed (must be a parseable URL or bare hostname).');
     }
@@ -974,21 +1151,20 @@ export class BrazeWeb extends WebPlugin implements BrazePlugin {
     // isn't a recognised Braze cluster host so consumers wiring a typo
     // get a console signal. The regex matches every documented Braze
     // cluster naming pattern (sdk.<region>-NN.braze.{com,eu}); allow
-    // localhost / 127.0.0.1 / .test / .local for dev paths.
-    const host =
-      parseTarget
-        .replace(/^https?:\/\//, '')
-        .split('/')[0]
-        ?.toLowerCase() ?? '';
+    // localhost / 127.0.0.1 / .test / .local for dev paths. Matching on
+    // `URL.hostname` (not the raw string) is what keeps a legitimate
+    // `https://sdk.us-01.braze.com:443` from tripping the warning.
     const isKnownBraze = /^sdk\.[a-z]+-\d+\.braze\.(com|eu)$/.test(host);
-    const isDevHost = /^(localhost|127\.0\.0\.1|.+\.(test|local))(:\d+)?$/.test(host);
+    const isDevHost = /^(localhost|127\.0\.0\.1|.+\.(test|local))$/.test(host);
     if (!isKnownBraze && !isDevHost) {
+      // The endpoint value is deliberately NOT interpolated: C06 §3 lists
+      // the endpoint among the things the plugin does not log, and this
+      // line lands in whatever console aggregator the consumer runs.
       // eslint-disable-next-line no-console
       console.warn(
-        `Braze.initialize: \`endpoint\` "${options.endpoint}" doesn't match the documented ` +
-          'Braze cluster pattern (`sdk.<region>-NN.braze.com|eu`). The SDK will still attempt to ' +
-          'connect, but verify the host matches what your Braze dashboard shows under Settings → ' +
-          'Manage Settings → API Settings.',
+        'Braze.initialize: `endpoint` host does not match the documented Braze cluster pattern ' +
+          'sdk.<region>-NN.braze.com (or .braze.eu). The SDK will still attempt to connect; verify ' +
+          'the host in your Braze dashboard under Settings > Manage Settings > API Settings.',
       );
     }
     if (options.sessionTimeoutInSeconds !== undefined) {

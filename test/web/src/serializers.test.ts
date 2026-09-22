@@ -1,5 +1,17 @@
-import { CaptionedImage, ClassicCard, ControlCard, ImageOnly } from '@braze/web-sdk';
-import { describe, expect, it } from 'vitest';
+import {
+  CaptionedImage,
+  ClassicCard,
+  ControlCard,
+  ControlMessage,
+  FullScreenMessage,
+  HtmlMessage,
+  ImageOnly,
+  InAppMessage,
+  InAppMessageButton,
+  ModalMessage,
+  SlideUpMessage,
+} from '@braze/web-sdk';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { BrazeWeb } from '../../../src/web';
 
@@ -21,15 +33,15 @@ import { BrazeWeb } from '../../../src/web';
  * subclass — and lets the plugin's `instanceof` discrimination run
  * against the same objects it will see at runtime.
  *
- * Why not test these through the full SDK round-trip in the other
- * test files? The listener pathway requires the SDK to fire its
- * subscribe-to-updates callback, which only happens on a real flag /
- * card refresh from the backend. The mock currently returns the
- * canonical { message: 'success' } envelope, not Braze's flag /
- * card sync shape. Building that response would mean reverse-
- * engineering Braze's wire format for those endpoints — possible
- * but expensive, and won't pin the plugin's bridge logic any
- * better than these direct invocations.
+ *   - serializeInAppMessage    (drives the addListener('inAppMessageReceived') payload)
+ *
+ * These complement, rather than replace, the round-trip files: the mock
+ * does now serve Braze's real flag / card sync shapes (see
+ * `feature-flags-populated.test.ts` and `content-cards-populated.test.ts`),
+ * but exercising every DTO branch through the network path would cost one
+ * refresh round-trip per branch. In-app messages have no round-trip
+ * coverage at all — triggering one means reproducing Braze's
+ * trigger-delivery envelope — so for that DTO these are the only tests.
  */
 
 // Test-only access to BrazeWeb's "private" helpers. They're public at
@@ -39,12 +51,44 @@ type Serializers = {
   serializeContentCards(raw: unknown): unknown;
   serializeContentCard(card: unknown): unknown;
   classifyContentCard(card: unknown, braze: unknown): string | null;
+  serializeInAppMessage(message: unknown, braze: unknown): Record<string, unknown> | null;
 };
 
 function getSerializers(): Serializers {
   const plugin = new BrazeWeb();
   return plugin as unknown as Serializers;
 }
+
+/**
+ * Same helper, but with the plugin's cached SDK-module reference populated
+ * the way `initialize` populates it. Card classification then takes the
+ * authoritative `instanceof` path instead of the field-shape fallback that
+ * a never-initialized plugin uses — which matters for any card whose field
+ * set is ambiguous (a ClassicCard with a small image looks exactly like a
+ * CaptionedImage to the heuristic).
+ */
+function getSerializersWithSdk(): Serializers {
+  const plugin = new BrazeWeb();
+  (plugin as unknown as Record<string, unknown>).braze = { ControlCard, CaptionedImage, ImageOnly, ClassicCard };
+  return plugin as unknown as Serializers;
+}
+
+/**
+ * The subset of the SDK module the in-app-message serializer uses for its
+ * `instanceof` discrimination — the same references the plugin holds after
+ * `initialize` resolves.
+ */
+const brazeMessageModule = {
+  ControlMessage,
+  HtmlMessage,
+  SlideUpMessage,
+  ModalMessage,
+  FullScreenMessage,
+};
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('serializeFeatureFlag', () => {
   it('roundtrips id + enabled + valid typed properties', () => {
@@ -310,5 +354,267 @@ describe('serializeContentCard (each variant — real SDK instances)', () => {
       expiresAt: null,
     });
     expect(sut.serializeContentCard(stranger)).toBeNull();
+  });
+});
+
+/**
+ * `serializeInAppMessage` drives the `inAppMessageReceived` listener payload
+ * — the one DTO in the plugin that had no test on any platform (A5-10).
+ *
+ * Driving it end-to-end would mean reproducing Braze's trigger-delivery
+ * envelope inside the mock; constructing the SDK's real message classes is
+ * the same thing the SDK's own wire parser does at the end of that path, and
+ * it exercises the exact `instanceof` discrimination the serializer relies on.
+ */
+describe('serializeInAppMessage (real @braze/web-sdk message classes)', () => {
+  it('slideup — message, slideFrom, image, alt text, language and icon', () => {
+    const sut = getSerializers();
+    const slideup = new SlideUpMessage('Slide body');
+    slideup.triggerId = 'trigger-slideup';
+    slideup.extras = { campaign: 'spring' };
+    slideup.slideFrom = InAppMessage.SlideFrom.TOP;
+    slideup.imageUrl = 'https://cdn.example/slide.png';
+    slideup.altImageText = 'A slide image';
+    slideup.language = 'en';
+    // Font Awesome unicode escape, exactly as the dashboard stores it.
+    slideup.icon = '';
+
+    expect(sut.serializeInAppMessage(slideup, brazeMessageModule)).toEqual({
+      type: 'slideup',
+      id: 'trigger-slideup',
+      extras: { campaign: 'spring' },
+      clickAction: { type: 'none' },
+      message: 'Slide body',
+      slideFrom: 'top',
+      imageUrl: 'https://cdn.example/slide.png',
+      imageAltText: 'A slide image',
+      language: 'en',
+      icon: '',
+    });
+  });
+
+  it('slideup — omits optional fields the campaign did not set, and defaults slideFrom to bottom', () => {
+    const sut = getSerializers();
+    const slideup = new SlideUpMessage('Bare');
+    slideup.slideFrom = InAppMessage.SlideFrom.BOTTOM;
+
+    const out = sut.serializeInAppMessage(slideup, brazeMessageModule);
+    expect(out).toEqual({
+      type: 'slideup',
+      id: null,
+      extras: {},
+      clickAction: { type: 'none' },
+      message: 'Bare',
+      slideFrom: 'bottom',
+    });
+    // C02: absent means absent — the key is not emitted as an empty string.
+    expect(out).not.toHaveProperty('imageUrl');
+    expect(out).not.toHaveProperty('icon');
+  });
+
+  it('slideup — a URI click action with openTarget NONE keeps the user in a WebView', () => {
+    const sut = getSerializers();
+    const slideup = new SlideUpMessage('Tap me');
+    slideup.clickAction = InAppMessage.ClickAction.URI;
+    slideup.uri = 'https://example.com/promo';
+    slideup.openTarget = InAppMessage.OpenTarget.NONE;
+
+    const out = sut.serializeInAppMessage(slideup, brazeMessageModule);
+    expect(out?.clickAction).toEqual({ type: 'url', uri: 'https://example.com/promo', useWebView: true });
+  });
+
+  it('modal — header, buttons, and button useWebView derived from the MESSAGE openTarget', () => {
+    const sut = getSerializers();
+    const dismiss = new InAppMessageButton('No thanks');
+    dismiss.id = 0;
+    const cta = new InAppMessageButton('Shop now');
+    cta.id = 1;
+    cta.clickAction = InAppMessage.ClickAction.URI;
+    cta.uri = 'https://example.com/shop';
+
+    const modal = new ModalMessage('Modal body');
+    modal.triggerId = 'trigger-modal';
+    modal.header = 'Big news';
+    modal.buttons = [dismiss, cta];
+    modal.clickAction = InAppMessage.ClickAction.URI;
+    modal.uri = 'https://example.com/modal';
+    // A1-15: `InAppMessageButton` has no openTarget of its own. Reading it
+    // off the button yielded `undefined` and hard-coded every button to
+    // useWebView:true; the serializer now inherits the message's target, so
+    // BLANK ("open in a new tab") survives to the consumer.
+    modal.openTarget = InAppMessage.OpenTarget.BLANK;
+
+    const out = sut.serializeInAppMessage(modal, brazeMessageModule);
+    expect(out).toMatchObject({
+      type: 'modal',
+      id: 'trigger-modal',
+      header: 'Big news',
+      message: 'Modal body',
+      clickAction: { type: 'url', uri: 'https://example.com/modal', useWebView: false },
+    });
+    expect(out?.buttons).toEqual([
+      { id: 0, text: 'No thanks', clickAction: { type: 'none' } },
+      { id: 1, text: 'Shop now', clickAction: { type: 'url', uri: 'https://example.com/shop', useWebView: false } },
+    ]);
+  });
+
+  it('full — same immersive shape as modal, tagged full, with an empty buttons array when there are none', () => {
+    const sut = getSerializers();
+    const full = new FullScreenMessage('Full body');
+    full.header = 'Full header';
+    full.imageUrl = 'https://cdn.example/full.png';
+
+    expect(sut.serializeInAppMessage(full, brazeMessageModule)).toEqual({
+      type: 'full',
+      id: null,
+      extras: {},
+      clickAction: { type: 'none' },
+      header: 'Full header',
+      message: 'Full body',
+      buttons: [],
+      imageUrl: 'https://cdn.example/full.png',
+    });
+  });
+
+  it('html — raw HTML body, no click action of its own', () => {
+    const sut = getSerializers();
+    const html = new HtmlMessage('<h1>Hi</h1>');
+    html.triggerId = 'trigger-html';
+
+    expect(sut.serializeInAppMessage(html, brazeMessageModule)).toEqual({
+      type: 'html',
+      id: 'trigger-html',
+      extras: {},
+      clickAction: { type: 'none' },
+      message: '<h1>Hi</h1>',
+    });
+  });
+
+  it('control — impression-only variant carries id and extras and nothing else', () => {
+    const sut = getSerializers();
+    const control = new ControlMessage('trigger-control');
+    control.extras = { test: 'variant_a' };
+
+    expect(sut.serializeInAppMessage(control, brazeMessageModule)).toEqual({
+      type: 'control',
+      id: 'trigger-control',
+      extras: { test: 'variant_a' },
+      clickAction: { type: 'none' },
+    });
+  });
+
+  it('copies extras instead of handing out the SDK-owned object', () => {
+    const sut = getSerializers();
+    const extras = { campaign: 'spring' };
+    const slideup = new SlideUpMessage('Body');
+    slideup.extras = extras;
+
+    const out = sut.serializeInAppMessage(slideup, brazeMessageModule);
+    expect(out?.extras).toEqual(extras);
+    expect(out?.extras).not.toBe(extras);
+  });
+
+  /**
+   * A1-16 / §25: an unrecognised variant is dropped with one non-PII
+   * warning. It used to be reshaped into an empty `slideup`, which made
+   * `message.type === 'slideup'` untrustworthy for every consumer.
+   */
+  it('drops an unrecognized variant with a single non-PII warning', () => {
+    const sut = getSerializers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const stranger = Object.assign(Object.create(InAppMessage.prototype), {
+      message: 'from the future',
+      extras: {},
+      triggerId: 'trigger-future',
+    });
+
+    expect(sut.serializeInAppMessage(stranger, brazeMessageModule)).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('Braze: dropped an unrecognized in-app message variant');
+  });
+});
+
+describe('unknown content card variants (drop policy)', () => {
+  it('warns once, non-PII, when a card cannot be classified', () => {
+    const sut = getSerializers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const stranger = Object.assign(Object.create(null), {
+      id: 'stranger',
+      isControl: false,
+      viewed: false,
+      pinned: false,
+      extras: { secret: 'not-logged' },
+      updated: null,
+      expiresAt: null,
+    });
+
+    expect(sut.serializeContentCard(stranger)).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('Braze: dropped an unrecognized content card variant');
+  });
+});
+
+describe('DTO objects are copies, not live references into the SDK cache', () => {
+  it('feature flag properties (including nested jsonobject values) are cloned', () => {
+    const sut = getSerializers();
+    const nested = { tier: 'gold' };
+    const entry = { type: 'jsonobject', value: nested };
+    const out = sut.serializeFeatureFlag({ id: 'f', enabled: true, properties: { cohort: entry } }) as {
+      properties: Record<string, { value: Record<string, unknown> }>;
+    };
+
+    expect(out.properties.cohort).toEqual(entry);
+    expect(out.properties.cohort).not.toBe(entry);
+    expect(out.properties.cohort?.value).not.toBe(nested);
+
+    // Mutating the DTO must not reach back into the SDK's cached flag.
+    if (out.properties.cohort) out.properties.cohort.value.tier = 'bronze';
+    expect(nested.tier).toBe('gold');
+  });
+
+  it('content card extras are cloned', () => {
+    const sut = getSerializers();
+    const extras = { campaign: 'spring' };
+    const card = new ClassicCard(
+      'card-extras',
+      false,
+      'T',
+      undefined,
+      'D',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      extras,
+    );
+    const out = sut.serializeContentCard(card) as { extras: Record<string, string> };
+    expect(out.extras).toEqual(extras);
+    expect(out.extras).not.toBe(extras);
+  });
+});
+
+describe('classic content cards carry aspectRatio (A1-14)', () => {
+  it('emits the SDK-supplied aspect ratio', () => {
+    const sut = getSerializersWithSdk();
+    const card = new ClassicCard(
+      'card-ar',
+      false,
+      'T',
+      'https://img',
+      'D',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      1.91,
+    );
+    expect(sut.serializeContentCard(card)).toMatchObject({ type: 'classic', aspectRatio: 1.91 });
+  });
+
+  it('emits null when the backend supplied none — the common case for classic cards', () => {
+    const sut = getSerializersWithSdk();
+    const card = new ClassicCard('card-no-ar', false, 'T', 'https://img', 'D');
+    expect(sut.serializeContentCard(card)).toMatchObject({ type: 'classic', aspectRatio: null });
   });
 });
