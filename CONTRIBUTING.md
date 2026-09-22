@@ -207,7 +207,7 @@ needs a token, and `SNYK_TOKEN` is no longer referenced anywhere.
 | **gitleaks** (full history, `fetch-depth: 0`) | `audit` job | **Yes**, on a committed secret |
 | **CodeQL** — `javascript-typescript` + `actions` | `codeql.yml`: push + PR to `main`, and Mondays 05:27 UTC | Findings appear in the Security tab; wire it as a required check once you have seen a clean baseline |
 | **Tarball manifest** (`npm run pack:check`) | `pack-check` job | **Yes** |
-| **Bundle-size budget** (`node .github/scripts/assert-size.mjs`) | `build-plugin` job | **Yes**, above 16,384 B gzipped ESM |
+| **Bundle-size budget** (`node .github/scripts/assert-size.mjs`) | `build-plugin` job | **Yes**, above 20,480 B gzipped ESM |
 | **Dependabot version updates** | six ecosystems, weekly | Opens PRs |
 | **Dependabot security updates** | repository setting — **still to enable**, item 4 in the pre-tag checklist below | — |
 
@@ -225,8 +225,8 @@ Gradle setup from `verify-ios` / `verify-android` and roughly doubling their
 already 8–15-minute runtime. The reasoning and the shape of the follow-up are
 in the header of `.github/workflows/codeql.yml`.
 
-**Raising the bundle-size budget.** `assert-size.mjs` fails above 16,384 B
-gzipped for `dist/esm/**/*.js`; the measured total at `0.2.0` is 13,511 B. If a
+**Raising the bundle-size budget.** `assert-size.mjs` fails above 20,480 B
+gzipped for `dist/esm/**/*.js`; the measured total at `0.2.0` is 16,180 B. If a
 deliberate addition pushes past the budget, re-measure with
 `npm run build && node .github/scripts/assert-size.mjs`, raise
 `ESM_GZIP_BUDGET_BYTES` **in the same commit as the code**, and update the

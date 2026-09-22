@@ -512,7 +512,7 @@ await Braze.wipeData();
 | **GitHub secret scanning + push protection** | Repository setting | **Enabled** |
 | **Dependabot version updates** | `.github/dependabot.yml` | **Enabled**, six ecosystems (`/`, `/example`, `/demo`, `/test/web`, `/test/mock-server`, `github-actions`) |
 | **Tarball manifest gate** | `pack-check` job, `.github/scripts/assert-pack.mjs` | **Runs.** Asserts every consumer-required artifact is published and no repo-internal tree leaks into the package |
-| **Bundle-size budget** | `build-plugin` job, `.github/scripts/assert-size.mjs` | **Runs, and fails the build** above 16,384 B gzipped for the ESM tree. Mostly a supply-chain canary: a dependency inlined into the bundle shows up as a size jump |
+| **Bundle-size budget** | `build-plugin` job, `.github/scripts/assert-size.mjs` | **Runs, and fails the build** above 20,480 B gzipped for the ESM tree. Mostly a supply-chain canary: a dependency inlined into the bundle shows up as a size jump |
 | **Dependabot security updates** | Repository setting | **Not enabled** — a maintainer action, see [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
 | **CodeQL for Swift / Kotlin** | — | **Not analysed.** Both need a full native compile inside the CodeQL tracer, which would duplicate `verify-ios` / `verify-android` and roughly double their runtime. The reasoning is in the header of `codeql.yml`; it is a tracked follow-up |
 
@@ -595,7 +595,7 @@ Honestly **not** in force, and deliberately so or pending:
 - **A `pack-check` CI job asserts the tarball's contents**: every artifact a consumer's build needs
   is present, and nothing from `test/`, `example/`, `demo/`, `docs/` or `.claude/` leaks in.
 - **A bundle-size gate** (`.github/scripts/assert-size.mjs`, run in `build-plugin`) fails the build
-  if the gzipped ESM output crosses 16,384 B. Its security value is as a canary: code that should
+  if the gzipped ESM output crosses 20,480 B. Its security value is as a canary: code that should
   never be in the published bundle — an inlined dependency, a vendored copy of something — is
   visible as a size jump even when it compiles and every test still passes.
 - **The reusable CI call in `release.yml` passes no secrets** (see *Secret management* above), and
