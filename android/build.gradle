@@ -9,21 +9,27 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        // AGP + Kotlin bumped from Capacitor's stock 8.2.2 / 1.9.22 to
-        // match what the Braze Android SDK (com.braze:android-sdk-ui)
-        // demands. Braze 43.x ships with Kotlin 2.2.0 metadata; Kotlin
-        // 1.9.x can only read up to 2.0.0 and aborts the compile with
-        // "incompatible version of Kotlin" errors. AGP 8.6.0 is the
-        // lowest version compatible with Braze's transitive
-        // androidx.swiperefreshlayout:1.2.0 dep.
+        // Two independent floors stack here; the higher one wins.
         //
-        // The 43.2.0 AARs declare minAndroidGradlePluginVersion=1.0.0 and
-        // minCompileSdk=21 in their aar-metadata.properties, so the SDK
-        // itself imposes no AGP or compileSdk floor beyond that — the
-        // 8.6.0 / compileSdk 35 floor comes entirely from the transitive
-        // androidx deps. See plugin MDC C10.
-        classpath 'com.android.tools.build:gradle:8.6.0'
-        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0'
+        //  * Braze. `com.braze:android-sdk-ui` 43.x ships Kotlin 2.2.0
+        //    metadata, so the Kotlin plugin must be >= 2.2.0 or every Braze
+        //    class fails with "incompatible version of Kotlin". Its
+        //    transitive androidx.swiperefreshlayout:1.2.0 needs AGP >= 8.6.0
+        //    and its androidx.recyclerview:1.4.0 needs compileSdk >= 35.
+        //    The 43.2.0 AARs themselves declare only
+        //    minAndroidGradlePluginVersion=1.0.0 / minCompileSdk=21.
+        //  * Capacitor 8. `@capacitor/android` 8.5.2 builds `:capacitor-android`
+        //    with AGP 8.13.0, compileSdk 36, minSdk 24, targetSdk 36 and
+        //    Java 21 (see demo/node_modules/@capacitor/android/capacitor/build.gradle),
+        //    and its project template ships Gradle 8.14.3.
+        //
+        // So the defaults below are Capacitor 8's, which are >= Braze's
+        // everywhere. Capacitor 6/7 consumers keep working because every
+        // `android {}` value is read from `rootProject.ext` first — their
+        // stock `variables.gradle` (compileSdk 34/35, minSdk 22) still wins.
+        // See C10 for the full matrix.
+        classpath 'com.android.tools.build:gradle:8.13.0'
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20'
     }
 }
 
@@ -32,12 +38,14 @@ apply plugin: 'kotlin-android'
 
 android {
     namespace "com.bma342.braze"
-    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 35
+    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 36
     defaultConfig {
-        // Standalone default matches Capacitor 6's stock template and the
-        // value C10 documents; a consumer's rootProject.ext always wins.
-        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 22
-        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 35
+        // Standalone defaults match Capacitor 8's stock template (the newest
+        // Capacitor major the peer dep allows) and the values C10 documents;
+        // a consumer's rootProject.ext always wins, which is what keeps
+        // Capacitor 6/7 projects on their own lower numbers.
+        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 24
+        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 36
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles 'consumer-rules.pro'
     }
