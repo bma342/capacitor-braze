@@ -17,6 +17,9 @@ module.exports = [
     ignores: [
       'dist/**',
       '**/node_modules/**',
+      // Local-only: Claude Code agent worktrees are checked out under .claude/
+      // (gitignored). Flat config does not consult .gitignore.
+      '.claude/**',
       'example/**',
       'demo/**',
       'test/mock-server/**',
