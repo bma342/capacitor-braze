@@ -7,7 +7,7 @@
 
 **Audited:** 2026-09-22 (`0.2.0`).
 **Web test count:** **206 tests across 18 files, ~3.5s** (`npm test`).
-**Native:** 91 Robolectric/JUnit (`android/src/test/`) + 35 XCTest (`ios/PluginTests/`), both in CI.
+**Native:** 91 Robolectric/JUnit (`android/src/test/`) + 35 XCTest (`ios/Tests/BrazePluginTests/`), both in CI.
 **Methods on the surface:** 35, plus `addListener` (4 event overloads) and `removeAllListeners`.
 **Directly covered:** **35 of 35**, plus dedicated rejection coverage for every input-validation
 branch in `src/web.ts` ([`validation.test.ts`](../test/web/src/validation.test.ts)).

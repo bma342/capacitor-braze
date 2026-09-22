@@ -55,13 +55,13 @@ user.setDateOfBirth(year, monthEnum, day)
 
 The enum is ordered `JANUARY..DECEMBER`; `values()[month - 1]` is the unambiguous 1-indexed lookup.
 
-**iOS bridge** (`setDateOfBirth` in [`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift)): same 1-indexed convention, fed into `DateComponents` which is itself 1-indexed.
+**iOS bridge** (`setDateOfBirth` in [`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift)): same 1-indexed convention, fed into `DateComponents` which is itself 1-indexed.
 
 ### DOB timezone pinning — UTC on iOS
 
 `Date` on Swift is timezone-sensitive; the same `(year, month, day)` triple constructed against the device's local calendar can become a different absolute Date than the same triple constructed against UTC. If a user in Tokyo enters their birthday and the SDK ships the local-time Date to Braze, the dashboard may store a date one day off.
 
-iOS pins the calendar to UTC (`setDateOfBirth` in [`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift)) so the stored DOB matches what the Android and Web bridges send. The fallback to `.current` only triggers if iOS can't construct the `TimeZone` (effectively never).
+iOS pins the calendar to UTC (`setDateOfBirth` in [`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift)) so the stored DOB matches what the Android and Web bridges send. The fallback to `.current` only triggers if iOS can't construct the `TimeZone` (effectively never).
 
 ### Gender — string union on the contract, enum on each SDK
 

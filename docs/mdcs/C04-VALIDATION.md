@@ -51,7 +51,7 @@ private requireGroupId(groupId: string, method: string): void {
 
 Both the empty-string check (`!groupId`) and the type check are required — `!''` and `typeof '' === 'string'` both pass independently; the consumer might pass `0` or `null` or `undefined`. The combined check rejects all of them with one message.
 
-Mirror on iOS ([`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift)):
+Mirror on iOS ([`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift)):
 
 ```swift
 guard let groupId = call.getString("groupId"), !groupId.isEmpty else {
@@ -139,7 +139,7 @@ iOS / Android bridges duplicate each check verbatim. They are independent code p
   else if let n = raw as? NSNumber { /* Double iff CFNumberIsFloatType && fractional, else Int */ }
   ```
 
-  See `classifyAttributeValue` in [`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift), which is unit-tested against the exact `NSNumber`s `JSTypes` produces.
+  See `classifyAttributeValue` in [`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift), which is unit-tested against the exact `NSNumber`s `JSTypes` produces.
 - **iOS `call.getInt` truncates.** A JS `number` with a fractional part silently loses it. Where the contract says integer, *reject* rather than truncate — `quantity` and `sessionTimeoutInSeconds` both did the wrong thing until 0.2.0. Note that an integer helper must also reject booleans, because a JSON `true` bridges to `Int` 1.
 - **Android: distinguish absent from present-but-invalid.** `call.getInt("x")` returns null for both. Use `call.data.has("x")` / `isNull("x")` to decide between "apply the default" and "reject".
 - **Web `Number.isFinite` vs `isFinite`**: ALWAYS the `Number` static method. The global `isFinite('14.99')` coerces strings; `Number.isFinite('14.99')` returns false. The global form is footgun.
@@ -154,7 +154,7 @@ When you add a new method that takes input:
 3. Call the validator first thing in the web impl, before forwarding to the Web SDK.
 4. Duplicate every check on iOS and Android, with **byte-identical** message text. Then pin it:
    `android/src/test/.../BrazePluginContractTest.kt` asserts every Android string against
-   `src/web.ts`, and `ios/PluginTests/` does the same for iOS. Copy-pasting the string is not
+   `src/web.ts`, and `ios/Tests/BrazePluginTests/` does the same for iOS. Copy-pasting the string is not
    enough — two of them lost their second sentence at some point and nobody noticed for months.
 5. Add a one-line entry to C04's "Worked examples" or "Type-coercion quirks" section if your method surfaces a new validation pattern.
 

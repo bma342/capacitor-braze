@@ -391,7 +391,7 @@ Items marked **[manual]** are yours. §6 grades the current state of each.
 - **[manual]** `SECURITY.md` reflects any new attack surface, and every claim in it is still true
 - **[manual]** `enableLogging` still defaults to `false` **and the `false` branch still silences the SDK on all three platforms** (it did not, on either native platform, until 0.2.0)
 - **[manual]** `allowInsecureEndpoint` still defaults to `false`, checked with strict `=== true`
-- **[manual]** No plugin log line carries a consumer-supplied value (grep `src/`, `ios/Plugin/`, `android/src/main/`)
+- **[manual]** No plugin log line carries a consumer-supplied value (grep `src/`, `ios/Sources/BrazePlugin/`, `android/src/main/`)
 
 ### Release mechanics
 
@@ -428,7 +428,7 @@ Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open ·
 | iOS native tests pass in CI | ✓ | `verify-ios` compiles against BrazeKit 18.2.1 and runs **35** XCTests via a generated target. Until `0.2.0` the suite had no target and had never been compiled |
 | Web Layer 3 passes in CI | ✓ | `test-web` runs the vitest + Fastify-mock harness |
 | Layer 4 manual smoke against real Braze | ◌ | **Never run.** `0.1.0` and `0.2.0` both ship on mock-verified wire format only, and say so |
-| No `any`, no `!`, no `TODO`, no `@Suppress` (without docs) | ✓ | Re-verified 2026-09-22 by grep over `src/`, `ios/Plugin/`, `android/src/main/`: no TODO/FIXME, no `@Suppress`, no Swift force-unwraps / `try!` / `as!` / `fatalError`, no `any` |
+| No `any`, no `!`, no `TODO`, no `@Suppress` (without docs) | ✓ | Re-verified 2026-09-22 by grep over `src/`, `ios/Sources/BrazePlugin/`, `android/src/main/`: no TODO/FIXME, no `@Suppress`, no Swift force-unwraps / `try!` / `as!` / `fatalError`, no `any` |
 | Lint clean | ✓ | **ESLint 10** (flat config, `--max-warnings=0`) + Prettier 3.9 in `lint`; **SwiftLint `--strict`, 0 violations** in `verify-ios` — the binary is now installed and asserted, having previously been absent, which made the gate a silent no-op; **Android Lint** `abortOnError true` in `verify-android`. **ktlint deliberately not used** per [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md) |
 | Code coverage targets met | ⚠️ | **Web only.** `src/web.ts` is measured at 97.45% statements/lines, 90.80% branches, 100% functions, with thresholds that fail the `test-web` job on a regression. The 91 Android and 35 iOS tests are counts, not coverage — no JaCoCo, no `-enableCodeCoverage`. 332 tests across three platforms; [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) reports both halves |
 | Bundle size budget met | ✓ | **Measured and enforced** as of `0.2.0`: `node .github/scripts/assert-size.mjs` runs in `build-plugin` and fails above **20,480 B** gzipped for `dist/esm/**/*.js`; the measured total is **17,472 B**. The four unmeasurable budgets (`.aar`, `.framework`, init time, round-trip) were deleted from §2 rather than left as aspirations |
@@ -477,14 +477,14 @@ Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open ·
 | Android: ProGuard rules in `consumer-rules.pro` | ✓ | Narrowed in `0.2.0` to `-keep class com.bma342.braze.** { *; }` only. It previously widened Braze's own deliberate `-keepnames` rules to `-keep … { *; }` across ~910 SDK classes, and carried dead `com.appboy.**` rules |
 | Android: matches Braze RN bridge style | ⚠️ | Patterns are similar; haven't done a literal diff |
 | Android: `./gradlew lint` clean | ✓ | `:capacitor-braze:lintDebug` runs in `verify-android` with `abortOnError true`. Verified non-vacuous: a probe calling an API-26 method failed the build with `[NewApi]`. Two "newer version available" advisories remain against deliberate C08 pins |
-| iOS: `CAPPlugin` + `CAPPluginCall` | ✓ | `ios/Plugin/BrazePlugin.swift` |
+| iOS: `CAPPlugin` + `CAPPluginCall` | ✓ | `ios/Sources/BrazePlugin/BrazePlugin.swift` |
 | iOS: official BrazeKit API | ✓ | All calls go through `braze.X` or `Braze.X` statics, verified by Phase O compile |
 | iOS: no force unwraps, proper `guard let` | ✓ | Verified |
 | iOS: `[weak self]` in closures | ✓ | Both subscribeToUpdates closures capture `[weak self]` |
 | iOS: `PrivacyInfo.xcprivacy` manifest | ✓ | Shipped via podspec `resource_bundles` (Phase S). Verified on fresh-`cap-init` install: `CapacitorBraze.bundle` resource target generated in Pods.xcodeproj with the manifest as a build file. The manifest declares "no tracking, no required-reason API access" because the plugin layer doesn't directly touch any (BrazeKit's own manifest covers what the SDK does) |
 | iOS: SwiftPM + CocoaPods install paths tested | ⚠️ | **CocoaPods only.** There is no `Package.swift`. Capacitor 8's CLI generates SPM projects by default, so this is now coupled to the Capacitor 8 lane |
 | iOS: matches Braze RN bridge style | ⚠️ | Patterns are similar; no literal diff |
-| iOS: SwiftLint clean | ✓ | `swiftlint lint --strict` → **0 violations in 3 files**, including `ios/PluginTests`. The config previously pointed `parent_config` at a nonexistent path, so no Ionic rule had ever run; the ruleset is now inlined |
+| iOS: SwiftLint clean | ✓ | `swiftlint lint --strict` → **0 violations in 3 files**, including `ios/Tests/BrazePluginTests`. The config previously pointed `parent_config` at a nonexistent path, so no Ionic rule had ever run; the ruleset is now inlined |
 | TS: `strict: true` | ✓ | `tsconfig.json` |
 | TS: no `any`, no `unknown` returned | ✓ | All public returns are typed |
 | TS: discriminated unions for divergent results | ✓ | `BrazeContentCard`, `BrazeFeatureFlagPropertyValue` |

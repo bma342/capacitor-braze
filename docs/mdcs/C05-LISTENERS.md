@@ -132,7 +132,7 @@ See `featureFlagsSubscription` and `teardownSubscriptions` in [`src/web.ts`](../
 
 ### iOS bridge — retain the Braze.Cancellable
 
-`featureFlagsSubscription` in [`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift) — note that all plugin state is `@MainActor`-isolated:
+`featureFlagsSubscription` in [`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift) — note that all plugin state is `@MainActor`-isolated:
 
 ```swift
 private var featureFlagsSubscription: Braze.Cancellable?
@@ -242,7 +242,7 @@ worth noting:
   reads strongly-typed payloads regardless of how many events ship.
 
 See [`src/web.ts`](../../src/web.ts) for the Web wiring,
-[`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift)
+[`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift)
 for iOS (`contentCardsSubscription`), and
 [`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)
 for Android (`contentCardsSubscriber` and `teardownContentCardsSubscription`).
@@ -280,7 +280,7 @@ installing, so wrappers replace rather than stack — a stacked wrapper would fa
 `deepLinkReceived` events per click, this MDC's Forbidden entry in deep-link clothing.
 
 See `BrazeDeepLinkDelegate` in
-[`ios/Plugin/BrazeIAMDelegate.swift`](../../ios/Plugin/BrazeIAMDelegate.swift),
+[`ios/Sources/BrazePlugin/BrazeIAMDelegate.swift`](../../ios/Sources/BrazePlugin/BrazeIAMDelegate.swift),
 `InterceptingDeeplinkHandler` / `installDeepLinkHandler` / `teardownDeepLinkHandler` in
 [`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt), and
 `interceptDeepLinks` in [`src/web.ts`](../../src/web.ts). Per-channel coverage — including the two

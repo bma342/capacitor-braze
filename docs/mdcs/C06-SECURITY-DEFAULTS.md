@@ -37,10 +37,10 @@ the time anyone checked (2026-09 audit, A6-54).
 
 | Toggle | Default | What the default actually does | Where |
 |---|---|---|---|
-| `enableLogging` | `false` | **SDK errors only.** Web: Web SDK logging off. iOS: BrazeKit log level `.error`. Android: `BrazeLogger.logLevel = Log.ERROR`. `true` gives iOS `.debug` / Android `BrazeLogger.VERBOSE`. | `initialize` in [`src/web.ts`](../../src/web.ts), [`BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift), [`BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt) |
+| `enableLogging` | `false` | **SDK errors only.** Web: Web SDK logging off. iOS: BrazeKit log level `.error`. Android: `BrazeLogger.logLevel = Log.ERROR`. `true` gives iOS `.debug` / Android `BrazeLogger.VERBOSE`. | `initialize` in [`src/web.ts`](../../src/web.ts), [`BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift), [`BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt) |
 | `allowInsecureEndpoint` | `false` | An `http://` endpoint is **rejected** unless this is strictly `true`. | `validateInitializeOptions` in [`src/web.ts`](../../src/web.ts); the equivalent guard at the top of `initialize` on both natives |
 | `enableInAppMessageUI` | `true` | The plugin renders in-app messages out of the box. `false` is an **opt-out**, not a security toggle — it does not suppress messages, it hands rendering to the host app. | `initialize` on all three bridges |
-| `enablePushAutomation` | `false` | **iOS only.** The plugin does not touch `UNUserNotificationCenter` and BrazeKit does not take over notification opens or deep links unless the consumer opts in. | `performInitialize` in [`BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift) |
+| `enablePushAutomation` | `false` | **iOS only.** The plugin does not touch `UNUserNotificationCenter` and BrazeKit does not take over notification opens or deep links unless the consumer opts in. | `performInitialize` in [`BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift) |
 | `allowUserSuppliedJavascript` | `false` | **Web only.** Braze dashboard authors cannot run JavaScript in your page's origin, and HTML in-app messages do not render on web. The plugin writes the `false` **explicitly** rather than omitting the key, so a future flip of the SDK's own default cannot silently enable it. iOS and Android ignore the option because neither SDK has a counterpart — see the note below. | `initialize` in [`src/web.ts`](../../src/web.ts) |
 | `deepLinkHandling` | `'sdk'` | The Braze SDK opens campaign URLs itself, which is the pre-0.2.0 behaviour and the Braze default. `'app'` is an **opt-in** that suppresses the SDK's opening and routes every URL through the `deepLinkReceived` listener. | `initialize` on all three bridges; coverage matrix in [`SECURITY.md` §7](../../SECURITY.md#7-deep-link-security) |
 | `enableSdkAuthentication` | `false` | (not security-defaulted; opt-in by consumer) | — |
@@ -112,7 +112,7 @@ the parsed hostname, so an explicit `:443` does not misfire.
 of non-PII diagnostics: the endpoint cluster-shape warning, "dropped an unrecognized in-app message
 / content card variant", a warning naming the *method* when the Braze SDK rejects an attribute
 value, and a warning that the Android SDK kept its first configuration on a second `initialize`.
-None of them carries a consumer-supplied value. Verify with a grep over `src/`, `ios/Plugin/` and
+None of them carries a consumer-supplied value. Verify with a grep over `src/`, `ios/Sources/BrazePlugin/` and
 `android/src/main/` before adding a log line.
 
 What counts as PII in this plugin's surface (from `SECURITY.md §3`):

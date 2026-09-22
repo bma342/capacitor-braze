@@ -16,12 +16,12 @@ other method follows:
 
 1. `src/definitions.ts` — TS signature + JSDoc with `@example`. The interface is the contract.
 2. `src/web.ts` — web impl.
-3. `ios/Plugin/BrazePlugin.swift` — Swift bridge under the correct `MARK:` section.
-4. `ios/Plugin/BrazePlugin.m` — `CAP_PLUGIN_METHOD` registration.
+3. `ios/Sources/BrazePlugin/BrazePlugin.swift` — Swift bridge under the correct `MARK:` section.
+4. The **same file's `pluginMethods` array** — a `CAPPluginMethod(name:returnType:)` entry under the matching category comment. This is the `CAPBridgedPlugin` conformance that replaced `ios/Plugin/BrazePlugin.m` in 0.3.0, because a Swift Package Manager target cannot mix Swift and Objective-C sources. Still ten artifacts; two of them now live in one file.
 5. `android/src/main/java/com/bma342/braze/BrazePlugin.kt` — Kotlin bridge.
 6. `test/web/src/<area>.test.ts` — vitest behavioral test asserting the **wire output**, plus the validation rejections.
 7. `android/src/test/java/com/bma342/braze/BrazePluginContractTest.kt` — Robolectric test asserting every validation branch byte-exact against `src/web.ts`.
-8. `ios/PluginTests/BrazePluginContractTests.swift` — the XCTest equivalent. Re-run `ruby scripts/ios-add-test-target.rb` and commit the regenerated Xcode project if you added a *file*.
+8. `ios/Tests/BrazePluginTests/BrazePluginContractTests.swift` — the XCTest equivalent. Re-run `ruby scripts/ios-add-test-target.rb` and commit the regenerated Xcode project if you added a *file*.
 9. `example/index.html` + `example/src/main.ts` — UI row + button under the matching category card, and the handler in the `runMethods` map.
 10. `CHANGELOG.md` — entry under `[Unreleased]`. If the method is new to the roadmap, also update `SDK_SURFACE.md`.
 
@@ -34,11 +34,12 @@ the most expensive place to find it — and this project has not run one yet.
 ## Rationale
 
 The plugin is a bridge over three SDKs (Web, iOS, Android) plus a TS contract. Each method exists
-in four runtime forms (TS interface, Web impl, Swift impl, Kotlin impl) plus the `.m` registration,
-a test on each platform, the example UI, and the CHANGELOG. The lockstep is the smallest set that:
+in four runtime forms (TS interface, Web impl, Swift impl, Kotlin impl) plus the `pluginMethods`
+registration, a test on each platform, the example UI, and the CHANGELOG. The lockstep is the
+smallest set that:
 
 - keeps the TS interface as the authoritative contract;
-- registers the Obj-C method (the Capacitor bridge won't see an `@objc` Swift method without an explicit `CAP_PLUGIN_METHOD`);
+- registers the method with the Capacitor bridge (it won't see an `@objc` Swift method that has no `CAPPluginMethod` entry — before 0.3.0 the same job was done by a `CAP_PLUGIN_METHOD` macro in `BrazePlugin.m`);
 - pins the behaviour on every platform where it runs, so a subtly wrong bridge fails a test rather than a consumer;
 - gives the example app coverage so any change is exercised by hand before publish;
 - creates a paper trail in the CHANGELOG that survives a `git log` migration.
@@ -58,7 +59,7 @@ greppable and cannot drift.
 |---|---|---|---|
 | Web | `this.requireInitialized()` | `BrazeWebSdk` | `private requireInitialized()` in [`src/web.ts`](../../src/web.ts) |
 | Web | `this.requireUser()` | `NonNullable<ReturnType<BrazeWebSdk['getUser']>>` | `private requireUser()` in [`src/web.ts`](../../src/web.ts) |
-| iOS | `Self.requireInitialized(call)` | `Braze?` (rejects + returns nil on miss) | `private static func requireInitialized` in [`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift) |
+| iOS | `Self.requireInitialized(call)` | `Braze?` (rejects + returns nil on miss) | `private static func requireInitialized` in [`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift) |
 | Android | `requireInitialized(call)` | `Boolean` (rejects + returns false on miss) | `private fun requireInitialized` in [`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt) |
 | Android | `requireUser(call)` | `BrazeUser?` (combines init + non-null `currentUser`) | `private fun requireUser` in [`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt) |
 
@@ -113,7 +114,7 @@ Rules:
 2. Add the type to `src/definitions.ts` with full JSDoc + `@example`. The signature is the contract; downstream files implement against it.
 3. Implement on web first (fastest iteration loop; cheapest to throw away if you change your mind on the shape).
 4. Implement on iOS and Android. Use the matching `MARK:` / KDoc category comment so the bridge file stays browseable.
-5. Register the Obj-C method in `BrazePlugin.m` under the matching category comment. Forgetting this surfaces as a runtime "method not implemented" error in the example app — easy to miss in code review.
+5. Add the `CAPPluginMethod` entry to `BrazePlugin.swift`'s `pluginMethods` array, under the matching category comment. Forgetting this surfaces as a runtime "method not implemented" error in the example app — easy to miss in code review, and neither `verify-ios` leg catches it (both compile and test the Swift, neither drives the JS bridge).
 6. Add the example UI row + handler. The example serves as the integration test before real-Braze smoke testing.
 7. Write the tests — web, Android, iOS. Assert the wire output, not just that the call resolved.
 8. Build clean: `npm run build` from repo root AND `npm run build` in `example/`. Run `npm test`, the Robolectric suite, and the XCTest suite. CI runs all of them.

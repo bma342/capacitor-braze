@@ -142,7 +142,7 @@ expired signature (`sdkAuthError` → fetch a new JWT → `setSdkAuthenticationS
    content card variant", a warning naming the *method* when the Braze SDK rejects an attribute
    value, and a warning that the Android SDK kept its first configuration on a second `initialize`.
    Masking helpers would be added alongside the first plugin-owned log line that could carry user
-   data; today there is none. Verified by grep over `src/`, `ios/Plugin/` and `android/src/main/`.
+   data; today there is none. Verified by grep over `src/`, `ios/Sources/BrazePlugin/` and `android/src/main/`.
 2. **Errors quote argument names, not values.** `` Braze.setEmail: `email` is required (string). ``
    — never the address. Enforced by the C01 message format and checked by the byte-exact
    error-string tests on all three platforms.

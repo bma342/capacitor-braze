@@ -126,7 +126,7 @@ TypeError.
 
 ### iOS bridge
 
-[`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift) — calls static methods on the `Braze` type, not instance methods on `BrazePlugin.braze`:
+[`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift) — calls static methods on the `Braze` type, not instance methods on `BrazePlugin.braze`:
 
 ```swift
 @objc func wipeData(_ call: CAPPluginCall) {

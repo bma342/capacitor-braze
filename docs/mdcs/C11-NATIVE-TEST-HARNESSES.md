@@ -323,7 +323,7 @@ xcodebuild test -workspace App.xcworkspace -scheme App \
 ```
 
 `scripts/ios-add-test-target.rb` adds a `CapacitorBrazeTests` unit-test bundle to
-`demo/ios/App/App.xcodeproj` via the `xcodeproj` gem, hosted by `App`, with `ios/PluginTests/*.swift`
+`demo/ios/App/App.xcodeproj` via the `xcodeproj` gem, hosted by `App`, with `ios/Tests/BrazePluginTests/*.swift`
 as its sources. It re-globs the directory and rewrites the settings on every run, and the resulting
 `project.pbxproj` and **shared** scheme are committed — so CI runs the script and fails if the
 committed project is stale, which makes it a consistency check as well as a generator.
@@ -342,7 +342,7 @@ payload including `userId: null` and the `BrazeSDKAuthDelegate`-not-`BrazeDelega
 (4), the slide-up icon (1), and the `deepLinkHandling` validation + `Braze.Channel` → `source`
 mapping + content-card `useWebView` (9).
 
-**To add a test:** add the file to `ios/PluginTests/`, then re-run `ruby scripts/ios-add-test-target.rb`
+**To add a test:** add the file to `ios/Tests/BrazePluginTests/`, then re-run `ruby scripts/ios-add-test-target.rb`
 and commit the regenerated project. Adding a test *method* to an existing file needs neither.
 
 **Note the deviation from this MDC's original "Forbidden" list**, which said plugin tests must not

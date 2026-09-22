@@ -113,7 +113,7 @@ settings were inert until that step was added.
 ### Next tiers
 
 - **Native unit tiers are done** and live outside this directory: `android/src/test/` (74 Robolectric
-  tests) and `ios/PluginTests/` (26 XCTests), both running in CI.
+  tests) and `ios/Tests/BrazePluginTests/` (26 XCTests), both running in CI.
 - **Native integration tier** — iOS URLProtocol intercept, Android OkHttp MockWebServer, asserting
   real HTTP rather than DTO shape. Designed in [C11](../docs/mdcs/C11-NATIVE-TEST-HARNESSES.md), not
   built. This is the only tier that can prove cross-platform *wire* consistency.
