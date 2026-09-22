@@ -423,6 +423,14 @@ jobs:
       # different code path from the Pods build (no `.m`, no resource bundle,
       # module-scoped `Bundle.module`). A CocoaPods-only CI would not catch an
       # SPM-breaking change to Package.swift or the source layout.
+      #
+      # Cost note, for whoever watches the first run on this branch: `BrazeKit`
+      # is an SPM *binary* target, so the first resolve mirror-clones
+      # `braze-swift-sdk` (~180 MB per the GitHub API) and downloads
+      # BrazeKit.zip. That is minutes on a GitHub runner and can be over an
+      # hour on a slow connection. If it turns out to dominate this job, cache
+      # `~/Library/Caches/org.swift.swiftpm` — deliberately not added up front,
+      # since the repo does not carry CI machinery it has not measured.
       # ----------------------------------------------------------------
       - name: Install example deps + build web assets
         working-directory: example
