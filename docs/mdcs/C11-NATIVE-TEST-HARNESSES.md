@@ -1,8 +1,19 @@
 # C11 — Native test harnesses
 
-**iOS and Android bridges need behavioral coverage equivalent to what `test/web` gives the JS bridge. This MDC documents the design for both platforms so the implementation, when it lands, follows a single architectural shape rather than being reinvented per phase.**
+**iOS and Android bridges need behavioral coverage equivalent to what `test/web` gives the JS bridge. This MDC documents the shape both platforms follow, so coverage grows rather than being reinvented per phase.**
 
-The web bridge currently runs against a Fastify mock under jsdom (53 vitest tests, ~2.4s). The native bridges currently have *compile-only* coverage via `verify-ios` and `verify-android`. The gap that closes when this MDC's implementations ship: catching wire-format regressions, validating cross-platform DTO consistency, and proving the bridge translation logic without depending on a real Braze account on every PR.
+> **Status: implemented, one tier of two.** The **unit / contract tier** is live on both platforms
+> and runs in CI on every PR — **91** Robolectric/JUnit tests on Android, **35** XCTests on iOS. The
+> **integration tier** designed below (URLProtocol on iOS, MockWebServer on Android, asserting real
+> HTTP wire output) is still design-only. See "Status" at the end for exactly what exists.
+
+The web bridge runs against a Fastify mock under jsdom (205 vitest tests across 18 files, ~3.4s,
+with measured V8 coverage of `src/web.ts` ratcheted in CI). The
+native bridges had *compile-only* coverage until 0.2.0. What the unit tier closed: every validation
+branch is now pinned byte-exact against `src/web.ts` on all three platforms, and every serializer is
+driven against real Braze model objects rather than hand-built fixtures. What the integration tier
+would still add: asserting the actual HTTP the native SDKs emit, which is the only way to prove
+cross-platform wire consistency rather than DTO consistency.
 
 ---
 
@@ -265,34 +276,87 @@ The mock-server harness on `test/web` covers Web-bridge wire output. The native 
 - **Skipping native behavioral tests in favor of "more web tests."** The web bridge is already over-tested relative to native. Net incremental coverage from web tests is low; native tests add new ground truth.
 - **Mocking the Braze SDK itself.** The whole point is testing the bridge → real SDK → HTTP path. Replacing the SDK with a mock means testing the mock, not the bridge.
 - **Adding emulator-based instrumented tests in CI before Robolectric proves insufficient.** Emulator startup time is a 5-minute tax per job per push; only worth it if Robolectric demonstrably misses a class of bug.
-- **Adding XCTest tests in the demo app's test target.** Demo is consumer-facing reference code; mixing plugin tests in muddles its purpose. Tests live in `test/ios/` (separate target, depends on the plugin Pod the same way the demo does).
+- **Mocking the Capacitor bridge instead of stubbing it.** Android's `TestSupport.fakePluginCall` replicates `PluginCall`'s *strict* accessor semantics (`getInt` returning null for a non-integer, etc.). A permissive fake would pass tests the real bridge fails.
+- **Writing a test that only asserts "does not throw."** The 2026-09 audit found eleven tests that would survive their implementation being replaced with `return;`. Assert the wire output or the exact error string.
+- **Trusting a native test tier you have not seen fail.** Both tiers here shipped in a state where they could not run: the iOS suite had no target for four months, and the Android suite's own docstring claimed a mocked bridge it never created. Break something on purpose and confirm red.
 
-## Status (as of `0.0.13`)
+## Status
 
-**Implementation kickoff complete.** Phase 15 of the audit completion pass lands the framework ceremony + the first batch of contract tests:
+**Both unit tiers are implemented and run in CI.** The integration tier is not.
 
-### Android
+### Android — 91 Robolectric/JUnit tests, in CI
 
-- `android/build.gradle` adds Robolectric 4.13 + Mockito 5.14 + Truth 1.4 as `testImplementation` deps, with `testOptions.unitTests.includeAndroidResources = true` so Robolectric can synthesize a working Android context.
-- `android/src/test/java/com/bma342/braze/BrazePluginContractTest.kt` covers the audit-fix contract surface:
-  - `echo` empty-value rejection (C01 error format)
-  - `initialize` validation: empty apiKey, HTTP-without-allowInsecureEndpoint, malformed URL (L5-03), zero `sessionTimeoutInSeconds` (L5-08)
-  - `setDateOfBirth` reject path (L2-07)
-- CI runs the suite via `./gradlew :capacitor-braze:testDebugUnitTest` in the `verify-android` job.
+Run with `cd demo/android && ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon` (JDK 21 +
+`ANDROID_HOME`). CI runs it in `verify-android`, followed by `:capacitor-braze:lintDebug`.
 
-### iOS
+| File | Tests | Covers |
+|---|---|---|
+| `TestSupport.kt` | — | `fakePluginCall` replicating `PluginCall`'s strict accessor semantics; `initializedPlugin()`; reject/resolve captors |
+| `BrazePluginContractTest.kt` | 45 | Every `@PluginMethod` validation branch, byte-exact against `src/web.ts`, plus a table-driven init-guard sweep over all 29 guarded methods (C07) |
+| `BrazePluginSerializerTest.kt` | 24 | Every serializer, driven against **real Braze model objects parsed from Braze's own wire JSON**, including content-card `useWebView` |
+| `BrazePluginLifecycleTest.kt` | 22 | Log level (both branches + reversibility), double-`initialize`, `handleOnDestroy` / `wipeData` teardown, the listener-ordering guard, `sdkAuthError` payload, the `IBrazeDeeplinkHandler` install/chain for `deepLinkHandling: 'app'`, and the SDK-rejection warning |
 
-- `ios/PluginTests/BrazePluginContractTests.swift` covers the pure-function serializer surface (`BrazeInAppMessageSerializer`):
-  - 5-variant control / html / slideup / modal collapse from BrazeKit's 7-case enum
-  - Button array shape per C02
-  - Graphic-image flattening to `imageUrl`
-- Wiring into the Xcode workspace is documented in the file header. The Capacitor plugin ships as a Pod + SwiftPM target with no host app, so the XCTest bundle hosts inside the demo app's Xcode workspace after `npx cap sync ios` (one-time maintainer setup, ~10 minutes).
-- CI wiring is staged for the same setup pass — `xcodebuild test -scheme CapacitorBrazeTests` will run alongside `verify-ios` once the Xcode target lands.
+**The unlock was running `initialize` end-to-end under Robolectric.** Stub the `Bridge` so
+`getContext()` returns the Robolectric application, and `Braze.configure`, `currentUser`, `deviceId`,
+`getCachedContentCards`, `getAllFeatureFlags` and the subscriptions all work. That is what makes
+post-init branches and SDK-backed happy paths reachable; the previous suite stopped at the init
+guard, which is why it covered 3 of 35 methods.
+
+**Fixture notes for whoever extends this.** Braze's Content Card wire keys at 43.2.0 are `id`, `ca`
+(created, required), `ea`, `v`, `p`, `r`, `cl`, `d`, `db`, `dm`, `u`, `ar`, `e`, `t`, `uw`, `tt`,
+`ds`, `i`, `image_alt`, established empirically against the published AAR and documented in the test
+file. `FeatureFlag`'s constructors and `BrazeSdkAuthenticationErrorEvent`'s only constructor are
+`internal` to the SDK, so those two fixtures use reflection and a Mockito mock respectively;
+everything else is a real object from real JSON. The serializers were widened `private` → `internal`
+(name-mangled, invisible to consumers) with a comment saying why.
+
+**To add a test:** write it in the matching file. Nothing else — the Gradle module is already wired
+through the demo's `settings.gradle`.
+
+### iOS — 35 XCTests, in CI
+
+```bash
+ruby scripts/ios-add-test-target.rb      # idempotent; regenerates the target from the directory
+cd demo/ios/App && pod install
+xcodebuild test -workspace App.xcworkspace -scheme App \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' CODE_SIGNING_ALLOWED=NO
+```
+
+`scripts/ios-add-test-target.rb` adds a `CapacitorBrazeTests` unit-test bundle to
+`demo/ios/App/App.xcodeproj` via the `xcodeproj` gem, hosted by `App`, with `ios/PluginTests/*.swift`
+as its sources. It re-globs the directory and rewrites the settings on every run, and the resulting
+`project.pbxproj` and **shared** scheme are committed — so CI runs the script and fails if the
+committed project is stale, which makes it a consistency check as well as a generator.
+
+Implementation notes worth keeping:
+
+- The gem is not on system Ruby's path; the script borrows CocoaPods' `GEM_HOME` out of the Homebrew `pod` shim and re-execs, so a contributor needs no extra `gem install`.
+- The scheme must be **shared** (`App.xcodeproj/xcshareddata/xcschemes/App.xcscheme`) — the autocreated one is per-user and invisible to CI.
+- `PRODUCT_NAME = $(TARGET_NAME)` is not optional: without it the generated target links to `PlugIns/.xctest` (no stem) and the build dies with *"Multiple commands produce …/PlugIns/.xctest"*.
+- `demo/ios/App/Podfile` nests `target 'CapacitorBrazeTests' do inherit! :search_paths end` under `App`, which is what makes `@testable import CapacitorBraze` resolve. `ENABLE_TESTABILITY = YES` is already set for Debug in the generated Pods project, so no post-install hook is needed.
+
+Coverage: the 5 pre-existing serializer tests, plus `classifyAttributeValue` bool/int/double dispatch
+including the `0`/`1` regression (5), `dataFromHex` including `"<>"` / `"   "` / over-length (4),
+`propertiesError` + `integerValue` C04 strings (4), `BrazeExtras.stringify` (3), the `sdkAuthError`
+payload including `userId: null` and the `BrazeSDKAuthDelegate`-not-`BrazeDelegate` type assertion
+(4), the slide-up icon (1), and the `deepLinkHandling` validation + `Braze.Channel` → `source`
+mapping + content-card `useWebView` (9).
+
+**To add a test:** add the file to `ios/PluginTests/`, then re-run `ruby scripts/ios-add-test-target.rb`
+and commit the regenerated project. Adding a test *method* to an existing file needs neither.
+
+**Note the deviation from this MDC's original "Forbidden" list**, which said plugin tests must not
+live in the demo app's target. They do, via a *separate* target inside the demo's project, because a
+Capacitor plugin Pod has no host app of its own and an XCTest bundle needs one. The demo's own source
+is untouched; only the `.xcodeproj` and `Podfile` gained a nested target. The rule's intent — don't
+muddle consumer-facing reference code with plugin tests — is preserved.
 
 ### What's left
 
-- Android: extend coverage to subscription-group rejections, alias validation, customAttribute type dispatch with Long values (L4-K02).
-- iOS: extend to `BrazeContentCard` serializer + `BrazeFeatureFlag` typed-accessor walk + the URLProtocol-intercept integration tier this MDC's iOS section originally designed.
-- Both: the integration tier (full Capacitor bridge round-trip with mock-server response replay) per the §"What tests should we write first" list above.
+- **The integration tier** designed above: URLProtocol intercept on iOS, MockWebServer on Android, asserting real HTTP wire output rather than DTO shape. This is the only tier that can prove cross-platform *wire* consistency, and it remains the honest gap.
+- **`inAppMessageReceived` delivery on the native tiers.** Web is covered end to end as of `0.2.0` — the mock server returns real trigger envelopes and the Web SDK's own trigger engine builds the message. Nothing reproduces that on iOS or Android; the DTO is covered at the serializer level on all three platforms.
+- **Coverage instrumentation on the native bridges.** The web bridge is measured by `@vitest/coverage-v8` (`npm --prefix test/web run test:coverage`) at 97.38% statements/lines on `src/web.ts`, with thresholds that fail the `test-web` job on a regression. The native tiers report **test counts, not coverage**: neither JaCoCo (a `jacocoTestReport` task wired to `testDebugUnitTest`) nor `xcodebuild -enableCodeCoverage YES` is configured, so nobody knows which bridge branches the 91 + 35 tests actually reach. Wiring both is the natural companion to the integration tier, and `docs/TEST-COVERAGE-AUDIT.md` tracks it as the open coverage item.
 
-The audit's L6-01 finding is closed by this kickoff; ongoing coverage growth tracks against the [`findings/`](../../findings/) punch list and the smoke-test playbooks in [`docs/smoke-tests/`](../smoke-tests/).
+The 2026-05 audit's L6-01 finding is closed. Ongoing coverage tracks against
+[`docs/audits/2026-09/A5-tests-ci.md`](../audits/2026-09/A5-tests-ci.md) and the smoke-test
+playbooks in [`docs/smoke-tests/`](../smoke-tests/).

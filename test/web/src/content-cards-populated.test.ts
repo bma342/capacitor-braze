@@ -1,9 +1,9 @@
 import type { MockServer } from 'capacitor-braze-mock-server';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BrazeWeb } from '../../../src/web';
 
-import { freshPluginWithConfig } from './test-utils';
+import { freshPluginWithConfig, teardownPlugin, waitUntil } from './test-utils';
 
 /**
  * Populated-cache content-cards tests: requestContentCardsRefresh ->
@@ -54,16 +54,25 @@ describe('content cards (populated cache via refresh end-to-end)', () => {
 
   beforeEach(async () => {
     ({ mock, plugin } = await freshPluginWithConfig());
+    await populateCache();
   });
 
   afterEach(async () => {
-    try {
-      await plugin.wipeData();
-    } catch {}
-    await mock.stop();
+    await teardownPlugin(plugin, mock);
   });
 
-  it('requestContentCardsRefresh surfaces every card via the bridge with the canonical DTO shape', async () => {
+  /**
+   * Stages the three-card sync response and refreshes, leaving the SDK
+   * cache populated.
+   *
+   * A5-22: this used to be inline at the top of one ~130-line test that
+   * also carried the click / impression wire assertions — the strongest
+   * assertions in the suite, and unreachable whenever an earlier DTO
+   * expectation failed. The module-singleton constraint that motivated the
+   * fat test is per *file*, not per test, so a shared beforeEach splits
+   * them safely.
+   */
+  async function populateCache(): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
     mock.respondTo({
       pathPattern: /\/content_cards\/sync$/,
@@ -117,7 +126,9 @@ describe('content cards (populated cache via refresh end-to-end)', () => {
 
     await plugin.requestContentCardsRefresh();
     await new Promise((r) => setTimeout(r, 200));
+  }
 
+  it('requestContentCardsRefresh surfaces every card via the bridge with the canonical DTO shape', async () => {
     const { cards, lastUpdated } = await plugin.getContentCards();
     expect(cards).toHaveLength(3);
     expect(lastUpdated).not.toBeNull();
@@ -152,12 +163,12 @@ describe('content cards (populated cache via refresh end-to-end)', () => {
       pinned: true,
       dismissible: false,
     });
+  });
 
-    // Now that the cards ARE in the cache, click + impression resolve
-    // (in the unpopulated-cache cases tested by content-cards.test.ts, both
-    // reject with a 'no cached content card with id "<id>"' message). Same
-    // describe block to avoid the @braze/web-sdk module-singleton constraint
-    // that bites cross-test plugin instances.
+  it('logContentCardClick / logContentCardImpression emit the ccc + cci events for cached cards', async () => {
+    // With the cards in the cache, click + impression resolve; in the
+    // unpopulated-cache cases tested by content-cards.test.ts both reject
+    // with a 'no cached content card with id "<id>"' message.
     mock.clearCaptured();
     await expect(plugin.logContentCardClick({ cardId: 'card_captioned_1' })).resolves.toBeUndefined();
     await expect(plugin.logContentCardImpression({ cardId: 'card_classic_1' })).resolves.toBeUndefined();
@@ -192,5 +203,34 @@ describe('content cards (populated cache via refresh end-to-end)', () => {
         .map((r) => `${r.method} ${r.path}`)
         .join(', ')}`,
     ).toBeTruthy();
+  });
+
+  it('resolves and warns — not rejects — when the server fails the refresh', async () => {
+    // A5-18 noted that `ScriptedResponse.status` existed and no test had
+    // ever used it: nothing covered a non-2xx from Braze. The contract here
+    // is deliberate — a failed background refresh is not a programming
+    // error, so the bridge warns and resolves rather than handing the
+    // consumer a rejection to swallow at every call site. The cached cards
+    // from the successful refresh in `beforeEach` must survive it.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      mock.respondTo({
+        pathPattern: /\/content_cards\/sync$/,
+        method: 'POST',
+        status: 500,
+        body: { message: 'internal error' },
+      });
+
+      await expect(plugin.requestContentCardsRefresh()).resolves.toBeUndefined();
+      await waitUntil(
+        () => warn.mock.calls.some((call) => String(call[0]).includes('reported the refresh failed')),
+        'the refresh-failure warning',
+      );
+
+      const { cards } = await plugin.getContentCards();
+      expect(cards, 'a failed refresh must not clear the cache').toHaveLength(3);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

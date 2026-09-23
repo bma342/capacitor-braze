@@ -133,6 +133,17 @@ const runMethods: Record<string, () => Promise<unknown>> = {
       enableLogging: checked('enableLogging'),
       enableSdkAuthentication: checked('enableSdkAuthentication'),
       allowInsecureEndpoint: checked('allowInsecureEndpoint'),
+      // Defaults to true in the contract; the checkbox ships checked so the
+      // testbed's default matches the plugin's.
+      enableInAppMessageUI: checked('enableInAppMessageUI'),
+      // iOS only — ignored on Android and web.
+      enablePushAutomation: checked('enablePushAutomation'),
+      // Web only — iOS/Android have no equivalent SDK switch. Enabling it
+      // is what makes HTML in-app messages render on web.
+      allowUserSuppliedJavascript: checked('allowUserSuppliedJavascript'),
+      // 'app' suppresses the SDK's own URL opening and routes every Braze
+      // deep link through the `deepLinkReceived` listener below.
+      deepLinkHandling: checked('deepLinkHandlingApp') ? 'app' : 'sdk',
       sessionTimeoutInSeconds: sessionTimeoutRaw ? parseInt(sessionTimeoutRaw, 10) : undefined,
     });
   },
@@ -196,6 +207,38 @@ const runMethods: Record<string, () => Promise<unknown>> = {
   subscribeContentCardsUpdated: async () => {
     const handle = await Braze.addListener('contentCardsUpdated', ({ cards }) => {
       log(`event contentCardsUpdated: ${cards.length} card(s)`, 'ok');
+    });
+    activeListeners.push(handle);
+    return { listenerHandles: activeListeners.length };
+  },
+
+  subscribeInAppMessageReceived: async () => {
+    const handle = await Braze.addListener('inAppMessageReceived', ({ message }) => {
+      // The listener is observational — the message displays regardless of
+      // what happens here (unless initialize ran with
+      // enableInAppMessageUI: false, in which case nothing is drawn at all).
+      const summary = message.type === 'modal' || message.type === 'full' ? `"${message.header}"` : message.type;
+      log(`event inAppMessageReceived: ${message.type} ${summary} (trigger ${message.id ?? 'none'})`, 'ok');
+    });
+    activeListeners.push(handle);
+    return { listenerHandles: activeListeners.length };
+  },
+  subscribeDeepLinkReceived: async () => {
+    const handle = await Braze.addListener('deepLinkReceived', ({ url, source, useWebView }) => {
+      // Only fires when initialize ran with deepLinkHandling: 'app'. The
+      // SDK has already been told not to open this URL, so the testbed
+      // deliberately logs it instead of navigating — that is what a
+      // consumer's allow-list check would sit in front of.
+      log(`event deepLinkReceived: ${source} -> ${url} (useWebView=${useWebView})`, 'ok');
+    });
+    activeListeners.push(handle);
+    return { listenerHandles: activeListeners.length };
+  },
+
+  subscribeSdkAuthError: async () => {
+    const handle = await Braze.addListener('sdkAuthError', ({ userId, errorCode, errorReason }) => {
+      // Never log the rejected signature — SECURITY.md §3.
+      log(`event sdkAuthError: code ${errorCode} (${errorReason}) for user ${userId ?? '<anonymous>'}`, 'err');
     });
     activeListeners.push(handle);
     return { listenerHandles: activeListeners.length };

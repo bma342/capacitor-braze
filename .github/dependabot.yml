@@ -3,7 +3,9 @@
 # Strategy:
 # - Plugin npm deps + example npm deps: weekly grouped updates so we get one
 #   PR per week per ecosystem instead of a flood.
-# - GitHub Actions: weekly, pinned by SHA where possible (supply-chain hygiene).
+# - GitHub Actions: weekly. Every `uses:` in .github/workflows is pinned to a
+#   full commit SHA with a trailing `# vX.Y.Z` comment; Dependabot updates SHA
+#   pins natively and rewrites the comment along with them.
 # - The plugin's *Braze SDK* version pins are NOT auto-bumped — those follow
 #   the policy in SDK_SURFACE.md §4 (manual per Braze SDK release notes).
 # - `@capacitor/*` major bumps are ignored across all ecosystems. The plugin
@@ -63,15 +65,42 @@ updates:
         patterns:
           - '*'
 
-  # Mock-server Gradle deps (Ktor, JUnit)
-  - package-ecosystem: 'gradle'
+  # Mock-server deps (Fastify, tsx, TypeScript).
+  # A4-16 / A5-08: this was declared as `gradle` — a leftover from the
+  # never-built Ktor plan — so Dependabot failed every weekly run with
+  # "No files found in /test/mock-server" and the actual npm deps went
+  # unmonitored.
+  - package-ecosystem: 'npm'
     directory: '/test/mock-server'
     schedule:
       interval: 'weekly'
       day: 'monday'
     open-pull-requests-limit: 5
+    groups:
+      mock-server-deps:
+        applies-to: version-updates
+        patterns:
+          - '*'
 
-  # GitHub Actions versions (per SECURITY.md §13: SHA-pinned via Dependabot)
+  # Web-test deps (vitest, jsdom, @braze/web-sdk, TypeScript).
+  # A5-08 secondary / L7-05: previously under no Dependabot coverage at all.
+  - package-ecosystem: 'npm'
+    directory: '/test/web'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: '@capacitor/*'
+        update-types: ['version-update:semver-major']
+    groups:
+      web-test-deps:
+        applies-to: version-updates
+        patterns:
+          - '*'
+
+  # GitHub Actions versions. Workflows pin full commit SHAs; Dependabot
+  # bumps the SHA and the trailing `# vX.Y.Z` comment together.
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:

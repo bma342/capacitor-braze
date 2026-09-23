@@ -24,6 +24,6 @@ Pod::Spec.new do |s|
   # Matches the package.json peer-dep allowance for Capacitor 6 or 7.
   s.dependency 'Capacitor', '>= 6.0', '< 8.0'
   # Braze native SDK pins — see SDK_SURFACE.md §4 (pinning policy).
-  s.dependency 'BrazeKit', '14.1.0'
-  s.dependency 'BrazeUI', '14.1.0'
+  s.dependency 'BrazeKit', '18.2.1'
+  s.dependency 'BrazeUI', '18.2.1'
 end

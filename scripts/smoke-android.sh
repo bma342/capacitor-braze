@@ -6,7 +6,7 @@
 # docs/SMOKE-TEST-PLAYBOOK.md §5.
 #
 # Usage:
-#   BRAZE_API_KEY=<android-sdk-key> BRAZE_ENDPOINT=sdk.us-01.braze.com \
+#   BRAZE_API_KEY=<android-sdk-key> BRAZE_ENDPOINT=sdk.iad-03.braze.com \
 #     npm run smoke:android
 #
 # Optional env:
@@ -17,6 +17,9 @@
 # docs/smoke-tests/android-YYYY-MM-DD.md.
 
 set -euo pipefail
+
+# Run from the repo root regardless of where the script was invoked from.
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 if [ -z "${BRAZE_API_KEY:-}" ]; then
   echo "Error: BRAZE_API_KEY env var is required for the Android smoke run." >&2
@@ -34,6 +37,10 @@ echo "→ Note: the demo's AndroidManifest.xml + braze.xml carry the"
 echo "  Android-specific API key + endpoint; edit those if you haven't"
 echo "  already (one-time setup per Braze's Android install guide)."
 echo
+
+# Build the plugin first: demo/ links it via `file:..`, so without this
+# the smoke run exercises whatever is already in dist/, not your source.
+npm run build
 
 cd demo
 npm install --silent

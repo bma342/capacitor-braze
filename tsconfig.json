@@ -26,7 +26,12 @@
     "inlineSources": true,
     "strict": true,
     "target": "es2017",
-    "lib": ["dom", "es2017"]
+    "lib": ["dom", "es2017"],
+    // The plugin source targets the browser/WebView only. Pinning `types` to the
+    // empty set stops any transitively installed @types/* (e.g. @types/node via
+    // @capacitor/docgen) from leaking Node globals into the public surface or
+    // breaking the build when a future @types major needs newer lib types.
+    "types": []
   },
   "files": ["src/index.ts"],
   "include": ["src/**/*.ts"]

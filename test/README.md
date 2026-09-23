@@ -85,8 +85,36 @@ describe('<method group>', () => {
 
 `waitForCaptured` polls — the Web SDK's flush is async even after `requestImmediateDataFlush`. The default 5s timeout is generous; bump it if a test runs flaky on a slow machine.
 
-## Future expansions
+## Current state
 
-- **Per-method tests for the remaining 35 methods.** This Phase P.1 commit ships one test (`logCustomEvent`) proving the harness works. Subsequent phases add per-method coverage.
-- **Native paths** (iOS XCTest with URLProtocol mocks; Android instrumented tests with OkHttp MockWebServer) — separate phase.
-- **CI integration**: a `test-web` job in `.github/workflows/test.yml` so every PR runs these.
+**206 tests across 18 files, ~3.5s.** All 35 public methods and every input-validation branch in
+`src/web.ts` are covered, plus the serializers against real `@braze/web-sdk` model classes. The
+per-method map is in [`docs/TEST-COVERAGE-AUDIT.md`](../docs/TEST-COVERAGE-AUDIT.md).
+
+The `test-web` CI job runs this suite on every PR, type-checking both `test/mock-server` and
+`test/web` first — vitest transpiles via esbuild and never type-checks, so their strict compiler
+settings were inert until that step was added.
+
+### Known gaps
+
+- **`inAppMessageReceived` delivery.** The DTO is covered at the serializer level against real
+  `SlideUpMessage` / `ModalMessage` / `FullScreenMessage` / `HtmlMessage` / `ControlMessage`
+  instances, including the unknown-variant drop path. Firing one end-to-end means reproducing
+  Braze's trigger-delivery envelope — trigger definitions inside the data response, then the SDK's
+  trigger engine deciding to fire — which the mock does not model. Stated in `listeners.test.ts`'s
+  header rather than left implied.
+- **`contentCardsUpdated` after a second `initialize` in the same page.** The SDK does not appear to
+  publish to a content-cards subscriber after a destroy + re-init even with a fresh subscription
+  GUID and cards in the cache; feature flags publish correctly in the same scenario, which is what
+  the lifecycle tests use. Looks like an SDK-internal provider-identity quirk, not a bridge bug, and
+  first-init delivery is covered.
+- **No coverage instrumentation.** `docs/TEST-COVERAGE-AUDIT.md` is hand-maintained.
+
+### Next tiers
+
+- **Native unit tiers are done** and live outside this directory: `android/src/test/` (74 Robolectric
+  tests) and `ios/PluginTests/` (26 XCTests), both running in CI.
+- **Native integration tier** — iOS URLProtocol intercept, Android OkHttp MockWebServer, asserting
+  real HTTP rather than DTO shape. Designed in [C11](../docs/mdcs/C11-NATIVE-TEST-HARNESSES.md), not
+  built. This is the only tier that can prove cross-platform *wire* consistency.
+- **Layer 4** against a real Braze account — see [`docs/SMOKE-TEST-PLAYBOOK.md`](../docs/SMOKE-TEST-PLAYBOOK.md). Never run.

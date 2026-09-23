@@ -1,8 +1,17 @@
 # C05 — Event listener lifecycle
 
-**One native subscription per event, created eagerly in `initialize`, torn down in `wipeData`. All JS listeners share the single native subscription via Capacitor's `notifyListeners`. Initial state is not replayed on `addListener` — the consumer reads current state explicitly after attaching.**
+**One native subscription per event, created eagerly in `initialize`, torn down deterministically on every path that invalidates the SDK instance. All JS listeners share the single native subscription via Capacitor's `notifyListeners`. Initial state is not replayed on `addListener` — the consumer reads current state explicitly after attaching.**
 
-This MDC is the load-bearing decision behind every `addListener('eventName', ...)` surface the plugin exposes. Today: `featureFlagsUpdated`. Tomorrow: in-app message events, content card updates, push events, SDK auth errors.
+This MDC is the load-bearing decision behind every `addListener('eventName', ...)` surface. Five
+events ship today:
+
+| Event | Payload | Native source | Notes |
+|---|---|---|---|
+| `featureFlagsUpdated` | `{ flags }` | `subscribeToFeatureFlagsUpdates` / `featureFlags.subscribeToUpdates` | The worked example below |
+| `contentCardsUpdated` | `{ cards, lastUpdated }` | `subscribeToContentCardsUpdates` / `contentCards.subscribeToUpdates` | Full card set on every update, not a delta |
+| `inAppMessageReceived` | `{ message }` | IAM presenter / manager listener | Observational; cannot block display |
+| `sdkAuthError` | `{ userId, errorCode, errorReason, signature, errorEventId }` | `sdkAuthDelegate` / `BrazeSdkAuthenticationErrorEvent` | Not `BrazeDelegate` — see the note below |
+| `deepLinkReceived` | `{ url, source, useWebView }` | `BrazeDelegate.shouldOpenURL` / `IBrazeDeeplinkHandler.gotoUri` / per-message `clickAction` rewrite | **Conditional**: only wired when `initialize` ran with `deepLinkHandling: 'app'` — see below |
 
 ---
 
@@ -13,7 +22,7 @@ For every event-emitting Braze SDK surface (`subscribeToFeatureFlagsUpdates`, `s
 1. **Subscribe once at `initialize` time**, after the native Braze instance is configured. Not lazily on first `addListener`.
 2. **Retain a handle** to the native subscription on the plugin instance so it can be torn down deterministically.
 3. **All JS listeners share the one native subscription.** The native callback's only job is to translate the event payload into the wire-format DTO ([C02](./C02-DTO-SHAPES.md)) and call `notifyListeners(eventName, payload)`. Capacitor fans out to every registered JS handler.
-4. **Tear down the native subscription in `wipeData`** and any other lifecycle path that invalidates the configured Braze instance. The next `initialize` creates a fresh subscription.
+4. **Tear down the native subscription on every path that invalidates the configured Braze instance.** That is more than `wipeData`: it is `wipeData`, `disableSDK`, `enableSDK`, the re-init path inside `initialize`, and — on Android — `handleOnDestroy`. The next `initialize` creates a fresh subscription. Eager subscribe is only half the lifecycle; the teardown half is where the bugs were.
 5. **Initial state is NOT replayed** when a JS listener attaches. Document this in the JSDoc on `addListener`. Consumers who want the current snapshot call the matching read method (`getAllFeatureFlags`, `getInAppMessages`, etc.) once after `addListener`.
 
 `addListener` and `removeAllListeners` themselves are provided by Capacitor's base classes (`WebPlugin`, `CAPPlugin`, `Plugin`). Don't reimplement them. Declare the typed overload in `src/definitions.ts` and let the base classes do the rest.
@@ -30,9 +39,34 @@ Capacitor's `addListener` is itself synchronous from the consumer's POV (returns
 
 Two natives per Capacitor plugin per event would each call `notifyListeners`, doubling the JS fan-out. Capacitor already de-duplicates JS listeners by handle, so the one-native-many-JS pattern is the simplest correct shape.
 
-### Why tear down on wipeData
+### Why teardown is a first-class half of this contract
 
-`wipeData` invalidates the configured Braze SDK instance on iOS and Android. A subscription against an invalid instance is either a memory leak (Cancellable retains a dead closure) or a latent crash (Android `IEventSubscriber` against a wiped Braze singleton). Drop it explicitly so re-init creates a fresh subscription.
+`wipeData` invalidates the configured Braze SDK instance on iOS and Android, and on web both
+`disableSDK` and `enableSDK` end in the SDK's own `destroy()`. A subscription against an invalid
+instance is a memory leak at best (a retained dead closure) and a stale-fan-out bug at worst. Three
+concrete failures this project shipped before 0.2.0, all of them teardown failures rather than
+subscribe failures:
+
+- **Web used booleans instead of handles.** `wipeData()` then `initialize()` stacked a second
+  subscription, so every subsequent event fired `notifyListeners` twice; and `disableSDK()` →
+  `enableSDK()` → `initialize()` left every listener permanently dead, because the boolean still
+  said "subscribed" while the SDK instance behind it had been destroyed.
+- **Android never tore down at all on Activity destruction**, leaking the Activity and the WebView
+  on every rotation.
+- **iOS could attach a presenter to an instance a concurrent `wipeData` had already disowned**,
+  which the main-actor refactor fixed by serialising the two.
+
+### Android: teardown ordering during Activity recreation
+
+`handleOnDestroy` must remove this instance's subscriptions, but **Android resumes the replacement
+Activity before destroying the outgoing one.** An unconditional
+`setCustomInAppMessageManagerListener(null)` in `handleOnDestroy` therefore wipes the *new*
+instance's wiring and silently kills `inAppMessageReceived` after the first rotation. The teardown
+is identity-checked against the manager's current listener for exactly this reason, and there is a
+regression test that fails when the guard is removed.
+
+Event subscriptions do not have this problem — they are removed by subscriber identity, so removing
+the old instance's subscriber cannot affect the new one's.
 
 ### Why initial state isn't replayed
 
@@ -70,35 +104,41 @@ export interface BrazeFeatureFlagsUpdatedEvent {
 
 ### Web bridge — guard-once-per-page-lifetime
 
-[`src/web.ts:78`](../../src/web.ts) declares the guard:
+**The Web SDK does return an unsubscribe handle** — every `subscribeTo*` returns a subscription
+GUID that `braze.removeSubscription(guid)` cancels. An earlier version of this MDC claimed it did
+not, which is why the bridge used boolean guards and shipped the two bugs above. Retain the GUID:
 
 ```ts
-private featureFlagsSubscribed = false;
+/** Subscription GUID for the feature-flag update subscription, or `null` when not subscribed. */
+private featureFlagsSubscription: string | null = null;
 ```
 
-[`src/web.ts:107`](../../src/web.ts) subscribes once and notifies:
+`initialize` subscribes and stores the GUID, after tearing down any prior subscriptions:
 
 ```ts
-if (!this.featureFlagsSubscribed) {
-  braze.subscribeToFeatureFlagsUpdates((flags) => {
-    const serialized = flags.map((flag) => this.serializeFeatureFlag(flag));
-    this.notifyListeners('featureFlagsUpdated', { flags: serialized });
-  });
-  this.featureFlagsSubscribed = true;
-}
+this.featureFlagsSubscription = braze.subscribeToFeatureFlagsUpdates((flags) => {
+  const serialized = flags.map((flag) => this.serializeFeatureFlag(flag));
+  this.notifyListeners('featureFlagsUpdated', { flags: serialized });
+});
 ```
 
-The Web SDK doesn't return an unsubscribe handle, so the bridge uses a boolean guard instead of retaining a cancellable. Re-init doesn't re-subscribe.
+`teardownSubscriptions(braze)` passes each stored GUID to `braze.removeSubscription` and nulls the
+field. It is called from the re-init path inside `initialize`, and from `wipeData`, `disableSDK` and
+`enableSDK`. **Order matters in `wipeData`:** tear down *before* `braze.wipeData()`, because the
+SDK's internal `clearData()` publishes an empty ContentCards payload synchronously, which a live
+subscription would forward to consumers as a spurious "you have no cards" event.
+
+See `featureFlagsSubscription` and `teardownSubscriptions` in [`src/web.ts`](../../src/web.ts).
 
 ### iOS bridge — retain the Braze.Cancellable
 
-[`ios/Plugin/BrazePlugin.swift:62`](../../ios/Plugin/BrazePlugin.swift):
+`featureFlagsSubscription` in [`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift) — note that all plugin state is `@MainActor`-isolated:
 
 ```swift
 private var featureFlagsSubscription: Braze.Cancellable?
 ```
 
-[`ios/Plugin/BrazePlugin.swift:106`](../../ios/Plugin/BrazePlugin.swift) — subscribe at the end of `initialize`:
+Subscribe at the end of `initialize` (`performInitialize` in the same file):
 
 ```swift
 featureFlagsSubscription = braze.featureFlags.subscribeToUpdates { [weak self] flags in
@@ -110,7 +150,7 @@ featureFlagsSubscription = braze.featureFlags.subscribeToUpdates { [weak self] f
 
 The `[weak self]` capture is required — without it, the closure retains the plugin instance, the plugin retains the cancellable, the cancellable retains the closure, and we have a cycle.
 
-Teardown in `wipeData` ([`ios/Plugin/BrazePlugin.swift:491`](../../ios/Plugin/BrazePlugin.swift)):
+Teardown in `wipeData` (and in the re-init path):
 
 ```swift
 featureFlagsSubscription = nil
@@ -120,13 +160,13 @@ Releasing the `Cancellable` reference is what cancels the subscription. BrazeKit
 
 ### Android bridge — retain the IEventSubscriber, remove by identity
 
-[`android/.../BrazePlugin.kt:80`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt):
+`featureFlagsSubscriber` in [`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt):
 
 ```kotlin
 private var featureFlagsSubscriber: IEventSubscriber<FeatureFlagsUpdatedEvent>? = null
 ```
 
-Subscribe at the end of `initialize` ([`android/.../BrazePlugin.kt:142`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)):
+Subscribe at the end of `initialize`:
 
 ```kotlin
 teardownFeatureFlagsSubscription()  // defensive: drop any prior subscriber
@@ -145,7 +185,7 @@ featureFlagsSubscriber = subscriber
 
 The defensive `teardownFeatureFlagsSubscription()` at the top of the block matters: re-init without it would stack subscribers, so each event would fire `notifyListeners` N times where N = number of `initialize` calls.
 
-Teardown ([`android/.../BrazePlugin.kt:670`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)):
+Teardown (`teardownFeatureFlagsSubscription`, called from `wipeData` **and** `handleOnDestroy`):
 
 ```kotlin
 private fun teardownFeatureFlagsSubscription() {
@@ -159,7 +199,17 @@ private fun teardownFeatureFlagsSubscription() {
 }
 ```
 
-The Android SDK identifies subscriptions by listener identity — the same `IEventSubscriber` instance must be passed to `removeSingleSubscription`. That's why we retain the instance, not a handle.
+The Android SDK identifies subscriptions by listener identity — the same `IEventSubscriber`
+instance must be passed to `removeSingleSubscription`. That's why we retain the instance, not a
+handle.
+
+`handleOnDestroy` calls all three teardown helpers plus the identity-checked in-app-message listener
+teardown, and resets plugin state. Without it the plugin leaked the Activity and the WebView on
+every Activity recreation.
+
+**All four `notifyListeners` calls on Android route through `bridge.executeOnMainThread`.** Braze
+delivers events on its own dispatcher thread, and a `notifyListeners` posted from there was
+swallowed silently rather than reaching the WebView.
 
 ---
 
@@ -168,11 +218,10 @@ The Android SDK identifies subscriptions by listener identity — the same `IEve
 Phase K added a second listener event using the same pattern. The deltas
 worth noting:
 
-- **Each event has its own retained handle.** iOS has
-  `featureFlagsSubscription` AND `contentCardsSubscription`, both
-  `Braze.Cancellable?`. Android has `featureFlagsSubscriber` AND
-  `contentCardsSubscriber`, both `IEventSubscriber<...>?`. Web has
-  two boolean guards (`featureFlagsSubscribed`, `contentCardsSubscribed`).
+- **Each event has its own retained handle.** iOS has `featureFlagsSubscription` AND
+  `contentCardsSubscription`, both `Braze.Cancellable?`. Android has `featureFlagsSubscriber` AND
+  `contentCardsSubscriber`, both `IEventSubscriber<...>?`. Web has one GUID string per event,
+  four in total.
 - **All subscriptions wired in the same `initialize` block.** Both
   feature flags and content cards subscribe before `initialize`
   returns; consumers don't have to call a separate "enable listeners"
@@ -198,6 +247,45 @@ for iOS (`contentCardsSubscription`), and
 [`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)
 for Android (`contentCardsSubscriber` and `teardownContentCardsSubscription`).
 
+## Third worked example — `deepLinkReceived`, the one conditional listener
+
+`deepLinkReceived` breaks two of this MDC's defaults on purpose, and both exceptions are narrow
+enough to state precisely.
+
+**1. It is wired conditionally, not eagerly-always.** Every other event subscribes at `initialize`
+unconditionally. This one only wires when `initialize` ran with `deepLinkHandling: 'app'`, because
+wiring it *is* the behaviour change: the native hooks it installs are suppression hooks, not
+observation hooks. Subscribing "just in case" would stop URLs opening for a consumer who never
+asked. The eager-on-init rule still holds within the mode — when `'app'` is set, the wiring happens
+during `initialize` and not on first `addListener`.
+
+**2. Its native hook has a return value that matters.** iOS's
+`BrazeDelegate.braze(_:shouldOpenURL:)` returns `false`; Android's
+`IBrazeDeeplinkHandler.gotoUri` simply does not execute the `UriAction`; web rewrites the message's
+and each button's `clickAction` from `URI` to `NONE` before `showInAppMessage`. The listener itself
+is still fire-and-forget — the consumer cannot answer back — which is exactly why the decision is
+the init-time mode rather than a per-URL veto. Capacitor has no return channel, and pretending
+otherwise is the bug `SECURITY.md` §7 used to ship.
+
+**Teardown is per-platform, and Android's is the interesting one.** iOS releases
+`deepLinkDelegate` in `teardownSdkArtifacts()` alongside the other delegates; web resets
+`deepLinkHandling` to `'sdk'` on `wipeData` / `disableSDK` / `enableSDK`. Android's
+`BrazeDeeplinkHandler.setBrazeDeeplinkHandler` is a **process-global static with no un-set**, so
+the plugin captures the handler it replaced and restores that, from `handleOnDestroy`, `wipeData`
+and a re-`initialize` that drops the option. The restore is identity-checked against the live
+handler for the same reason the in-app message listener teardown is: on a configuration change the
+replacement Activity has already installed its own, and an unconditional restore would kill
+`deepLinkReceived` after the first rotation. A re-`initialize` in `'app'` mode restores before
+installing, so wrappers replace rather than stack — a stacked wrapper would fan out N
+`deepLinkReceived` events per click, this MDC's Forbidden entry in deep-link clothing.
+
+See `BrazeDeepLinkDelegate` in
+[`ios/Plugin/BrazeIAMDelegate.swift`](../../ios/Plugin/BrazeIAMDelegate.swift),
+`InterceptingDeeplinkHandler` / `installDeepLinkHandler` / `teardownDeepLinkHandler` in
+[`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt), and
+`interceptDeepLinks` in [`src/web.ts`](../../src/web.ts). Per-channel coverage — including the two
+real gaps — is [`SECURITY.md` §7](../../SECURITY.md#7-deep-link-security).
+
 ## Rules for adding a new event
 
 When you add a new `addListener('newEventName', ...)` surface:
@@ -210,8 +298,14 @@ When you add a new `addListener('newEventName', ...)` surface:
    addListener(eventName: 'contentCardsUpdated', cb: (e: BrazeContentCardsUpdatedEvent) => void): Promise<PluginListenerHandle>;
    ```
 
-3. Each native bridge: add a retained handle field next to `featureFlagsSubscription` / `featureFlagsSubscriber`. Subscribe at the end of `initialize`. Add a `teardownXxxSubscription` helper. Call all teardown helpers in `wipeData`.
-4. Update C05's "Worked example" section with a one-paragraph note pointing at the new bridge code.
+3. Each bridge: add a retained handle field next to `featureFlagsSubscription` /
+   `featureFlagsSubscriber`. Subscribe at the end of `initialize`. Add a teardown path, and wire it
+   into **every** invalidation path — `wipeData`, the re-init branch, `disableSDK`/`enableSDK` on
+   web, and `handleOnDestroy` on Android.
+4. Write the test. A listener event with no test is how `sdkAuthError` shipped dead on iOS for four
+   months: it was wired to a protocol that does not declare the callback, the conformance compiled,
+   and nothing ever fired.
+5. Update C05's "Worked example" section with a one-paragraph note pointing at the new bridge code.
 
 ## Forbidden
 
@@ -220,5 +314,8 @@ When you add a new `addListener('newEventName', ...)` surface:
 - **More than one native subscription per event** on the same plugin instance. If you find yourself creating two, the second is wrong.
 - **Replaying initial state** by caching the last payload in the plugin instance. Document the "call `getAllFeatureFlags` once after `addListener`" pattern instead.
 - **Forgetting `[weak self]` on iOS closures.** Will retain-cycle the plugin and leak.
-- **Forgetting `teardownXxx` calls in `wipeData`** or in re-init paths. Stacked subscribers will fan out `notifyListeners` N times per event.
+- **Forgetting `teardownXxx` calls** in `wipeData`, the re-init path, `disableSDK`/`enableSDK` (web) or `handleOnDestroy` (Android). Stacked subscribers fan out `notifyListeners` N times per event; missing teardown leaks the Activity and WebView on Android.
+- **Tearing down Android's in-app message listener unconditionally in `handleOnDestroy`.** Check identity first — the replacement Activity has already resumed and installed its own.
+- **Calling `notifyListeners` from a Braze dispatcher thread on Android.** Route through `bridge.executeOnMainThread`.
+- **Assuming the Web SDK gives you no unsubscribe handle.** It does; retain the GUID.
 - **Using `removeAllListeners` to mean "tear down the native side."** It clears the JS-side handler list. Native cleanup is `wipeData`-driven.

@@ -4,11 +4,14 @@
 >
 > **Unofficial plugin.** This is an independent, community-maintained Capacitor wrapper around Braze's first-party SDKs. NOT affiliated with or endorsed by Braze, Inc. See the [README disclaimer](./README.md#disclaimer).
 
-**Last updated:** 2026-05-20
-**Native SDK versions tracked:**
-- `com.braze:android-sdk-ui` — **v42.2.0** (released 2026-04-29)
-- `BrazeKit` / `BrazeUI` — **v14.1.0**
-- `@braze/web-sdk` — **v6.7.x**
+**Last updated:** 2026-09-22 (plugin `0.2.0`)
+**Native SDK versions pinned:**
+- `com.braze:android-sdk-ui` — **43.2.0** (exact)
+- `BrazeKit` / `BrazeUI` — **18.2.1** (exact) — **requires Xcode 26+**
+- `@braze/web-sdk` — peer dep **`^6.13.0`** (floor is a security floor; see [`SECURITY.md` §6](./SECURITY.md#6-in-app-message-xss-risk))
+
+Pin policy and bump protocol: [C08](./docs/mdcs/C08-NATIVE-SDK-PINNING.md). Consumer-side
+requirements those pins force: [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md).
 
 ---
 
@@ -26,7 +29,7 @@ Braze SDKs are not monolithic — each platform has multiple sub-modules. The pl
 | `com.braze:android-sdk-jetpack-compose` | Compose integration | ❌ N/A (Capacitor is WebView-based) |
 | `com.braze:android-sdk-unity` | Unity engine | ❌ N/A |
 
-**Min SDK:** API 21 (officially supported API 25+). Plugin sets `minSdkVersion = 26` to match modern Capacitor norms and avoid the unsupported zone.
+**Min SDK:** the plugin's `android/build.gradle` defaults to `minSdkVersion 22`, matching Capacitor 6's stock template and [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md); a consumer's `rootProject.ext.minSdkVersion` always wins. Braze's AAR metadata declares `minCompileSdk=21`. (This number disagreed across three documents until 0.2.0 — if you change it, change `android/build.gradle`, C10 and here together.)
 
 **Kotlin / Build deps:** Kotlin 2.2.x, FCM 24.1.x — these are Braze's pins; the plugin inherits.
 
@@ -37,7 +40,7 @@ Braze SDKs are not monolithic — each platform has multiple sub-modules. The pl
 | `BrazeKit` | Core analytics, push, events | ✅ direct |
 | `BrazeUI` | In-app messages, content cards | ✅ direct |
 | `BrazeLocation` | Geofences, location analytics | ⏳ v0.5 (opt-in) |
-| `BrazeNotificationService` | Rich push (notification service extension) | ⏳ v0.2 (docs only — consumer adds to their NSE target) |
+| `BrazeNotificationService` | Rich push (notification service extension) | ❌ not pulled by the plugin — consumer adds it to their own NSE target. ⏳ undocumented here |
 | `BrazePushStory` | Push Stories (content extension) | ❌ v1.0+ (niche) |
 
 **Min iOS:** 12.0+. Plugin sets `s.ios.deployment_target = '15.0'` to match Capacitor 6+ defaults.
@@ -61,17 +64,26 @@ Single package: `@braze/web-sdk` v6.x.
 
 ## 1. Full capability matrix
 
-Every Braze SDK capability × platform × plugin coverage. The matrix is the source of truth for what we support, what's planned, and what's intentionally excluded.
+Every Braze SDK capability × platform × plugin coverage.
+
+> **Read the "Currently shipped" list below before the matrix.** The matrix is an inventory of what
+> *Braze* offers; the **Plugin** column is a coverage *intent*, historically recorded as a ship-train
+> milestone. Those milestone labels drifted badly — the 2026-09 audit found nine rows flagged as
+> shipped that do not exist, and shipped methods flagged as future work. Rows now carry an explicit
+> marker so the two cannot be confused again.
 
 Legend:
-- ✅ = supported natively by the SDK on that platform
+- ✅ = supported natively by the Braze SDK on that platform
 - ⚠️ = partial / limited
-- ❌ = not supported by the SDK
-- **v0.1 / v0.2 / v0.5 / v1.0 / —** = plugin coverage target (— = never)
+- ❌ = not supported by the Braze SDK
+- **Plugin column:** **✅ shipped** = in `src/definitions.ts` today · **⏳ roadmap** = not built, see the roadmap table above · **— ** = never planned. A bare `vN.N` is a historical milestone label with no coverage claim attached.
 
-### Currently shipped (as of 0.0.12)
+### Currently shipped (as of `0.2.0`)
 
-This is the row-by-row truth that the matrix below references via version targets. Items in **bold below were already targeted to a version are also already shipped**.
+**35 public methods + 5 listener events.** This list is the row-by-row truth; where the capability
+matrix below disagrees with it, this list wins, and the matrix row is a bug. (The matrix's version
+flags were wrong in nine places at the 2026-09 audit — flagging shipped methods as future work and
+future work as shipped — so treat a version flag as an intent, not as a coverage claim.)
 
 Identity & attributes:
 `echo`, `initialize` (with `sessionTimeoutInSeconds`), `changeUser` (with `sdkAuthSignature`), `getUserId`, `setSdkAuthenticationSignature`, `addAlias`, `setEmail`, `setPhoneNumber`, `setFirstName`, `setLastName`, `setLanguage`, `setCountry`, `setCustomUserAttribute`, `setDateOfBirth`, `setGender`, `setHomeCity`, `getDeviceId`, `addToSubscriptionGroup`, `removeFromSubscriptionGroup`.
@@ -91,112 +103,187 @@ Push:
 Privacy / lifecycle:
 `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`.
 
-Listeners:
-`addListener` / `removeAllListeners` for the two events above.
+In-app messages:
+`addListener('inAppMessageReceived', ...)` — a 5-variant tagged union (`slideup` / `modal` / `full` /
+`html` / `control`) with buttons, click actions and extras. Rendering is on by default on every
+platform; `initialize({ enableInAppMessageUI: false })` keeps the event firing and hands rendering to
+the host app.
 
-### Not yet shipped — planned per their version target
+SDK Authentication:
+`addListener('sdkAuthError', ...)`, plus client-side enforcement of `sdkAuthSignature` on
+`changeUser` when `enableSdkAuthentication: true`.
 
-In-app messages (all of v0.1's IAM row), push permission request, push action buttons, foreground display, deep link routing, banners (web-only), geofences, custom IAM view factory, content card filtering, session open/close explicit, custom log handler, CSP nonce, push primer prompts, push stories, Email/SMS notification subscription type, user attribute array operations, custom HTTP client, `isInitialized`, explicit `optOut`.
+Deep links:
+`addListener('deepLinkReceived', ...)` — `{ url, source, useWebView }`, where `source` is
+`inAppMessage` / `push` / `contentCard` / `banner` / `other`. Fires **only** under
+`initialize({ deepLinkHandling: 'app' })`, which suppresses the SDK's own URL opening first, so
+nothing navigates unless the consumer navigates. Coverage differs per platform and channel — the
+matrix is in [`SECURITY.md` §7](./SECURITY.md#7-deep-link-security), and the one real gap is HTML
+in-app message iframes on web.
+
+`initialize` options:
+`apiKey`, `endpoint`, `enableLogging`, `allowInsecureEndpoint`, `sessionTimeoutInSeconds`,
+`enableSdkAuthentication`, **`enableInAppMessageUI`** (default `true`), **`enablePushAutomation`**
+(default `false`, iOS only), **`allowUserSuppliedJavascript`** (default `false`, web only — neither
+native SDK has a counterpart, see [`SECURITY.md` §6](./SECURITY.md#6-in-app-message-xss-risk)),
+**`deepLinkHandling`** (`'sdk'` | `'app'`, default `'sdk'`).
+
+Listeners (5):
+`addListener` / `removeAllListeners` for `featureFlagsUpdated`, `contentCardsUpdated`,
+`inAppMessageReceived`, `sdkAuthError`, `deepLinkReceived`.
+
+Sessions:
+Handled automatically on Android as of 0.2.0 (`BrazeActivityLifecycleCallbackListener` registered
+once per process during `initialize`). No explicit session methods are exposed on any platform.
+
+### Roadmap — not shipped
+
+Nothing below exists in `src/definitions.ts` today. Grepping for any of these names returns nothing;
+several were described in the present tense in earlier revisions of this document.
+
+**Next up, in rough priority order:**
+
+| Item | Why it matters | Notes |
+|---|---|---|
+| **Capacitor 8 support** | Capacitor 8 is current (8.5.x); the peer dep is `^6 \|\| ^7` and the podspec `< 8.0`, so `npm install` conflicts on a current project | Needs AGP 8.13.0, Gradle 8.14.3, Kotlin 2.2.20, compileSdk 36. Xcode 26 and iOS 15 are already satisfied |
+| **SPM support** | Capacitor 8's CLI generates SPM iOS projects by default; a CocoaPods-only plugin does not install into one | Needs `Package.swift` + `CAPBridgedPlugin` conformance. Braze ships a `Package.swift`, so the pieces exist. Track separately from Capacitor 8 |
+| `requestPushPermission` | Currently consumers use `@capacitor/push-notifications` for the prompt | See [C07](./docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md)'s worked counter-example — it would keep the init guard |
+| Android `initialize` options for push presentation | `notificationChannelName`, `notificationChannelDescription`, `smallNotificationIcon`, `fallbackFirebaseMessagingServiceClasspath` — all four setters exist on `BrazeConfig.Builder`; today consumers use `braze.xml` (see C10) | Contract change |
+| `setInAppMessageDisplayChoice` or similar | `enableInAppMessageUI: false` is all-or-nothing; there is no per-message veto, and Capacitor listeners cannot provide one | Would need a synchronous native hook, not a listener |
+
+**Further out:** banners (web-only), geofences (a separate `capacitor-braze-location` package,
+native-only), push action buttons, foreground display control, custom in-app message view factory,
+content-card filtering, custom log handler, CSP nonce, push primer prompts, push stories (iOS-only),
+Email/SMS subscription types, user-attribute array operations, custom HTTP client, explicit
+`optOut`.
+
+**Deliberately not planned:** `isInitialized`. Earlier revisions flagged it as shipped in v0.1; it
+has never existed. Every guarded method already rejects with a clear message before `initialize`,
+so the consumer's own promise-resolution state is the better signal.
+
+### Known gaps in the shipped surface
+
+Not roadmap items — things that are shipped but imperfect, stated so a reviewer does not have to
+find them:
+
+- **A value the Braze SDK rejects resolves rather than throwing.** `setEmail('nonsense')` resolves
+  on every platform. As of 0.2.0 web and Android log one non-PII warning
+  (`Braze.<method>: the Braze SDK rejected the value (see SDK logs)`, byte-identical on both), and
+  iOS reports nothing at all because BrazeKit 18.2.1's setters return `Void`. Turning `false` into
+  a rejection remains deferred as a contract change: iOS has no signal to reject on, so it would
+  break cross-platform parity. Audit finding A1-10 / A3-17.
+- **No release has been validated against a live Braze backend.** Everything is verified against the
+  in-tree Fastify mock and the real SDKs' compile/runtime surface.
+- **`inAppMessageReceived` has no delivery-path test** on any platform; the DTO is covered at the
+  serializer level.
+- **`deepLinkReceived` does not cover HTML in-app message iframes on web.** Their renderer never
+  consults the SDK's click-action path, so the plugin cannot suppress navigation that originates
+  inside the campaign's own markup. iOS and Android do cover it. Full matrix in
+  [`SECURITY.md` §7](./SECURITY.md#7-deep-link-security).
+- **`deepLinkHandling: 'app'` takes `braze.delegate` on iOS.** In the default `'sdk'` mode the slot
+  stays free for a host app (`willPresentModalWithContext`, `noMatchingTriggerForEvent`); opting in
+  is opting out of that slot. `sdkAuthError` is unaffected — it lives on `sdkAuthDelegate`.
 
 
 ### User identity
 
 | Capability | Android | iOS | Web | Plugin |
 |---|---|---|---|---|
-| `changeUser(userId)` | ✅ | ✅ | ✅ | **v0.1** |
-| `changeUser(userId, sdkAuthSignature)` (JWT) | ✅ | ✅ | ✅ | **v0.1** |
-| `getUserId()` | ✅ | ✅ | ✅ | **v0.1** |
-| Add user alias (`addAlias`) | ✅ | ✅ | ✅ | **v0.1** |
-| Set custom attribute (string/number/bool) | ✅ | ✅ | ✅ | **v0.1** (array support v0.5) |
-| `setEmail`, `setPhoneNumber`, `setFirstName`, `setLastName` | ✅ | ✅ | ✅ | **v0.1** |
-| `setCountry`, `setHomeCity`, `setLanguage`, `setGender`, `setDateOfBirth` | ✅ | ✅ | ✅ | **v0.1** |
-| Subscription group: `addToSubscriptionGroup` / `removeFromSubscriptionGroup` | ✅ | ✅ | ✅ | **v0.1** |
-| Email/push subscription state (`setEmailNotificationSubscriptionType`) | ✅ | ✅ | ✅ | **v0.2** |
-| User attributes array operations (add/remove) | ✅ | ✅ | ✅ | **v0.5** |
+| `changeUser(userId)` | ✅ | ✅ | ✅ | ✅ shipped |
+| `changeUser(userId, sdkAuthSignature)` (JWT) | ✅ | ✅ | ✅ | ✅ shipped |
+| `getUserId()` | ✅ | ✅ | ✅ | ✅ shipped |
+| Add user alias (`addAlias`) | ✅ | ✅ | ✅ | ✅ shipped |
+| Set custom attribute (string/number/bool) | ✅ | ✅ | ✅ | ✅ shipped — array operations are ⏳ roadmap |
+| `setEmail`, `setPhoneNumber`, `setFirstName`, `setLastName` | ✅ | ✅ | ✅ | ✅ shipped |
+| `setCountry`, `setHomeCity`, `setLanguage`, `setGender`, `setDateOfBirth` | ✅ | ✅ | ✅ | ✅ shipped |
+| Subscription group: `addToSubscriptionGroup` / `removeFromSubscriptionGroup` | ✅ | ✅ | ✅ | ✅ shipped |
+| Email/push subscription state (`setEmailNotificationSubscriptionType`) | ✅ | ✅ | ✅ | ⏳ roadmap — subscription **groups** are shipped; the notification *type* setters are not |
+| User attributes array operations (add/remove) | ✅ | ✅ | ✅ | ⏳ roadmap |
 
 ### Events & analytics
 
 | Capability | Android | iOS | Web | Plugin |
 |---|---|---|---|---|
-| `logCustomEvent(name, properties?)` | ✅ | ✅ | ✅ | **v0.1** |
-| `logPurchase(productId, currency, price, quantity?, properties?)` | ✅ | ✅ | ✅ | **v0.1** |
-| `requestImmediateDataFlush()` | ✅ | ✅ | ✅ | **v0.1** |
-| Session open/close explicit | ✅ | ✅ | ✅ | **v0.5** |
-| Session timeout config | ✅ | ✅ | ✅ | **v0.1** (`sessionTimeoutInSeconds` init option) |
+| `logCustomEvent(name, properties?)` | ✅ | ✅ | ✅ | ✅ shipped |
+| `logPurchase(productId, currency, price, quantity?, properties?)` | ✅ | ✅ | ✅ | ✅ shipped |
+| `requestImmediateDataFlush()` | ✅ | ✅ | ✅ | ✅ shipped |
+| Session open/close explicit | ✅ | ✅ | ✅ | ⏳ roadmap |
+| Session timeout config | ✅ | ✅ | ✅ | ✅ shipped (`sessionTimeoutInSeconds` init option) |
 
 ### Push notifications
 
 | Capability | Android | iOS | Web | Plugin |
 |---|---|---|---|---|
-| Request push permission | ✅ | ✅ | ✅ | **v0.1** |
-| Auto push registration | ✅ (FCM) | ✅ (APNs) | ✅ (Web Push) | **v0.1** (`enableAutomaticPushHandling` flag) |
-| Manual token registration | ✅ | ✅ | N/A | **v0.1** (`registerPushToken`) |
-| Deep link from push | ✅ | ✅ | ✅ | **v0.1** (default routing) |
-| Rich push (images, video) | ✅ | ✅ (via NSE) | ⚠️ (image only) | **v0.2** (docs for NSE setup) |
-| Push action buttons | ✅ | ✅ | ⚠️ | **v0.2** |
-| Custom notification factory (Android) / handler (iOS) | ✅ | ✅ | N/A | **v0.5** |
-| Push Stories | ⚠️ | ✅ (extension) | ❌ | v1.0+ |
-| Push primer prompt UI | ⚠️ | ✅ | ⚠️ | **v0.5** |
-| Foreground push display | ✅ | ✅ | ✅ | **v0.2** |
-| `unregisterPush` / token cleanup | ✅ | ✅ | ✅ | **v0.2** |
+| Request push permission | ✅ | ✅ | ✅ | ⏳ roadmap — **no `requestPushPermission` exists.** Use `@capacitor/push-notifications` for the prompt |
+| Auto push registration | ✅ (FCM) | ✅ (APNs) | ✅ (Web Push) | ⚠️ partial — **there is no `enableAutomaticPushHandling` option.** iOS has `enablePushAutomation` (✅ shipped, default `false`); Android's automatic FCM Installation-ID registration is Braze's own (43.0.0+) and is configured in `braze.xml`, not here (see [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md)) |
+| Manual token registration | ✅ | ✅ | N/A | ✅ shipped (`registerPushToken`; throws on web by design) |
+| Deep link from push | ✅ | ✅ | ✅ | ✅ shipped — the SDK's own routing applies by default; `initialize({ deepLinkHandling: 'app' })` suppresses it and emits `deepLinkReceived` instead. On iOS, BrazeKit only handles opens/deep links when `enablePushAutomation: true`, so that flag gates this channel there |
+| Rich push (images, video) | ✅ | ✅ (via NSE) | ⚠️ (image only) | ⚠️ on iOS, handled by BrazeKit when `enablePushAutomation: true`; the Notification Service Extension is consumer-side and ⏳ undocumented here |
+| Push action buttons | ✅ | ✅ | ⚠️ | ⏳ roadmap |
+| Custom notification factory (Android) / handler (iOS) | ✅ | ✅ | N/A | ⏳ roadmap |
+| Push Stories | ⚠️ | ✅ (extension) | ❌ | ⏳ roadmap |
+| Push primer prompt UI | ⚠️ | ✅ | ⚠️ | ⏳ roadmap |
+| Foreground push display | ✅ | ✅ | ✅ | ⏳ roadmap |
+| `unregisterPush` / token cleanup | ✅ | ✅ | ✅ | ⏳ roadmap |
 
 ### In-app messages (IAM)
 
 | Capability | Android | iOS | Web | Plugin |
 |---|---|---|---|---|
-| Auto-display | ✅ | ✅ | ✅ | **v0.1** (default on) |
-| Subscribe to IAM events (`addListener`) | ✅ | ✅ | ✅ | **v0.1** |
-| Return discard / reenqueue / display from listener | ✅ | ✅ | ✅ | **v0.1** |
-| Log impression / click / button click | ✅ | ✅ | ✅ | **v0.1** |
-| Modal, full-screen, slideup native templates | ✅ | ✅ | ✅ | **v0.1** (rendered by Braze) |
-| HTML IAM (rendered in WebView) | ✅ | ✅ | ✅ | **v0.2** (requires `allowUserSuppliedJavascript`) |
-| Custom IAM view factory | ✅ | ✅ | ⚠️ | v1.0+ |
-| Programmatic show / dismiss | ✅ | ✅ | ✅ | **v0.5** |
+| Auto-display | ✅ | ✅ | ✅ | ✅ shipped — on by default; `initialize({ enableInAppMessageUI: false })` opts out |
+| Subscribe to IAM events (`addListener`) | ✅ | ✅ | ✅ | ✅ shipped (`inAppMessageReceived`) |
+| Return discard / reenqueue / display from listener | ✅ | ✅ | ✅ | ❌ **not possible through a Capacitor listener** — they are fire-and-forget with no return channel to native. The plugin always returns display-now. `enableInAppMessageUI: false` is the all-or-nothing alternative; a per-message veto is ⏳ roadmap and would need a different shape ([`SECURITY.md` §6](./SECURITY.md#6-in-app-message-xss-risk)) |
+| Log impression / click / button click (in-app messages) | ✅ | ✅ | ✅ | ⏳ roadmap — **no IAM impression/click methods exist.** The SDK logs these itself when it renders. (The *content card* equivalents **are** shipped — see below) |
+| Modal, full-screen, slideup native templates | ✅ | ✅ | ✅ | ✅ shipped (rendered by Braze) |
+| HTML in-app message (rendered in WebView) | ✅ | ✅ | ✅ | ✅ shipped as a DTO variant (`html`). Always reachable on iOS/Android; on web it requires `initialize({ allowUserSuppliedJavascript: true })`, which the plugin exposes and defaults to `false` ([`SECURITY.md` §6](./SECURITY.md#6-in-app-message-xss-risk)) |
+| Custom IAM view factory | ✅ | ✅ | ⚠️ | ⏳ roadmap |
+| Programmatic show / dismiss | ✅ | ✅ | ✅ | ⏳ roadmap |
 
 ### Content Cards
 
 | Capability | Android | iOS | Web | Plugin |
 |---|---|---|---|---|
-| Fetch / refresh | ✅ | ✅ | ✅ | **v0.1** (`getContentCards`) |
-| Subscribe to updates | ✅ | ✅ | ✅ | **v0.1** |
-| Log impression / click / dismissal | ✅ | ✅ | ✅ | **v0.1** |
-| Native UI rendering | ✅ | ✅ | ✅ | **v0.5** (most consumers render their own) |
-| Filter by tag / type | ✅ | ✅ | ✅ | **v0.5** |
-| Pinned cards | ✅ | ✅ | ✅ | **v0.5** |
+| Fetch / refresh | ✅ | ✅ | ✅ | ✅ shipped (`getContentCards`) |
+| Subscribe to updates | ✅ | ✅ | ✅ | ✅ shipped |
+| Log impression / click / dismissal | ✅ | ✅ | ✅ | ✅ shipped: `logContentCardImpression`, `logContentCardClick`. Dismissal is ⏳ roadmap |
+| Native UI rendering | ✅ | ✅ | ✅ | ⏳ roadmap (most consumers render their own) |
+| Filter by tag / type | ✅ | ✅ | ✅ | ⏳ roadmap |
+| Pinned cards | ✅ | ✅ | ✅ | ⏳ roadmap |
+| Open-in-WebView hint on a card's click URL | ✅ `Card.openUriInWebView` | ✅ `ContentCard.ClickAction.url(_, useWebView:)` | ❌ no such member on `Card` | ✅ shipped as the optional `useWebView` on `BrazeContentCardBase`; absent on web and on any card with no click URL |
 
 ### Feature flags
 
 | Capability | Android | iOS | Web | Plugin |
 |---|---|---|---|---|
-| `getFeatureFlag(flagId)` | ✅ | ✅ | ✅ | **v0.1** |
-| Typed property accessors (string/number/boolean/image/datetime/jsonobject) | ✅ | ✅ | ✅ | **v0.1** (per-platform-native dispatch, C02 tagged-union DTO) |
-| Subscribe to updates (`featureFlagsUpdated` listener) | ✅ | ✅ | ✅ | **v0.1** |
-| Refresh on demand (`refreshFeatureFlags`) | ✅ | ✅ | ✅ | **v0.1** |
-| Log impression (`logFeatureFlagImpression`) | ✅ | ✅ | ✅ | **v0.1** |
+| `getFeatureFlag(flagId)` | ✅ | ✅ | ✅ | ✅ shipped |
+| Typed property accessors (string/number/boolean/image/datetime/jsonobject) | ✅ | ✅ | ✅ | ✅ shipped (per-platform-native dispatch, C02 tagged-union DTO) |
+| Subscribe to updates (`featureFlagsUpdated` listener) | ✅ | ✅ | ✅ | ✅ shipped |
+| Refresh on demand (`refreshFeatureFlags`) | ✅ | ✅ | ✅ | ✅ shipped |
+| Log impression (`logFeatureFlagImpression`) | ✅ | ✅ | ✅ | ✅ shipped |
 
 ### Banners (web SDK only)
 
 | Capability | Android | iOS | Web | Plugin |
 |---|---|---|---|---|
-| `getBanner(placementId)` | ❌ | ❌ | ✅ | **v0.5** (web-only on plugin too) |
-| `insertBanner` | ❌ | ❌ | ✅ | **v0.5** |
-| Subscribe to banner updates | ❌ | ❌ | ✅ | **v0.5** |
+| `getBanner(placementId)` | ❌ | ❌ | ✅ | ⏳ roadmap (would be web-only) |
+| `insertBanner` | ❌ | ❌ | ✅ | ⏳ roadmap |
+| Subscribe to banner updates | ❌ | ❌ | ✅ | ⏳ roadmap |
 
 ### Geofences & location
 
 | Capability | Android | iOS | Web | Plugin |
 |---|---|---|---|---|
-| Geofence monitoring | ✅ (location module) | ✅ (BrazeLocation) | ❌ | **v0.5** (opt-in, separate sub-module) |
-| Location analytics | ✅ | ✅ | ❌ | **v0.5** |
+| Geofence monitoring | ✅ (location module) | ✅ (BrazeLocation) | ❌ | ⏳ roadmap — would be a separate opt-in `capacitor-braze-location` package; the base plugin pulls no location module |
+| Location analytics | ✅ | ✅ | ❌ | ⏳ roadmap |
 
 ### SDK Authentication (signed JWT)
 
 | Capability | Android | iOS | Web | Plugin |
 |---|---|---|---|---|
-| Enable in config | ✅ | ✅ | ✅ | **v0.1** |
-| Pass JWT signature on `changeUser` | ✅ | ✅ | ✅ | **v0.1** |
-| Subscribe to auth failures | ✅ | ✅ | ✅ | **v0.1** |
-| Refresh signature mid-session | ✅ | ✅ | ✅ | **v0.2** |
+| Enable in config | ✅ | ✅ | ✅ | ✅ shipped (`enableSdkAuthentication`) |
+| Pass JWT signature on `changeUser` | ✅ | ✅ | ✅ | ✅ shipped — and **enforced client-side** on all three bridges when SDK Auth is on |
+| Subscribe to auth failures | ✅ | ✅ | ✅ | ✅ shipped (`sdkAuthError`). On iOS it was wired to the wrong delegate protocol and never fired until 0.2.0 |
+| Refresh signature mid-session | ✅ | ✅ | ✅ | ✅ shipped (`setSdkAuthenticationSignature`) |
 
 See [`SECURITY.md` §2](./SECURITY.md) for the full security model.
 
@@ -204,22 +291,22 @@ See [`SECURITY.md` §2](./SECURITY.md) for the full security model.
 
 | Capability | Android | iOS | Web | Plugin |
 |---|---|---|---|---|
-| `wipeData()` | ✅ | ✅ | ✅ | **v0.1** |
-| `enableSDK()` / `disableSDK()` | ✅ | ✅ | ✅ | **v0.1** |
-| `getDeviceId()` | ✅ | ✅ | ✅ | **v0.2** |
-| `isInitialized()` | ✅ | ✅ | ✅ | **v0.1** |
-| `isDisabled()` | ✅ | ✅ | ✅ | **v0.2** |
-| Explicit `optOut` | ⚠️ (via disableSDK) | ⚠️ | ⚠️ | **v0.2** (alias for clarity) |
+| `wipeData()` | ✅ | ✅ | ✅ | ✅ shipped, init-independent ([C07](./docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md)); see that MDC for the two pre-init platform caveats |
+| `enableSDK()` / `disableSDK()` | ✅ | ✅ | ✅ | ✅ shipped, init-independent on all three platforms as of 0.2.0 |
+| `getDeviceId()` | ✅ | ✅ | ✅ | ✅ shipped — **init-dependent** on all three platforms by design ([C07](./docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md)) |
+| `isInitialized()` | ✅ | ✅ | ✅ | — not planned. **Never existed in this plugin**, despite an earlier `v0.1` flag here. Every guarded method rejects clearly before `initialize` |
+| `isDisabled()` | ✅ | ✅ | ✅ | ✅ shipped, init-independent |
+| Explicit `optOut` | ⚠️ (via disableSDK) | ⚠️ | ⚠️ | — not planned; `disableSDK()` is the method, and a second name for it would be worse |
 
 ### Logging & configuration
 
 | Capability | Android | iOS | Web | Plugin |
 |---|---|---|---|---|
-| `enableLogging` (verbose) | ✅ | ✅ | ✅ | **v0.1** (default `false`) |
-| Custom log handler | ✅ | ✅ | ✅ | **v0.5** |
-| Custom endpoint / `baseUrl` | ✅ | ✅ | ✅ | **v0.1** (required for tests) |
-| Custom HTTP client (Android) | ✅ | ❌ | N/A | v1.0+ |
-| Content Security Policy nonce (web) | ❌ | ❌ | ✅ | **v0.2** (web only) |
+| `enableLogging` (verbose) | ✅ | ✅ | ✅ | ✅ shipped (default `false`) |
+| Custom log handler | ✅ | ✅ | ✅ | ⏳ roadmap |
+| Custom endpoint / `baseUrl` | ✅ | ✅ | ✅ | ✅ shipped (required for tests) |
+| Custom HTTP client (Android) | ✅ | ❌ | N/A | ⏳ roadmap |
+| Content Security Policy nonce (web) | ❌ | ❌ | ✅ | ⏳ roadmap (web only) |
 
 ---
 
@@ -229,7 +316,7 @@ The capability matrix above is summarized into ship-train milestones.
 
 ### v0.1 — Daily-use surface (target: 3 weeks from scaffold)
 
-The minimum coherent plugin: lets a consumer initialize Braze, identify users (with SDK Auth), log events and purchases, handle push, receive in-app messages, and read content cards. ~15 public methods.
+The minimum coherent plugin: lets a consumer initialize Braze, identify users (with SDK Auth), log events and purchases, handle push, receive in-app messages, and read content cards. Scoped at roughly 15 public methods; **what actually shipped by `0.1.0` was 35 methods + 4 listener events**, because feature flags, content cards and the privacy quartet all landed early. The milestone names below are historical ship-train labels, not a description of the current surface — see "Currently shipped" above for that.
 
 Method list: [`PLAN.md §4`](./PLAN.md).
 
@@ -244,7 +331,7 @@ Adds the next tier of commonly-needed features without doubling the surface area
 - Session timeout in init config
 - CSP nonce (web-only init option)
 - SDK Auth signature refresh
-- `isDisabled()`, `getDeviceId()`, explicit `optOut` alias
+- `isDisabled()`, `getDeviceId()` — both shipped early, in `0.1.0`
 
 ### v0.5 — Power features (target: +8 weeks after v0.2)
 
@@ -289,18 +376,33 @@ The exclusion list is part of scope discipline — it's how the plugin stays mai
 
 Where the SDKs genuinely differ, the plugin must handle gracefully:
 
-| Divergence | How plugin handles |
+| Divergence | How the plugin handles it |
 |---|---|
-| Web has no native push — only Web Push API | `requestPushPermission` returns `{ granted, mechanism: 'web-push' \| 'apns' \| 'fcm' }`; consumer can branch. |
-| Web has no geofences | `addGeofence` on web throws `UnsupportedOperationError` with message pointing to docs. |
-| Banners are web-only | `getBanner` on native throws `UnsupportedOperationError`. |
-| IAM rendering — native uses `UIView` / `Activity`; web uses DOM modal | Plugin's `addListener('inAppMessageReceived')` returns identical shape on all platforms so consumer code is portable. |
-| Session timeout config option is in milliseconds (Android) vs. seconds (iOS) vs. seconds (web) | Plugin accepts seconds in TS API, converts to ms internally on Android. |
-| Custom attribute array max length differs by platform | Plugin documents the lowest common denominator (Braze docs: 100 items). |
-| `wipeData()` on web also clears the device cookie; on native, clears keychain/keystore | Documented; consumer should call after logout flow. |
-| Push Stories — iOS only (notification content extension) | iOS-only API; not in TS interface at all. |
+| Web has no push tokens — Web Push uses VAPID + Service Worker subscriptions | `registerPushToken` **throws a plain `Error`** on web whose message names the platform, the reason, and the `Capacitor.getPlatform()` branching remedy. This is the plugin's only implemented divergence-by-absence, and the template [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md) prescribes for future ones. |
+| In-app message rendering — native uses `UIView` / `Activity`, web uses a DOM modal | `addListener('inAppMessageReceived')` emits the identical 5-variant tagged union on all three platforms, so consumer code is portable. The `html` variant is always reachable on iOS/Android; on web it requires `allowUserSuppliedJavascript: true`. |
+| Dashboard-supplied JavaScript — only the Web SDK runs campaign JS in the host page's origin | `allowUserSuppliedJavascript` is forwarded on web (default `false`) and **ignored** on iOS/Android, because neither native SDK has a counterpart: their HTML campaigns render in a WebView the SDK owns, not the app's. Stated in the option's JSDoc and [`SECURITY.md` §6](./SECURITY.md#6-in-app-message-xss-risk) rather than papered over. |
+| Deep-link suppression hooks — iOS `BrazeDelegate.shouldOpenURL`, Android `IBrazeDeeplinkHandler.gotoUri`, web a per-message `clickAction` rewrite | `deepLinkHandling: 'app'` gives all three the same `deepLinkReceived` contract, but coverage per channel is not identical: web cannot intercept HTML in-app message iframes, and Android content-card clicks are only covered when Braze's own feed UI renders them. The matrix is in [`SECURITY.md` §7](./SECURITY.md#7-deep-link-security) rather than being smoothed over here. |
+| Content-card open-in-WebView hint | iOS and Android both carry one (`ClickAction.url(_, useWebView:)` / `Card.openUriInWebView`); the Web SDK's `Card` has no such member. The contract slot is optional and simply absent on web — C03 forbids fabricating a default. |
+| In-app message `language` | Braze's Android in-app message models have no accessor for it at 43.2.0, so the field is omitted from the contract on **every** platform rather than being always-`null` on one. |
+| Anonymous user id sentinels — web `null \| undefined`, iOS `nil`, Android `""` | All coalesced to `null` at the bridge. Empty string is never a contract sentinel. |
+| `wipeData()` before `initialize` | iOS disables the SDK for the rest of the app run (BrazeKit constraint); web has no storage manager yet and resolves without effect; Android wipes normally. Documented in the JSDoc, [C07](./docs/mdcs/C07-INIT-INDEPENDENT-METHODS.md) and the README. |
+| `wipeData()` scope — web also clears the device cookie, native clears keychain / keystore | Documented; local only. Server-side deletion is a REST call from the consumer's backend. |
+| Custom attribute array max length differs by platform | Documented as the lowest common denominator (Braze docs: 100 items); not enforced client-side. |
+| Push Stories — iOS only (notification content extension) | Not in the TS interface at all. |
 
-**Principle:** prefer TS-side type narrowing over runtime errors where possible. Where runtime divergence is unavoidable, throw a typed `BrazeUnsupportedError` with a `platform` field and a doc link.
+**Session timeout takes seconds on every platform.** An earlier revision of this section claimed the
+plugin converted seconds to milliseconds for Android; it does not, and Braze's Android API takes
+seconds — a reader who trusted that note would have "fixed" a non-bug into a 1000× error.
+
+**Principle:** prefer TS-side type narrowing over runtime errors where possible. Where runtime
+divergence is unavoidable, throw a plain `Error` whose message names the platform, the reason and
+the remedy, following the C01 format so consumers can match on the `Braze.<method>: ` prefix.
+
+**There is no error class hierarchy.** `BrazeUnsupportedError`, `UnsupportedOperationError` and
+`BrazeAuthRequiredError` were all described in the present tense across this document,
+`SECURITY.md`, `CONTRIBUTING.md` and `REVIEW_READINESS.md`; none has ever existed. A consumer
+writing `catch (e) { if (e instanceof BrazeUnsupportedError) … }` gets a `ReferenceError`.
+Introducing one is a contract change that needs a roadmap entry here first.
 
 ---
 
@@ -308,19 +410,19 @@ Where the SDKs genuinely differ, the plugin must handle gracefully:
 
 | Layer | Pin style | Rationale |
 |---|---|---|
-| `com.braze:android-sdk-ui` | Exact version (`42.2.0`, not `[42.0,43.0)`) | Reproducible CI; avoid surprise breakages from transitive minor bumps. |
-| `BrazeKit` / `BrazeUI` (Podfile / Podspec) | Exact version | Same reasoning. |
-| `@braze/web-sdk` (peer dep) | Caret range (`^6.0.0`) | Consumers bring their own; we declare compatibility window. |
+| `com.braze:android-sdk-ui` | Exact version (`43.2.0`, not `[43.0,44.0)`) | Reproducible CI; avoid surprise breakages from transitive minor bumps. |
+| `BrazeKit` / `BrazeUI` (Podspec) | Exact version (`18.2.1`) | Same reasoning. Carries an **Xcode 26+** floor. |
+| `@braze/web-sdk` (peer dep) | Caret range (`^6.13.0`) | Consumers bring their own; we declare a compatibility window. The floor is a **security** floor — 6.12.1 fixed an in-app message `javascript:`/`data:` URI bypass of `allowUserSuppliedJavascript`. |
 
 **Bump cadence:**
 - Patch Braze SDK release → plugin patch bump (`0.x.y+1`), same day if smoke tests pass.
 - Minor Braze SDK release → plugin minor bump, after 1-week soak in beta tag.
-- Major Braze SDK release → plugin major bump (pre-1.0: minor bump documented loudly).
+- Major Braze SDK release → **post-1.0: plugin major bump. Pre-1.0: a plugin minor with explicit `BREAKING:` lines in the CHANGELOG.** See [C08](./docs/mdcs/C08-NATIVE-SDK-PINNING.md) step 8; this rule was contradictory until 0.2.0.
 
 **Tracking:**
-- Subscribe to Braze SDK release notes per platform.
-- Dependabot configured for the example app (not the plugin itself — those are pinned).
-- Daily spec-drift CI catches REST contract changes; does NOT catch native API changes (those come from release notes).
+- Subscribe to Braze SDK release notes per platform. This is the only mechanism — **there is no spec-drift job and no scheduled workflow of any kind**; nothing in CI talks to Braze.
+- Dependabot watches five directories: the plugin's own dev deps (`/`), `/example`, `/demo`, `/test/web`, `/test/mock-server`, plus `github-actions`. It does **not** bump the pinned Braze SDK versions, and `@capacitor/*` majors are ignored.
+- CI compiles both native bridges against the pinned SDKs on every PR, which catches a symbol that moved — not a behaviour that changed.
 
 ---
 
@@ -345,7 +447,21 @@ Where the SDKs genuinely differ, the plugin must handle gracefully:
 
 ### Web SDK variant selection
 
-The plugin's `web.ts` imports the **core** variant by default (`@braze/web-sdk` tree-shaken without UI), and lazily imports the UI variant only when consumer calls `automaticallyShowInAppMessages` or `showContentCards`. Saves ~50 KB gzipped for consumers who render their own UI.
+**There is no core/UI variant split.** `src/web.ts` does a single `await import('@braze/web-sdk')` —
+the full package, one dynamic import. Neither `automaticallyShowInAppMessages` nor
+`showContentCards` is a plugin method. An earlier revision claimed a ~50 KB saving from a mechanism
+that does not exist.
+
+What *is* true: the import is dynamic, so the Web SDK is not pulled into the initial chunk and is
+only fetched when a plugin method runs. Consumers who never touch Braze on a given route do not pay
+for it.
+
+Note also that the plugin ships **ESM and CJS only** as of 0.2.0. The Capacitor template's
+IIFE/`unpkg` artifact was removed: it contained `await import('@braze/web-sdk')`, a bare specifier no
+browser resolves from a `<script>` tag, so it could never have worked standalone.
+
+The bundle-size targets in the table above are **aspirational** — nothing in CI enforces them and
+there is no `size-limit` configuration.
 
 ---
 

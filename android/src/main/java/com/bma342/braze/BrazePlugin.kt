@@ -1,7 +1,11 @@
 package com.bma342.braze
 
+import android.content.Context
 import com.braze.Braze
+import com.braze.BrazeActivityLifecycleCallbackListener
+import com.braze.IBrazeDeeplinkHandler
 import com.braze.configuration.BrazeConfig
+import com.braze.enums.Channel
 import com.braze.enums.Gender
 import com.braze.enums.Month
 import com.braze.events.BrazeSdkAuthenticationErrorEvent
@@ -17,11 +21,16 @@ import com.braze.models.cards.TextAnnouncementCard
 import com.braze.models.outgoing.BrazeProperties
 import com.braze.enums.inappmessage.ClickAction
 import com.braze.enums.inappmessage.MessageType
+import com.braze.enums.inappmessage.SlideFrom
 import com.braze.models.inappmessage.IInAppMessage
 import com.braze.models.inappmessage.IInAppMessageImmersive
 import com.braze.models.inappmessage.IInAppMessageWithImage
+import com.braze.models.inappmessage.InAppMessageBase
+import com.braze.models.inappmessage.InAppMessageSlideup
 import com.braze.models.inappmessage.MessageButton
 import com.braze.support.BrazeLogger
+import com.braze.ui.BrazeDeeplinkHandler
+import com.braze.ui.actions.UriAction
 import com.braze.ui.inappmessage.BrazeInAppMessageManager
 import com.braze.ui.inappmessage.InAppMessageOperation
 import com.braze.ui.inappmessage.listeners.IInAppMessageManagerListener
@@ -34,9 +43,9 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import java.math.BigDecimal
 
 /**
- * Capacitor bridge for the Braze Android SDK (com.braze:android-sdk-ui 42.2.0).
+ * Capacitor bridge for the Braze Android SDK (com.braze:android-sdk-ui 43.2.0).
  *
- * ## Surface in 0.0.12
+ * ## Surface in 0.2.0
  *
  * - **Bridge sanity:** `echo(value)`
  * - **Configuration:** `initialize(apiKey, endpoint, ...)`
@@ -59,7 +68,10 @@ import java.math.BigDecimal
  *   `logContentCardClick(cardId)`, `logContentCardImpression(cardId)`
  * - **Push:** `registerPushToken(token)`
  * - **Listeners:** `addListener('featureFlagsUpdated', ...)`,
- *   `addListener('contentCardsUpdated', ...)`
+ *   `addListener('contentCardsUpdated', ...)`,
+ *   `addListener('inAppMessageReceived', ...)`,
+ *   `addListener('sdkAuthError', ...)`,
+ *   `addListener('deepLinkReceived', ...)`
  * - **Privacy/lifecycle:** `wipeData`, `disableSDK`, `enableSDK`, `isDisabled`,
  *   `requestImmediateDataFlush`
  *
@@ -69,6 +81,13 @@ import java.math.BigDecimal
  * Android SDK uses a global singleton retrieved via `Braze.getInstance(context)`.
  * No instance retention is needed on the plugin side; the SDK manages its own
  * lifecycle.
+ *
+ * Because that singleton is process-wide while a [Plugin] instance is
+ * Activity-scoped, the bridge is careful about both ends of the lifecycle:
+ * [BrazeActivityLifecycleCallbackListener] is registered exactly once per
+ * process (see [sessionLifecycleRegistered]) so Braze counts sessions, and
+ * [handleOnDestroy] removes every subscription this instance created so a
+ * destroyed Activity/WebView is not retained by the SDK's event messenger.
  *
  * Privacy methods (`wipeData`, `disableSdk`, `enableSdk`, isDisabled query) are
  * **init-independent** — they are static methods on the `Braze` class that
@@ -121,28 +140,236 @@ class BrazePlugin : Plugin() {
      */
     private var sdkAuthenticationEnabled: Boolean = false
 
+    /**
+     * Whether `initialize` was called with `enableInAppMessageUI: true`
+     * (the default). When false the plugin still emits
+     * `inAppMessageReceived`, but it never calls
+     * `registerInAppMessageManager` — the host app owns registration and
+     * rendering. See the `enableInAppMessageUI` JSDoc in
+     * `src/definitions.ts`.
+     */
+    private var inAppMessageUIEnabled: Boolean = true
+
+    /**
+     * Whether this plugin instance currently holds an
+     * [BrazeInAppMessageManager] registration against [Plugin.getActivity].
+     * Tracked so `handleOnPause` / `handleOnDestroy` never unregister a
+     * registration the host app (not the plugin) owns.
+     */
+    private var inAppMessageManagerRegistered: Boolean = false
+
+    /**
+     * The [IBrazeDeeplinkHandler] this plugin instance installed for
+     * `deepLinkHandling: "app"`, or null in the default `"sdk"` mode.
+     * Retained so [handleOnDestroy] / `wipeData` / a re-`initialize` can
+     * restore whatever handler was in place beforehand — the SDK's setter
+     * is a process-global static with no "unset".
+     */
+    private var deepLinkHandler: InterceptingDeeplinkHandler? = null
+
+    /**
+     * The [IBrazeDeeplinkHandler] that was installed before
+     * [deepLinkHandler] replaced it. `BrazeDeeplinkHandler.getInstance()`
+     * returns the custom handler once one is set, so this has to be
+     * captured *before* installing, both to restore on teardown and to
+     * delegate the three non-`gotoUri` interface methods to.
+     */
+    private var previousDeepLinkHandler: IBrazeDeeplinkHandler? = null
+
+    /**
+     * Custom [IBrazeDeeplinkHandler] that emits `deepLinkReceived` instead
+     * of opening the URL.
+     *
+     * `gotoUri` is the single funnel every Braze Android channel uses to
+     * open a URL — verified at `com.braze:android-sdk-ui` 43.2.0 by the set
+     * of classes that reference it: `BrazeNotificationUtils` (push opens),
+     * `DefaultInAppMessageViewLifecycleListener` and
+     * `DefaultInAppMessageWebViewClientListener` (in-app message body,
+     * button and HTML-iframe clicks), `BaseCardView` /
+     * `BrazeContentCardUtils` (content-card clicks rendered by Braze's own
+     * feed UI), `DefaultBannerWebViewClientListener` (banners), and the
+     * Braze Actions steps `OpenLinkInWebViewStep` / `OpenLinkExternallyStep`.
+     * Not executing the [UriAction] is therefore what suppresses the open.
+     *
+     * The other three interface methods are pure factories / flag lookups
+     * with no side effects, so they delegate to the handler that was
+     * installed beforehand rather than being reimplemented — the plugin
+     * changes *whether* a URL opens, never how a [UriAction] is built.
+     *
+     * @property delegate the previously installed handler, used for
+     *   everything except `gotoUri`.
+     * @property onSuppressed invoked with the suppressed action so the
+     *   plugin can emit the listener event.
+     */
+    internal class InterceptingDeeplinkHandler(
+        internal val delegate: IBrazeDeeplinkHandler,
+        private val onSuppressed: (UriAction) -> Unit,
+    ) : IBrazeDeeplinkHandler {
+
+        override fun gotoUri(context: Context, uriAction: UriAction) {
+            onSuppressed(uriAction)
+        }
+
+        override fun getIntentFlags(intentFlagPurpose: IBrazeDeeplinkHandler.IntentFlagPurpose): Int =
+            delegate.getIntentFlags(intentFlagPurpose)
+
+        override fun createUriActionFromUrlString(
+            url: String,
+            extras: android.os.Bundle?,
+            openInWebView: Boolean,
+            channel: Channel,
+        ): UriAction? = delegate.createUriActionFromUrlString(url, extras, openInWebView, channel)
+
+        override fun createUriActionFromUri(
+            uri: android.net.Uri,
+            extras: android.os.Bundle?,
+            openInWebView: Boolean,
+            channel: Channel,
+        ): UriAction = delegate.createUriActionFromUri(uri, extras, openInWebView, channel)
+    }
+
+    companion object {
+        /** Logcat tag for the bridge's own (never PII-bearing) warnings. */
+        private const val LOG_TAG = "CapacitorBraze"
+
+        /**
+         * Process-wide guard for [BrazeActivityLifecycleCallbackListener].
+         * The listener registers against the `Application`, so registering
+         * it once per [BrazePlugin] instance would stack duplicate
+         * callbacks every time the host Activity is recreated. Guarded by
+         * the class monitor in [registerSessionLifecycleOnce].
+         */
+        @Volatile
+        private var sessionLifecycleRegistered: Boolean = false
+
+        /**
+         * Documented Braze cluster hostname shape
+         * (`sdk.<region>-NN.braze.com` / `.eu`). Mirrors the regex in
+         * `src/web.ts` so the cluster sanity warning fires on the same
+         * inputs on every platform.
+         */
+        private val CLUSTER_HOST_REGEX = Regex("""^sdk\.[a-z]+-\d+\.braze\.(com|eu)$""")
+
+        /** Local-development hosts exempted from the cluster warning. */
+        private val DEV_HOST_REGEX = Regex("""^(localhost|127\.0\.0\.1|.+\.(test|local))$""")
+
+        /**
+         * Maps `com.braze.enums.Channel` onto the contract's
+         * `BrazeDeepLinkSource` union. `PUSH` is renamed to `push` so the
+         * value matches iOS's `Braze.Channel.notification`; `UNKNOWN` and
+         * anything a future SDK adds surface as `other` rather than being
+         * coerced into a neighbouring channel.
+         *
+         * `internal` so the Robolectric tier can assert the mapping
+         * directly (C11).
+         */
+        internal fun deepLinkSource(channel: Channel?): String = when (channel) {
+            Channel.PUSH -> "push"
+            Channel.INAPP_MESSAGE -> "inAppMessage"
+            Channel.CONTENT_CARD -> "contentCard"
+            Channel.BANNER -> "banner"
+            Channel.UNKNOWN, null -> "other"
+        }
+
+        /**
+         * Builds the `BrazeDeepLinkReceivedEvent` wire shape from a
+         * suppressed [UriAction].
+         *
+         * `internal` so the Robolectric tier can assert the payload without
+         * driving the whole SDK (C11).
+         */
+        internal fun deepLinkPayload(uriAction: UriAction): JSObject {
+            val payload = JSObject()
+            payload.put("url", uriAction.uri.toString())
+            payload.put("source", deepLinkSource(uriAction.channel))
+            payload.put("useWebView", uriAction.useWebView)
+            return payload
+        }
+    }
+
     // -------------------------------------------------------------------------
     // In-app message lifecycle
     //
     // L4-S11 / Phase 3: Braze Android renders IAMs via a singleton
     // [BrazeInAppMessageManager] that must be registered against the
     // currently-foregrounded Activity in onResume and unregistered in
-    // onPause. Without this wiring, BrazeKit fetches IAM campaigns but
+    // onPause. Without this wiring, the SDK fetches IAM campaigns but
     // never displays them. Capacitor exposes Plugin.handleOnResume() /
     // handleOnPause() as lifecycle hooks; we forward those to the IAM
     // manager. The bridge Activity (bridge.activity) is the host for
     // all in-app message display.
+    //
+    // Registration is deliberately NOT delegated to
+    // BrazeActivityLifecycleCallbackListener (which is constructed with
+    // registerInAppMessageManager = false in
+    // [registerSessionLifecycleOnce]) so that `enableInAppMessageUI:
+    // false` has a single, honest off-switch.
     // -------------------------------------------------------------------------
 
     override fun handleOnResume() {
         super.handleOnResume()
+        wireInAppMessages()
+    }
+
+    override fun handleOnPause() {
+        super.handleOnPause()
+        unregisterInAppMessageManager()
+    }
+
+    /**
+     * Tears down everything this plugin instance registered against the
+     * process-wide Braze singleton.
+     *
+     * Capacitor creates a fresh [Plugin] instance (and a fresh `Bridge`,
+     * Activity and WebView) whenever the host Activity is recreated, but
+     * the Braze event messenger holds subscribers by strong reference for
+     * the life of the process. Without this hook every Activity
+     * recreation would leak the previous Activity + WebView through the
+     * three `IEventSubscriber` lambdas created in [initialize]. See C05.
+     *
+     * The IAM listener slots are cleared only when they still hold *this*
+     * instance's listener. On a configuration change Android resumes the
+     * replacement Activity before destroying the old one, so by the time
+     * this runs the slots usually belong to the new plugin instance —
+     * clearing them unconditionally would silently stop
+     * `inAppMessageReceived` after the first rotation.
+     *
+     * Widened from `protected` so the Robolectric tier can drive it
+     * directly (C11); Capacitor calls it either way.
+     */
+    public override fun handleOnDestroy() {
+        teardownFeatureFlagsSubscription()
+        teardownContentCardsSubscription()
+        teardownSdkAuthErrorSubscription()
         val manager = BrazeInAppMessageManager.getInstance()
-        manager.registerInAppMessageManager(bridge.activity)
-        // Phase 3b: wire the custom listener that emits
-        // 'inAppMessageReceived' events. We set it on every resume so a
-        // process restart doesn't lose the wiring (BrazeInAppMessageManager
-        // is a process-wide singleton; its listener is held across
-        // Activity transitions but a Process death clears it).
+        val listener = inAppMessageListener
+        if (manager.inAppMessageManagerListener === listener) {
+            manager.setCustomInAppMessageManagerListener(null)
+        }
+        if (manager.controlInAppMessageManagerListener === listener) {
+            manager.setCustomControlInAppMessageManagerListener(null)
+        }
+        unregisterInAppMessageManager()
+        teardownDeepLinkHandler()
+        initialized = false
+        sdkAuthenticationEnabled = false
+        super.handleOnDestroy()
+    }
+
+    /**
+     * Wires the plugin's observational IAM listener and — unless the
+     * consumer passed `enableInAppMessageUI: false` — registers the
+     * [BrazeInAppMessageManager] against the current Activity.
+     *
+     * The custom listener is set in both cases: it always returns
+     * [InAppMessageOperation.DISPLAY_NOW], so it changes nothing about
+     * display, and it is the only way the plugin can emit
+     * `inAppMessageReceived`. It is re-set on every resume because the
+     * manager is a process-wide singleton whose listener slot is cleared
+     * by process death.
+     */
+    private fun wireInAppMessages() {
+        val manager = BrazeInAppMessageManager.getInstance()
         val listener = inAppMessageListener
         manager.setCustomInAppMessageManagerListener(listener)
         // Control-variant in-app messages dispatch through a separate
@@ -151,11 +378,126 @@ class BrazePlugin : Plugin() {
         // messages have isControl=true on the IInAppMessage; the
         // serializer maps them to the 'control' type discriminator.
         manager.setCustomControlInAppMessageManagerListener(listener)
+        if (!inAppMessageUIEnabled) return
+        val activity = bridge?.activity ?: return
+        manager.registerInAppMessageManager(activity)
+        inAppMessageManagerRegistered = true
     }
 
-    override fun handleOnPause() {
-        super.handleOnPause()
-        BrazeInAppMessageManager.getInstance().unregisterInAppMessageManager(bridge.activity)
+    /**
+     * Installs [InterceptingDeeplinkHandler] so Braze-driven URL opens emit
+     * `deepLinkReceived` instead of navigating. Called from `initialize`
+     * when `deepLinkHandling` is `"app"`.
+     *
+     * Idempotent: a re-`initialize` restores the previous handler first, so
+     * re-running this never stacks wrappers (which would make the same click
+     * fan out N `deepLinkReceived` events, the deep-link analogue of the
+     * stacked-subscriber bug C05 lists under Forbidden).
+     *
+     * The handler the SDK reports *before* the install is captured and
+     * delegated to, because `BrazeDeeplinkHandler.setBrazeDeeplinkHandler`
+     * is a process-global static with no un-set: restoring means installing
+     * that captured handler back.
+     */
+    private fun installDeepLinkHandler() {
+        teardownDeepLinkHandler()
+        // Unwrap before capturing. During an Activity recreation the
+        // replacement plugin instance can install *before* the outgoing one's
+        // `handleOnDestroy` runs, so `getInstance()` may already be another
+        // instance's wrapper. Capturing that would build a chain — and the
+        // orphaned wrapper in the middle holds a closure over the dead
+        // Activity's bridge, which is both a leak and a duplicate-emit path.
+        // Taking its delegate keeps the chain exactly one deep, always.
+        val live = BrazeDeeplinkHandler.getInstance()
+        val previous = if (live is InterceptingDeeplinkHandler) live.delegate else live
+        val handler = InterceptingDeeplinkHandler(previous) { uriAction ->
+            notifyOnMain("deepLinkReceived", deepLinkPayload(uriAction))
+        }
+        BrazeDeeplinkHandler.setBrazeDeeplinkHandler(handler)
+        previousDeepLinkHandler = previous
+        deepLinkHandler = handler
+    }
+
+    /**
+     * Restores the handler that was installed before
+     * [installDeepLinkHandler] ran — but only while *this* instance's
+     * handler is still the live one.
+     *
+     * The identity check matters for the same reason the in-app message
+     * listener teardown has one: on a configuration change Android resumes
+     * the replacement Activity (which has already installed its own
+     * handler) before destroying the outgoing one, so an unconditional
+     * restore would silently stop `deepLinkReceived` after the first
+     * rotation.
+     */
+    private fun teardownDeepLinkHandler() {
+        val installed = deepLinkHandler
+        if (installed != null && BrazeDeeplinkHandler.getInstance() === installed) {
+            previousDeepLinkHandler?.let { BrazeDeeplinkHandler.setBrazeDeeplinkHandler(it) }
+        }
+        deepLinkHandler = null
+        previousDeepLinkHandler = null
+    }
+
+    /** Inverse of the registration half of [wireInAppMessages]. */
+    private fun unregisterInAppMessageManager() {
+        if (!inAppMessageManagerRegistered) return
+        val activity = bridge?.activity ?: return
+        BrazeInAppMessageManager.getInstance().unregisterInAppMessageManager(activity)
+        inAppMessageManagerRegistered = false
+    }
+
+    /**
+     * Registers [BrazeActivityLifecycleCallbackListener] against the
+     * `Application` exactly once per process, then opens a session for
+     * the Activity that is *already* started.
+     *
+     * Without the listener the Braze SDK never calls
+     * `openSession` / `closeSession`, so every event is logged outside a
+     * session: session-scoped analytics (DAU/MAU, session length),
+     * session-start triggers, and flush-on-background all stop working.
+     * Neither Braze AAR declares a ContentProvider or `androidx.startup`
+     * Initializer, and Capacitor's `BridgeActivity` extends
+     * `AppCompatActivity` rather than `BrazeBaseFragmentActivity`, so
+     * there is no auto-init path — the wrapper has to own this.
+     *
+     * The listener only observes callbacks that fire *after* it is
+     * registered, and JS cannot call `initialize` before its own
+     * Activity has started, so the current Activity's session is opened
+     * explicitly here.
+     */
+    private fun registerSessionLifecycleOnce() {
+        synchronized(BrazePlugin::class.java) {
+            if (!sessionLifecycleRegistered) {
+                BrazeActivityLifecycleCallbackListener(
+                    sessionHandlingEnabled = true,
+                    // The plugin owns IAM registration so that
+                    // `enableInAppMessageUI: false` is honoured.
+                    registerInAppMessageManager = false,
+                ).registerOnApplication(context.applicationContext)
+                sessionLifecycleRegistered = true
+            }
+        }
+        bridge?.activity?.let { Braze.getInstance(context).openSession(it) }
+    }
+
+    /**
+     * Pushes a listener event into the WebView from the main thread.
+     *
+     * Braze dispatches `IEventSubscriber` callbacks from its own
+     * coroutine scope. Capacitor 6's `notifyListeners` reaches
+     * `JavaScriptReplyProxy.postMessage` on the calling thread and
+     * swallows any exception it raises, so a cross-thread post would drop
+     * the event with only a logcat line. Braze's own `ContentCardsFragment`
+     * hops to `Dispatchers.Main` in its subscriber for the same reason.
+     */
+    private fun notifyOnMain(eventName: String, data: JSObject) {
+        val activeBridge = bridge
+        if (activeBridge == null) {
+            notifyListeners(eventName, data)
+            return
+        }
+        activeBridge.executeOnMainThread { notifyListeners(eventName, data) }
     }
 
     /**
@@ -170,11 +512,17 @@ class BrazePlugin : Plugin() {
             override fun beforeInAppMessageDisplayed(inAppMessage: IInAppMessage): InAppMessageOperation {
                 val payload = JSObject()
                 payload.put("message", serializeInAppMessage(inAppMessage))
-                notifyListeners("inAppMessageReceived", payload)
+                notifyOnMain("inAppMessageReceived", payload)
                 return InAppMessageOperation.DISPLAY_NOW
             }
         }
     }
+
+    // The serializers below are `internal` rather than `private` so the
+    // Robolectric tier can drive them against real Braze model objects and
+    // assert the exact DTO (C11). They are not part of the published
+    // Capacitor surface: `internal` members are name-mangled and invisible
+    // to consumers.
 
     /**
      * Serializes an [IInAppMessage] to the plugin's portable DTO. The
@@ -183,14 +531,20 @@ class BrazePlugin : Plugin() {
      * MODAL→modal, FULL→full, HTML or HTML_FULL→html, plus
      * `isControl`→control taking precedence regardless of MessageType).
      */
-    private fun serializeInAppMessage(message: IInAppMessage): JSObject {
+    internal fun serializeInAppMessage(message: IInAppMessage): JSObject {
         val dto = JSObject()
-        // Android's IInAppMessage doesn't expose a trigger / analytics id
-        // the way iOS BrazeKit and Web do; the SDK tracks impression
-        // attribution internally via the SDK's own bookkeeping. Surface
-        // `null` so the cross-platform contract slot stays populated for
-        // forward compat.
-        dto.put("id", JSObject.NULL)
+        // `triggerId` is the campaign trigger / analytics id. It is
+        // declared on InAppMessageBase, the superclass of every concrete
+        // variant the manager can hand a listener (slideup, modal, full,
+        // html, control), and is the Android counterpart of iOS's
+        // `message.id` and the Web SDK's `triggerId`.
+        // An absent trigger id reads back as "" on Android; the contract
+        // slot is `string | null`, so the empty-string sentinel is
+        // normalised away rather than forwarded to JS.
+        dto.put(
+            "id",
+            (message as? InAppMessageBase)?.triggerId?.takeIf { it.isNotEmpty() } ?: JSObject.NULL,
+        )
         dto.put("clickAction", serializeClickAction(message.clickAction, message.uri?.toString(), message.openUriInWebView))
         dto.put("extras", extrasToJSObject(message.extras))
 
@@ -198,6 +552,14 @@ class BrazePlugin : Plugin() {
             dto.put("type", "control")
             return dto
         }
+
+        // `altImageText` and `icon` are declared on the base
+        // IInAppMessage interface, so they are readable on every
+        // non-control variant rather than being immersive-only. `language`
+        // genuinely has no Android accessor (iOS and Web expose it), so
+        // that key stays absent — a real, narrow cross-platform
+        // asymmetry, documented in C03.
+        message.altImageText?.takeIf { it.isNotBlank() }?.let { dto.put("imageAltText", it) }
 
         // `remoteImageUrl` is on the IInAppMessageWithImage sibling
         // interface, not the base IInAppMessage. Cast once, use across
@@ -210,10 +572,13 @@ class BrazePlugin : Plugin() {
                 dto.put("type", "slideup")
                 dto.put("message", message.message ?: "")
                 if (!imageUrl.isNullOrBlank()) dto.put("imageUrl", imageUrl)
-                // Android's SLIDEUP doesn't carry imageAltText/language on
-                // the base IInAppMessage; immersive-only fields stay absent.
-                // slideFrom is fixed by SDK (no enum exposed at plugin layer).
-                dto.put("slideFrom", "bottom")
+                // Font Awesome icon name configured on the campaign; only
+                // slide-ups render one, so it is only emitted here.
+                message.icon?.takeIf { it.isNotBlank() }?.let { dto.put("icon", it) }
+                // InAppMessageSlideup.slideFrom is a real TOP/BOTTOM enum;
+                // a top-anchored campaign must not report "bottom".
+                val slideFrom = (message as? InAppMessageSlideup)?.slideFrom
+                dto.put("slideFrom", if (slideFrom == SlideFrom.TOP) "top" else "bottom")
             }
             MessageType.MODAL -> {
                 dto.put("type", "modal")
@@ -241,13 +606,14 @@ class BrazePlugin : Plugin() {
                 // detect and ignore.
                 dto.put("type", "slideup")
                 dto.put("message", message.message ?: "")
-                dto.put("slideFrom", "bottom")
+                val slideFrom = (message as? InAppMessageSlideup)?.slideFrom
+                dto.put("slideFrom", if (slideFrom == SlideFrom.TOP) "top" else "bottom")
             }
         }
         return dto
     }
 
-    private fun serializeClickAction(action: ClickAction, uri: String?, useWebView: Boolean): JSObject {
+    internal fun serializeClickAction(action: ClickAction, uri: String?, useWebView: Boolean): JSObject {
         val obj = JSObject()
         // Braze Android's ClickAction enum is just NONE / URI as of
         // 42.x — no NEWSFEED variant (iOS dropped it too). Map URI →
@@ -315,7 +681,8 @@ class BrazePlugin : Plugin() {
         if (endpoint.startsWith("http://") && !allowInsecure) {
             call.reject(
                 "Braze.initialize: `endpoint` must use HTTPS. " +
-                    "Set `allowInsecureEndpoint: true` only for local mock-server testing.",
+                    "Set `allowInsecureEndpoint: true` only for local mock-server testing. " +
+                    "See SECURITY.md §4.",
             )
             return
         }
@@ -325,53 +692,100 @@ class BrazePlugin : Plugin() {
         // accepted by Braze's docs, so we prefix a dummy scheme before
         // parsing to preserve that ergonomic path.
         val parseTarget = if (endpoint.contains("://")) endpoint else "https://$endpoint"
-        try {
+        val parsed = try {
             java.net.URI(parseTarget)
         } catch (_: java.net.URISyntaxException) {
             call.reject("Braze.initialize: `endpoint` is malformed (must be a parseable URL or bare hostname).")
             return
         }
+        warnIfNotBrazeCluster(parsed.host)
 
         val enableLogging = call.getBoolean("enableLogging", false) ?: false
         val enableSdkAuthentication = call.getBoolean("enableSdkAuthentication", false) ?: false
+        val enableInAppMessageUI = call.getBoolean("enableInAppMessageUI", true) ?: true
+
+        // Closed enum: an unrecognized mode rejects rather than falling back
+        // to "sdk", so a consumer who typo'd "App" can't believe deep links
+        // are gated when they aren't. The error names the value under C06
+        // §4's closed-enum exemption, byte-identical to `src/web.ts`.
+        val deepLinkHandling = call.getString("deepLinkHandling") ?: "sdk"
+        if (deepLinkHandling != "sdk" && deepLinkHandling != "app") {
+            call.reject("Braze.initialize: unknown deepLinkHandling \"$deepLinkHandling\". Allowed: sdk, app.")
+            return
+        }
+
+        // L5-08 / C04: reject a non-positive OR non-integer
+        // `sessionTimeoutInSeconds` rather than silently dropping it.
+        // Capacitor's `getInt` returns null for an absent key *and* for a
+        // present-but-non-Integer value (a JS `1800.5` arrives as a
+        // Double), so absence has to be probed on the raw payload to tell
+        // "use the default" apart from "you passed something invalid".
+        val hasSessionTimeout = call.data.has("sessionTimeoutInSeconds") &&
+            !call.data.isNull("sessionTimeoutInSeconds")
+        val sessionTimeoutInSeconds = call.getInt("sessionTimeoutInSeconds")
+        if (hasSessionTimeout && (sessionTimeoutInSeconds == null || sessionTimeoutInSeconds <= 0)) {
+            call.reject("Braze.initialize: `sessionTimeoutInSeconds` must be a positive integer.")
+            return
+        }
+
+        // C06 / SECURITY.md §8: `enableLogging: false` is the secure
+        // default and has to mean something. BrazeLogger's static default
+        // is Log.INFO, and `enableVerboseLogging()` is a one-way
+        // process-global — so the level is set on BOTH branches, and the
+        // quiet branch drops to errors-only rather than leaving INFO/WARN
+        // (which can carry event payloads) in logcat.
+        BrazeLogger.logLevel = if (enableLogging) BrazeLogger.VERBOSE else android.util.Log.ERROR
 
         val builder = BrazeConfig.Builder()
             .setApiKey(apiKey)
             .setCustomEndpoint(endpoint)
             .setIsSdkAuthenticationEnabled(enableSdkAuthentication)
 
-        if (enableLogging) {
-            // Braze Android 42.x moved log level off the BrazeConfig.Builder
-            // and onto the static BrazeLogger. Setting it globally affects
-            // all Braze SDK logging in the process — fine for the plugin
-            // since logging is consumer-opt-in via `enableLogging: true`.
-            BrazeLogger.enableVerboseLogging()
-        }
-
-        val sessionTimeoutInSeconds = call.getInt("sessionTimeoutInSeconds")
         if (sessionTimeoutInSeconds != null) {
-            // L5-08: reject sessionTimeoutInSeconds <= 0 explicitly rather
-            // than silently dropping. Web's TS validation already rejects;
-            // matching the natives keeps C04 validation parity.
-            //
-            // `getInt` returns null for both absent-key and non-integer
-            // values, which collapses absent-key and null-key into
-            // "treat as default" — that matches the contract. Matches
-            // the iOS bridge's Phase 6 cleanup that dropped hasOption()
-            // in favor of the typed accessor's nullable return.
-            if (sessionTimeoutInSeconds <= 0) {
-                call.reject("Braze.initialize: `sessionTimeoutInSeconds` must be a positive integer.")
-                return
-            }
             // Android SDK's setter takes seconds (Int); we accept seconds
             // at the plugin boundary per C03 so cross-platform parity is
             // maintained without a unit conversion.
             builder.setSessionTimeout(sessionTimeoutInSeconds)
         }
 
-        Braze.configure(context, builder.build())
+        // `Braze.configure` returns false when a live, non-stopped
+        // instance with an API key already exists: it logs a warning,
+        // changes nothing, and keeps the first configuration for the
+        // process lifetime. That is not an error case for a Capacitor
+        // app — an Activity recreation re-runs the web app's
+        // `initialize` — so the call resolves, but the consumer gets a
+        // warning because the options they just passed were dropped by
+        // the SDK.
+        val configured = Braze.configure(context, builder.build())
         initialized = true
         sdkAuthenticationEnabled = enableSdkAuthentication
+        inAppMessageUIEnabled = enableInAppMessageUI
+        if (!configured) {
+            BrazeLogger.w(
+                LOG_TAG,
+                "Braze.initialize: the Braze SDK was already configured in this process and keeps " +
+                    "its first configuration (apiKey, endpoint, SDK Authentication and session " +
+                    "timeout) until the app restarts. The options passed to this call were not " +
+                    "applied to the SDK.",
+            )
+        }
+
+        registerSessionLifecycleOnce()
+        // Register the IAM manager here too: `handleOnResume` has already
+        // fired by the time JS can call `initialize`, so waiting for the
+        // next resume would lose every in-app message until the app is
+        // backgrounded and foregrounded again.
+        wireInAppMessages()
+
+        // `"app"` installs the suppressing handler; `"sdk"` restores
+        // whatever was in place before, so a re-`initialize` that drops the
+        // option genuinely returns to SDK-opens-the-URL rather than leaving
+        // the previous run's interception armed.
+        if (deepLinkHandling == "app") {
+            installDeepLinkHandler()
+        } else {
+            teardownDeepLinkHandler()
+        }
 
         // Wire the persistent feature-flag update subscription. Drop any
         // previous subscriber first so re-init doesn't double-fire events
@@ -384,14 +798,14 @@ class BrazePlugin : Plugin() {
             }
             val payload = JSObject()
             payload.put("flags", flags)
-            notifyListeners("featureFlagsUpdated", payload)
+            notifyOnMain("featureFlagsUpdated", payload)
         }
         Braze.getInstance(context).subscribeToFeatureFlagsUpdates(subscriber)
         featureFlagsSubscriber = subscriber
 
         teardownContentCardsSubscription()
         val ccSubscriber = IEventSubscriber<ContentCardsUpdatedEvent> { event ->
-            notifyListeners("contentCardsUpdated", serializeContentCardsEvent(event))
+            notifyOnMain("contentCardsUpdated", serializeContentCardsEvent(event))
         }
         Braze.getInstance(context).subscribeToContentCardsUpdates(ccSubscriber)
         contentCardsSubscriber = ccSubscriber
@@ -401,21 +815,50 @@ class BrazePlugin : Plugin() {
         // fires when Braze rejects an authenticated request.
         teardownSdkAuthErrorSubscription()
         val authSubscriber = IEventSubscriber<BrazeSdkAuthenticationErrorEvent> { event ->
-            val payload = JSObject()
-            payload.put("userId", event.userId ?: "")
-            payload.put("errorCode", event.errorCode)
-            payload.put("errorReason", event.errorReason ?: "")
-            payload.put("signature", event.signature ?: JSObject.NULL)
-            // Android SDK doesn't expose an errorEventId field on the
-            // event. Cross-platform contract keeps the slot for forward
-            // compat; surface as null until/unless a future SDK exposes it.
-            payload.put("errorEventId", JSObject.NULL)
-            notifyListeners("sdkAuthError", payload)
+            notifyOnMain("sdkAuthError", serializeSdkAuthError(event))
         }
         Braze.getInstance(context).subscribeToSdkAuthenticationFailures(authSubscriber)
         sdkAuthErrorSubscriber = authSubscriber
 
         call.resolve()
+    }
+
+    /**
+     * Emits a warning when `endpoint`'s hostname doesn't look like a
+     * documented Braze cluster. Never rejects (custom/proxied endpoints
+     * are legitimate) and never logs the endpoint itself — a consumer
+     * typo is a support question, not a reason to put their host into
+     * logcat. Mirrors the web bridge's check so a typo surfaces on every
+     * platform.
+     */
+    private fun warnIfNotBrazeCluster(rawHost: String?) {
+        val host = rawHost?.lowercase() ?: ""
+        if (CLUSTER_HOST_REGEX.matches(host) || DEV_HOST_REGEX.matches(host)) return
+        BrazeLogger.w(
+            LOG_TAG,
+            "Braze.initialize: `endpoint` host does not match the documented Braze cluster pattern " +
+                "sdk.<region>-NN.braze.com (or .braze.eu). The SDK will still attempt to connect; verify " +
+                "the host in your Braze dashboard under Settings > Manage Settings > API Settings.",
+        )
+    }
+
+    /**
+     * Serializes a [BrazeSdkAuthenticationErrorEvent] to the plugin's
+     * portable DTO. `userId` is JSON `null` for an anonymous user rather
+     * than an empty-string sentinel, matching iOS and web.
+     */
+    internal fun serializeSdkAuthError(event: BrazeSdkAuthenticationErrorEvent): JSObject {
+        val payload = JSObject()
+        val userId = event.userId
+        payload.put("userId", if (userId.isNullOrEmpty()) JSObject.NULL else userId)
+        payload.put("errorCode", event.errorCode)
+        payload.put("errorReason", event.errorReason ?: "")
+        payload.put("signature", event.signature ?: JSObject.NULL)
+        // Android SDK doesn't expose an errorEventId field on the event.
+        // Neither does BrazeKit or the Web SDK: the contract slot is
+        // reserved and is currently always null on every platform.
+        payload.put("errorEventId", JSObject.NULL)
+        return payload
     }
 
     // -------------------------------------------------------------------------
@@ -493,42 +936,42 @@ class BrazePlugin : Plugin() {
     @PluginMethod
     fun setEmail(call: PluginCall) {
         val user = requireUser(call) ?: return
-        user.setEmail(call.getString("email"))
+        warnIfRejected(user.setEmail(call.getString("email")), "setEmail")
         call.resolve()
     }
 
     @PluginMethod
     fun setPhoneNumber(call: PluginCall) {
         val user = requireUser(call) ?: return
-        user.setPhoneNumber(call.getString("phoneNumber"))
+        warnIfRejected(user.setPhoneNumber(call.getString("phoneNumber")), "setPhoneNumber")
         call.resolve()
     }
 
     @PluginMethod
     fun setFirstName(call: PluginCall) {
         val user = requireUser(call) ?: return
-        user.setFirstName(call.getString("firstName"))
+        warnIfRejected(user.setFirstName(call.getString("firstName")), "setFirstName")
         call.resolve()
     }
 
     @PluginMethod
     fun setLastName(call: PluginCall) {
         val user = requireUser(call) ?: return
-        user.setLastName(call.getString("lastName"))
+        warnIfRejected(user.setLastName(call.getString("lastName")), "setLastName")
         call.resolve()
     }
 
     @PluginMethod
     fun setLanguage(call: PluginCall) {
         val user = requireUser(call) ?: return
-        user.setLanguage(call.getString("language"))
+        warnIfRejected(user.setLanguage(call.getString("language")), "setLanguage")
         call.resolve()
     }
 
     @PluginMethod
     fun setCountry(call: PluginCall) {
         val user = requireUser(call) ?: return
-        user.setCountry(call.getString("country"))
+        warnIfRejected(user.setCountry(call.getString("country")), "setCountry")
         call.resolve()
     }
 
@@ -591,7 +1034,7 @@ class BrazePlugin : Plugin() {
             call.reject("Braze.addToSubscriptionGroup: `groupId` is required (string).")
             return
         }
-        user.addToSubscriptionGroup(groupId)
+        warnIfRejected(user.addToSubscriptionGroup(groupId), "addToSubscriptionGroup")
         call.resolve()
     }
 
@@ -603,7 +1046,7 @@ class BrazePlugin : Plugin() {
             call.reject("Braze.removeFromSubscriptionGroup: `groupId` is required (string).")
             return
         }
-        user.removeFromSubscriptionGroup(groupId)
+        warnIfRejected(user.removeFromSubscriptionGroup(groupId), "removeFromSubscriptionGroup")
         call.resolve()
     }
 
@@ -624,7 +1067,7 @@ class BrazePlugin : Plugin() {
             call.reject("Braze.addAlias: `label` is required (string).")
             return
         }
-        user.addAlias(alias, label)
+        warnIfRejected(user.addAlias(alias, label), "addAlias")
         call.resolve()
     }
 
@@ -642,7 +1085,10 @@ class BrazePlugin : Plugin() {
         if (!requireInitialized(call)) return
         val deviceId = Braze.getInstance(context).deviceId
         if (deviceId.isNullOrEmpty()) {
-            call.reject("Braze.getDeviceId: SDK has not generated a device ID yet.")
+            call.reject(
+                "Braze.getDeviceId: SDK has not generated a device ID yet. " +
+                    "Call `initialize` first or wait until the SDK has finished bootstrapping.",
+            )
             return
         }
         val result = JSObject()
@@ -682,7 +1128,7 @@ class BrazePlugin : Plugin() {
         // on Kotlin 2.2). One-time allocation, matches what we want for a
         // hot-ish per-call lookup.
         val monthEnum = Month.entries[month - 1]
-        user.setDateOfBirth(year, monthEnum, day)
+        warnIfRejected(user.setDateOfBirth(year, monthEnum, day), "setDateOfBirth")
         call.resolve()
     }
 
@@ -714,14 +1160,14 @@ class BrazePlugin : Plugin() {
                 return
             }
         }
-        user.setGender(gender)
+        warnIfRejected(user.setGender(gender), "setGender")
         call.resolve()
     }
 
     @PluginMethod
     fun setHomeCity(call: PluginCall) {
         val user = requireUser(call) ?: return
-        user.setHomeCity(call.getString("homeCity"))
+        warnIfRejected(user.setHomeCity(call.getString("homeCity")), "setHomeCity")
         call.resolve()
     }
 
@@ -737,7 +1183,15 @@ class BrazePlugin : Plugin() {
             call.reject("Braze.logCustomEvent: `name` is required (string).")
             return
         }
-        val brazeProperties = jsObjectToBrazeProperties(call.getObject("properties"))
+        val brazeProperties = when (val result = brazePropertiesFrom(call.getObject("properties"))) {
+            is PropertiesResult.Invalid -> {
+                call.reject(
+                    "Braze.logCustomEvent: `properties.${result.key}` must be string, number, or boolean.",
+                )
+                return
+            }
+            is PropertiesResult.Ok -> result.properties
+        }
         if (brazeProperties != null) {
             Braze.getInstance(context).logCustomEvent(name, brazeProperties)
         } else {
@@ -778,12 +1232,31 @@ class BrazePlugin : Plugin() {
             call.reject("Braze.logPurchase: `price` must be a non-negative finite number.")
             return
         }
-        val quantity = call.getInt("quantity") ?: 1
+        // Capacitor's `getInt` returns null for an absent key *and* for a
+        // present-but-non-Integer value, so a JS `quantity: 2.5` would
+        // otherwise fall through to the default of 1 and log a purchase
+        // with the wrong quantity. Probe the raw payload to tell absence
+        // (use the default) from an invalid value (reject, as web does).
+        val hasQuantity = call.data.has("quantity") && !call.data.isNull("quantity")
+        val rawQuantity = call.getInt("quantity")
+        if (hasQuantity && rawQuantity == null) {
+            call.reject("Braze.logPurchase: `quantity` must be an integer between 1 and 100.")
+            return
+        }
+        val quantity = rawQuantity ?: 1
         if (quantity < 1 || quantity > 100) {
             call.reject("Braze.logPurchase: `quantity` must be an integer between 1 and 100.")
             return
         }
-        val brazeProperties = jsObjectToBrazeProperties(call.getObject("properties"))
+        val brazeProperties = when (val result = brazePropertiesFrom(call.getObject("properties"))) {
+            is PropertiesResult.Invalid -> {
+                call.reject(
+                    "Braze.logPurchase: `properties.${result.key}` must be string, number, or boolean.",
+                )
+                return
+            }
+            is PropertiesResult.Ok -> result.properties
+        }
         val bigPrice = BigDecimal.valueOf(price)
         if (brazeProperties != null) {
             Braze.getInstance(context).logPurchase(productId, currency, bigPrice, quantity, brazeProperties)
@@ -860,7 +1333,16 @@ class BrazePlugin : Plugin() {
     }
 
     /**
-     * Serializes a [FeatureFlag] to the plugin's portable wire format.
+     * Serializes a [FeatureFlag] to the plugin's portable wire format:
+     * exactly `id`, `enabled` and `properties`, per `BrazeFeatureFlag` in
+     * `src/definitions.ts`.
+     *
+     * Built field-by-field rather than via the SDK's own
+     * `forJsonPut()` encoder, which additionally writes an `fts` key
+     * holding Braze's internal impression-attribution token
+     * (`trackingString`, `internal` on the Kotlin side). That key is not
+     * part of the declared contract and has no business reaching consumer
+     * code, logs or analytics payloads.
      *
      * `properties` is the underlying `JSONObject` round-tripped through a
      * string into a `JSObject`. Braze stores properties in the same
@@ -868,12 +1350,12 @@ class BrazePlugin : Plugin() {
      * roundtrip preserves correctness without manual case-by-case
      * conversion.
      */
-    private fun serializeFeatureFlag(flag: FeatureFlag): JSObject {
-        // Use the SDK's own JSON encoder (forJsonPut returns Braze's
-        // canonical wire format). Mirrors the iOS bridge's
-        // flag.json() approach so the wire-format reconciliation
-        // story is the same on both native platforms.
-        return JSObject(flag.forJsonPut().toString())
+    internal fun serializeFeatureFlag(flag: FeatureFlag): JSObject {
+        val dto = JSObject()
+        dto.put("id", flag.id)
+        dto.put("enabled", flag.enabled)
+        dto.put("properties", JSObject(flag.properties?.toString() ?: "{}"))
+        return dto
     }
 
     // -------------------------------------------------------------------------
@@ -923,7 +1405,7 @@ class BrazePlugin : Plugin() {
     fun logContentCardClick(call: PluginCall) {
         if (!requireInitialized(call)) return
         val card = requireContentCardById(call, "logContentCardClick") ?: return
-        card.logClick()
+        warnIfRejected(card.logClick(), "logContentCardClick")
         call.resolve()
     }
 
@@ -931,7 +1413,7 @@ class BrazePlugin : Plugin() {
     fun logContentCardImpression(call: PluginCall) {
         if (!requireInitialized(call)) return
         val card = requireContentCardById(call, "logContentCardImpression") ?: return
-        card.logImpression()
+        warnIfRejected(card.logImpression(), "logContentCardImpression")
         call.resolve()
     }
 
@@ -980,6 +1462,10 @@ class BrazePlugin : Plugin() {
         teardownFeatureFlagsSubscription()
         teardownContentCardsSubscription()
         teardownSdkAuthErrorSubscription()
+        // The deep-link mode is per-`initialize`, like the SDK-auth flag:
+        // after a wipe the SDK opens URLs itself again until a fresh
+        // `initialize` asks for interception.
+        teardownDeepLinkHandler()
         initialized = false
         sdkAuthenticationEnabled = false
         call.resolve()
@@ -1129,7 +1615,7 @@ class BrazePlugin : Plugin() {
      * `timestampSeconds` of -1 (Braze's "never fetched" sentinel) is
      * surfaced as JSON `null` per the canonical contract.
      */
-    private fun serializeContentCardsList(cards: List<Card>, timestampSeconds: Long): JSObject {
+    internal fun serializeContentCardsList(cards: List<Card>, timestampSeconds: Long): JSObject {
         val result = JSObject()
         val cardsArray = JSArray()
         for (card in cards) {
@@ -1177,15 +1663,12 @@ class BrazePlugin : Plugin() {
      *   - `aspectRatio` ← `card.aspectRatio` as Double (null for unset)
      *   - `dismissed` ← `card.isDismissed`
      *   - `dismissible` ← `card.isDismissibleByUser`
-     *   - `clicked`   ← always `false` (the Android SDK does not
-     *      expose a card-level "clicked" boolean; iOS does. This is
-     *      a documented cross-platform asymmetry; consumers should
-     *      not rely on `clicked` to round-trip through Android.)
+     *   - `clicked`   ← `card.isClicked`
      *   - `updated`   ← `card.created` × 1000 (epoch ms) or null
      *   - `expiresAt` ← `card.expiresAt` × 1000 (epoch ms) or null
      *      (the SDK uses -1 to mean "never expires")
      */
-    private fun serializeContentCard(card: Card): JSObject? {
+    internal fun serializeContentCard(card: Card): JSObject? {
         val dto = JSObject()
         dto.put("id", card.id)
         dto.put("viewed", card.viewed)
@@ -1200,9 +1683,19 @@ class BrazePlugin : Plugin() {
         }
 
         val clickUrl: Any = card.url ?: JSObject.NULL
-        dto.put("clicked", false)
+        dto.put("clicked", card.isClicked)
         dto.put("dismissed", card.isDismissed)
         dto.put("dismissible", card.isDismissibleByUser)
+        // A2-15 item 2: `Card.openUriInWebView` is the Android counterpart of
+        // BrazeKit's `ContentCard.ClickAction.url(_, useWebView:)` and of the
+        // in-app-message contract's `clickAction.useWebView`. It used to be
+        // dropped on content cards while the IAM path carried it. Only emitted
+        // when the card actually has a click URL — a card with nothing to open
+        // has no open-target preference to report, which is why the contract
+        // slot is optional.
+        if (card.url != null) {
+            dto.put("useWebView", card.openUriInWebView)
+        }
 
         when (card) {
             is CaptionedImageCard -> {
@@ -1228,6 +1721,11 @@ class BrazePlugin : Plugin() {
                 dto.put("description", card.description ?: "")
                 dto.put("imageUrl", card.imageUrl ?: "")
                 dto.put("url", clickUrl)
+                // `aspectRatio` is a required (non-optional) field on
+                // BrazeClassicContentCard. Neither Android classic
+                // subclass carries the hint, so it is emitted as an
+                // explicit JSON null rather than left absent.
+                dto.put("aspectRatio", JSObject.NULL)
                 dto.put("linkText", card.domain ?: JSObject.NULL)
                 dto.put("altImageText", card.altImageText ?: JSObject.NULL)
             }
@@ -1236,6 +1734,7 @@ class BrazePlugin : Plugin() {
                 dto.put("title", card.title ?: "")
                 dto.put("description", card.description ?: "")
                 dto.put("url", clickUrl)
+                dto.put("aspectRatio", JSObject.NULL)
                 dto.put("linkText", card.domain ?: JSObject.NULL)
             }
             else -> return null
@@ -1280,23 +1779,39 @@ class BrazePlugin : Plugin() {
     }
 
     /**
+     * Outcome of converting a JS `properties` bag into Braze's wrapper.
+     * [Invalid] carries the offending key so the caller can name it in a
+     * C01-format error string.
+     */
+    internal sealed interface PropertiesResult {
+        /** Conversion succeeded. [properties] is null for an empty bag. */
+        data class Ok(val properties: BrazeProperties?) : PropertiesResult
+
+        /** `properties[key]` was not a string, number or boolean. */
+        data class Invalid(val key: String) : PropertiesResult
+    }
+
+    /**
      * Converts a Capacitor `JSObject` into Braze's properties wrapper.
      *
-     * v0.0.5 supports `string` / `number` / `boolean` values per the TS
+     * 0.2.0 supports `string` / `number` / `boolean` values per the TS
      * interface (`BrazeEventPropertyValue`). Date and array support land in a
      * later version per SDK_SURFACE.md §2.
      *
-     * Values that don't match the supported types are silently dropped. This
-     * only triggers if a consumer bypasses the TS type system (e.g. passes
+     * Values that don't match those types (nested objects, arrays, JSON
+     * null) are reported as [PropertiesResult.Invalid] rather than
+     * dropped, matching the explicit rejection `setCustomUserAttribute`
+     * already performs for the same input class. This is only reachable
+     * when a consumer bypasses the TS type system (e.g. passes
      * `properties` from `any`-typed code).
      *
-     * @return `BrazeProperties` populated from the JSObject, or `null` if the
-     *         input was null/empty (so the caller can pick the appropriate
-     *         `logCustomEvent` overload).
+     * @return [PropertiesResult.Ok] wrapping `BrazeProperties`, or a null
+     *         payload when the input was null/empty (so the caller can pick
+     *         the appropriate `logCustomEvent` overload).
      */
-    private fun jsObjectToBrazeProperties(jsObject: JSObject?): BrazeProperties? {
+    internal fun brazePropertiesFrom(jsObject: JSObject?): PropertiesResult {
         if (jsObject == null || jsObject.length() == 0) {
-            return null
+            return PropertiesResult.Ok(null)
         }
         val props = BrazeProperties()
         val keys = jsObject.keys()
@@ -1309,8 +1824,26 @@ class BrazePlugin : Plugin() {
                 is Double -> props.addProperty(key, value)
                 is Float -> props.addProperty(key, value.toDouble())
                 is Boolean -> props.addProperty(key, value)
+                else -> return PropertiesResult.Invalid(key)
             }
         }
-        return props
+        return PropertiesResult.Ok(props)
+    }
+
+    /**
+     * Surfaces a `false` return from a `BrazeUser` setter.
+     *
+     * Every `BrazeUser` mutator returns a validation boolean: `false`
+     * means Braze rejected the value (malformed email, invalid custom
+     * attribute key, empty subscription group id, …) and stored nothing.
+     * The bridge still resolves the call — the Web SDK offers no
+     * equivalent signal, so rejecting would break cross-platform parity —
+     * but a silent discard is a debugging dead end, so the method name is
+     * logged at warn level. Per SECURITY.md §3 the rejected value itself
+     * is never logged.
+     */
+    private fun warnIfRejected(accepted: Boolean, method: String) {
+        if (accepted) return
+        BrazeLogger.w(LOG_TAG, "Braze.$method: the Braze SDK rejected the value (see SDK logs)")
     }
 }
