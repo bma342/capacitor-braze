@@ -1,5 +1,6 @@
 package com.bma342.braze
 
+import com.braze.Braze
 import com.getcapacitor.Bridge
 import com.getcapacitor.JSObject
 import com.getcapacitor.PluginCall
@@ -81,6 +82,13 @@ internal object TestSupport {
     /**
      * A plugin that has run the real `initialize` against the real SDK.
      * [extraOptions] is applied on top of the minimal valid payload.
+     *
+     * Returns only once the SDK has a `currentUser`. `Braze.configure` does not
+     * populate it synchronously, so a test that reads the user on the next line
+     * — `getUserId reports an anonymous user as JSON null` is the one that
+     * does — intermittently saw null and failed. The wait is best-effort by
+     * design: if the user never appears, the test's own assertion reports it,
+     * rather than this helper masking the failure with one of its own.
      */
     fun initializedPlugin(extraOptions: JSObject.() -> Unit = {}): BrazePlugin {
         val plugin = uninitializedPlugin()
@@ -91,7 +99,20 @@ internal object TestSupport {
         val call = fakePluginCall(data)
         plugin.initialize(call)
         verify(call).resolve()
+        awaitCurrentUser()
         return plugin
+    }
+
+    /** How long [initializedPlugin] waits for the SDK's user to materialize. */
+    private const val USER_SETTLE_MS = 5_000L
+
+    private fun awaitCurrentUser() {
+        val app = RuntimeEnvironment.getApplication()
+        val deadline = System.currentTimeMillis() + USER_SETTLE_MS
+        while (System.currentTimeMillis() < deadline) {
+            if (Braze.getInstance(app).currentUser != null) return
+            Thread.sleep(10)
+        }
     }
 
     /** The single string passed to `call.reject(...)`. */

@@ -105,4 +105,9 @@ dependencies {
     testImplementation 'org.mockito:mockito-core:5.14.2'
     testImplementation 'org.mockito.kotlin:mockito-kotlin:5.4.0'
     testImplementation 'com.google.truth:truth:1.4.4'
+    // C11 integration tier: a real local HTTP server the Braze SDK's own
+    // networking stack talks to, so tests assert the bytes that reached the
+    // wire rather than the bridge's intent. MockWebServer 4.x matches the
+    // OkHttp 4.x line the Braze SDK already pulls in transitively.
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
 }
