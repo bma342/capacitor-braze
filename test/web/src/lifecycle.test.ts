@@ -532,7 +532,17 @@ describe('a second initialize in the same page', () => {
     // subscription instead of replacing it, the single publish below would
     // reach the listener twice.
     ({ mock, plugin } = await freshPluginWithTriggers([]));
+    // Let the first cycle settle completely — not just its sync *request*
+    // leaving (`countSyncs`) but the response being processed and published.
+    // Otherwise, on a slow run (coverage instrumentation, a loaded CI box),
+    // that first response lands after the re-initialize, is published to the
+    // new subscription, and is indistinguishable from a stacked publish.
+    scriptCardSync(mock);
+    const settled = vi.fn();
+    await plugin.addListener('contentCardsUpdated', settled);
     await waitUntil(() => countSyncs(mock) > 0, 'the first session-open content-card sync');
+    await waitUntil(() => settled.mock.calls.length > 0, "the first cycle's sync response published");
+    await plugin.removeAllListeners();
 
     const guidsBefore = subscriptionGuids(plugin);
     await reinitialize(plugin, mock);
@@ -545,7 +555,6 @@ describe('a second initialize in the same page', () => {
 
     const received = vi.fn();
     await plugin.addListener('contentCardsUpdated', received);
-    scriptCardSync(mock);
 
     await plugin.requestContentCardsRefresh();
     await waitUntil(() => received.mock.calls.length > 0, 'contentCardsUpdated');
