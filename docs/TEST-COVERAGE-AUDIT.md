@@ -173,9 +173,9 @@ deterministic rather than timing-dependent.
 ### Native coverage — what the unit tiers cover
 
 [C11](./mdcs/C11-NATIVE-TEST-HARNESSES.md)'s unit tiers landed in `0.2.0` and run in CI. On Android,
-91 Robolectric tests cover every `@PluginMethod` validation branch byte-exact against `src/web.ts`,
+106 Robolectric tests cover every `@PluginMethod` validation branch byte-exact against `src/web.ts`,
 an init-guard sweep over all 29 guarded methods, and every serializer against real Braze model
-objects parsed from Braze's own wire JSON. On iOS, 35 XCTests cover the attribute-value classifier
+objects parsed from Braze's own wire JSON. On iOS, 50 XCTests cover the attribute-value classifier
 (including the `0`/`1`-as-boolean regression), `dataFromHex` for `registerPushToken`, the C04 error
 strings, extras stringification, and the `sdkAuthError` payload. The iOS `enableSDK` / `isDisabled`
 asymmetry this table used to list is gone — the plugin now tracks that state itself.

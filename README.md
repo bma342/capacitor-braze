@@ -28,8 +28,8 @@ Snapshot at **0.3.0** (2026-09-22). This table drifts — `package.json`, `git l
 | Surface | State |
 |---|---|
 | **TypeScript API** | 35 methods + `addListener` / `removeAllListeners` for **5 events** (`featureFlagsUpdated`, `contentCardsUpdated`, `inAppMessageReceived`, `sdkAuthError`, `deepLinkReceived`) |
-| **iOS bridge** (`BrazeKit` / `BrazeUI` 18.2.1) | Compiles and runs **35 XCTests** on every PR via the `verify-ios` CI job, which builds **both** install paths — `demo/ios` through CocoaPods and `example/ios` through SPM. `PrivacyInfo.xcprivacy` ships on both. **Requires Xcode 26+** |
-| **Android bridge** (`com.braze:android-sdk-ui` 43.2.0) | Compiles, runs **91 Robolectric/JUnit tests** and Android Lint on every PR via the `verify-android` CI job |
+| **iOS bridge** (`BrazeKit` / `BrazeUI` 18.2.1) | Compiles and runs **50 XCTests** on every PR via the `verify-ios` CI job, which builds **both** install paths — `demo/ios` through CocoaPods and `example/ios` through SPM. `PrivacyInfo.xcprivacy` ships on both. **Requires Xcode 26+** |
+| **Android bridge** (`com.braze:android-sdk-ui` 43.2.0) | Compiles, runs **106 Robolectric/JUnit tests** and Android Lint on every PR via the `verify-android` CI job |
 | **Web bridge** (`@braze/web-sdk` peer `^6.13.0`) | **206 vitest tests across 18 files in ~3.4s** against an in-process Fastify mock Braze server; 35/35 methods and every validation branch covered, with **measured** V8 coverage of `src/web.ts` at 97.45% statements/lines and 90.80% branches, ratcheted in CI — see [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md). One method (`registerPushToken`) is platform-divergent and throws on web by design (per [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md)) |
 | **Developer testbed** (`example/`) | Every plugin method has a button; clicking invokes + logs |
 | **Reference app** (`demo/`) | React 19 + Tailwind 4 + TanStack Router; restaurant ordering + e-commerce flows; iOS + Android Capacitor projects committed |
@@ -51,9 +51,9 @@ Stated plainly so a reviewer does not have to find them:
 - **A value the Braze SDK rejects resolves rather than throwing.** `setEmail('nonsense')` resolves on every platform. Web and Android now log one non-PII warning — `Braze.<method>: the Braze SDK rejected the value (see SDK logs)`, byte-identical on both — and iOS reports nothing because BrazeKit 18.2.1's setters return `Void`. Turning a rejection into a thrown error is a cross-platform contract change still deferred, since iOS has no signal to reject on.
 - **`deepLinkReceived` cannot intercept HTML in-app message iframes on web.** Their renderer never consults the SDK's click-action path. iOS and Android cover that channel; the full per-channel matrix is in [`SECURITY.md` §7](./SECURITY.md#7-deep-link-security). Capacitor's `server.allowNavigation` is the backstop and you should keep it set.
 - **`inAppMessageReceived`'s end-to-end delivery test is web-only.** The mock server now returns real trigger envelopes, so the Web SDK's own trigger engine builds the message and the tests assert what a consumer's listener receives. On iOS and Android the DTO is still covered only at the serializer level, against real SDK message classes.
-- **No coverage instrumentation on the native bridges.** The web bridge has a measured, ratcheted coverage number; the 91 Android and 35 iOS tests are counts, not coverage. JaCoCo / `-enableCodeCoverage` is a tracked follow-up.
+- **No coverage instrumentation on the native bridges.** The web bridge has a measured, ratcheted coverage number; the 106 Android and 50 iOS tests are counts, not coverage. JaCoCo / `-enableCodeCoverage` is a tracked follow-up.
 - **CodeQL does not analyse Swift or Kotlin.** `javascript-typescript` and `actions` are analysed on every push and PR to `main` plus weekly; the native languages need a traced compile that would roughly double the `verify-ios` / `verify-android` runtime, so they are a deliberate deferral.
-- **The Capacitor 6/7 compat jobs build a scratch app, not the demo.** `verify-capacitor-compat-{ios,android}` scaffold a throwaway copy of `example/` against the latest 6.x and 7.x, so the *bridge* is compiled and linked on every install path — but `demo/`'s richer flows and the 35 iOS / 91 Android tests still only run against Capacitor 8. They also resolve the latest release of each major at run time, so a newly published 6.x/7.x can turn CI red without a commit; that is intended.
+- **The Capacitor 6/7 compat jobs build a scratch app, not the demo.** `verify-capacitor-compat-{ios,android}` scaffold a throwaway copy of `example/` against the latest 6.x and 7.x, so the *bridge* is compiled and linked on every install path — but `demo/`'s richer flows and the 50 iOS / 106 Android tests still only run against Capacitor 8. They also resolve the latest release of each major at run time, so a newly published 6.x/7.x can turn CI red without a commit; that is intended.
 
 ## Quick start
 
@@ -1189,7 +1189,12 @@ and both divergences are SDK constraints the plugin cannot paper over:
 
 Post-init on every platform the wipe is complete and the plugin resets
 its own state, so the next call to any guarded method rejects with the
-standard init-required error until you `initialize` again.
+standard init-required error until you `initialize` again. On iOS,
+BrazeKit's `wipeData()` also flips its persisted `enabled` flag off; the
+plugin restores the pre-wipe value immediately, so a wipe never leaves
+the SDK disabled on the next app launch (an explicit
+{@link BrazePlugin.disableSDK} made before the wipe is still honoured).
+Web and Android never disable on wipe.
 
 --------------------
 
@@ -1983,10 +1988,10 @@ The vitest suite is the highest-signal local check. It boots a Fastify mock Braz
 ### Native test tiers
 
 ```bash
-# Android — 91 Robolectric/JUnit tests. Needs a JDK 21 and ANDROID_HOME.
+# Android — 106 Robolectric/JUnit tests. Needs a JDK 21 and ANDROID_HOME.
 cd demo/android && ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon
 
-# iOS — 35 XCTests. Needs Xcode 26+, CocoaPods, and the generated test target.
+# iOS — 50 XCTests. Needs Xcode 26+, CocoaPods, and the generated test target.
 ruby scripts/ios-add-test-target.rb
 cd demo/ios/App && pod install
 xcodebuild test -workspace App.xcworkspace -scheme App \

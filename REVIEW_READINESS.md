@@ -146,7 +146,7 @@ Note item 6: there is no `enableAutomaticPushHandling` option and never was — 
 > Layer 4 smoke has never been run.** They are the Layer 4 checklist, and they stay unchecked until
 > someone walks [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) against a real trial
 > and commits the capture files. Note what this does *not* mean: the bridge translation for each of
-> these paths is covered by the 206 + 91 + 35 automated tests. What is unverified is the round trip
+> these paths is covered by the 206 + 106 + 50 automated tests. What is unverified is the round trip
 > to Braze's backend.
 
 - [ ] App initializes Braze, identifies user, logs an event → event appears in Braze dashboard.
@@ -259,7 +259,7 @@ Concrete things a senior Braze SDK engineer would look for when deciding whether
 
 ### Testing rigor
 
-- **⚠️** Layers 1–3 exist and run in CI (206 vitest against the Fastify mock, 91 Robolectric, 35 XCTest). **Layer 4 has never been run.** The HTTP-intercept native integration tier designed in C11 is also unbuilt.
+- **⚠️** Layers 1–3 exist and run in CI (206 vitest against the Fastify mock, 106 Robolectric, 50 XCTest). **Layer 4 has never been run.** C11's native integration tier (real SDKs against a local HTTP server) is in CI since 0.3.0.
 - **⚠️** iOS simulator: yes (`xcodebuild test`). Android: **JVM/Robolectric, not an emulator** — deliberate, per C11, because emulator startup is a 5-minute tax per job. Web: jsdom, not headless Chrome — also deliberate; the assertions are on outbound HTTP, not on rendering.
 - **[ ]** **Does not exist, and is deliberately deferred.** No workflow is scheduled and no Braze credential exists in CI. Drift is caught by a human reading Braze's release notes (C08).
 - **⚠️** Coverage instrumentation exists on **web only** — `@vitest/coverage-v8` over `src/web.ts`, with ratcheted thresholds enforced in the `test-web` job (97.45% statements/lines, 90.80% branches, 100% functions at `0.2.0`). The Android and iOS suites report test counts, not coverage; JaCoCo / `xcodebuild -enableCodeCoverage` is the open gap. `docs/TEST-COVERAGE-AUDIT.md` records both.
@@ -424,13 +424,13 @@ Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open ·
 |---|---|---|
 | TS types pass `tsc --strict --noEmit` | ✓ | `build-plugin` CI job |
 | `npm test` passes | ✓ | `test-web` CI job — **206 tests across 18 files in ~3.4s**, all 35 methods covered, followed by a coverage-threshold run. Map + measured numbers in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) |
-| Android native tests pass in CI | ✓ | `verify-android` compiles the bridge against `com.braze:android-sdk-ui` 43.2.0, runs **91** Robolectric tests, and runs Android Lint with `abortOnError true`. The HTTP-intercept tier (C11) is still design-only |
+| Android native tests pass in CI | ✓ | `verify-android` compiles the bridge against `com.braze:android-sdk-ui` 43.2.0, runs **106** Robolectric tests (incl. the 15-test wire-level integration tier against MockWebServer), and runs Android Lint with `abortOnError true` |
 | iOS native tests pass in CI | ✓ | `verify-ios` compiles against BrazeKit 18.2.1 and runs **35** XCTests via a generated target. Until `0.2.0` the suite had no target and had never been compiled |
 | Web Layer 3 passes in CI | ✓ | `test-web` runs the vitest + Fastify-mock harness |
 | Layer 4 manual smoke against real Braze | ◌ | **Never run.** `0.1.0` and `0.2.0` both ship on mock-verified wire format only, and say so |
 | No `any`, no `!`, no `TODO`, no `@Suppress` (without docs) | ✓ | Re-verified 2026-09-22 by grep over `src/`, `ios/Sources/BrazePlugin/`, `android/src/main/`: no TODO/FIXME, no `@Suppress`, no Swift force-unwraps / `try!` / `as!` / `fatalError`, no `any` |
 | Lint clean | ✓ | **ESLint 10** (flat config, `--max-warnings=0`) + Prettier 3.9 in `lint`; **SwiftLint `--strict`, 0 violations** in `verify-ios` — the binary is now installed and asserted, having previously been absent, which made the gate a silent no-op; **Android Lint** `abortOnError true` in `verify-android`. **ktlint deliberately not used** per [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md) |
-| Code coverage targets met | ⚠️ | **Web only.** `src/web.ts` is measured at 97.45% statements/lines, 90.80% branches, 100% functions, with thresholds that fail the `test-web` job on a regression. The 91 Android and 35 iOS tests are counts, not coverage — no JaCoCo, no `-enableCodeCoverage`. 332 tests across three platforms; [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) reports both halves |
+| Code coverage targets met | ⚠️ | **Web only.** `src/web.ts` is measured at 97.45% statements/lines, 90.80% branches, 100% functions, with thresholds that fail the `test-web` job on a regression. The 106 Android and 50 iOS tests are counts, not coverage — no JaCoCo, no `-enableCodeCoverage`. 362 tests across three platforms; [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) reports both halves |
 | Bundle size budget met | ✓ | **Measured and enforced** as of `0.2.0`: `node .github/scripts/assert-size.mjs` runs in `build-plugin` and fails above **20,480 B** gzipped for `dist/esm/**/*.js`; the measured total is **17,472 B**. The four unmeasurable budgets (`.aar`, `.framework`, init time, round-trip) were deleted from §2 rather than left as aspirations |
 
 ### Docs (§5)
@@ -496,7 +496,7 @@ Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open ·
 
 | Checkbox | Status | Evidence |
 |---|---|---|
-| Four-layer test pyramid | ⚠️ | Layers 1–3 exist and run in CI: 206 vitest against the Fastify mock, 91 Robolectric, 35 XCTest. **Layer 4 has never been run.** C11's native HTTP-intercept tier is also unbuilt |
+| Four-layer test pyramid | ⚠️ | Layers 1–3 exist and run in CI: 206 vitest against the Fastify mock, 106 Robolectric, 50 XCTest. **Layer 4 has never been run.** C11's native integration tier is in CI since 0.3.0. |
 | CI runs the local tiers across iOS sim + Android + jsdom | ⚠️ | iOS: real simulator via `xcodebuild test`. Android: **JVM/Robolectric, not an emulator** — deliberate per C11 (emulator startup is a 5-minute tax per job). Web: jsdom, not headless Chrome — also deliberate, since the assertions are on outbound HTTP |
 | Daily spec-drift job against real Braze trial | ○ | **Does not exist, deliberately.** No workflow is scheduled and no Braze credential exists in CI. Five documents claimed otherwise until `0.2.0`. Drift is caught by reading Braze's release notes (C08) |
 | Code coverage >80% TS, >70% native | ⚠️ | TS: **met and enforced** — `src/web.ts` at 97.45% statements/lines against a 97 threshold. Native: **not measured**, so the >70% target is neither met nor refuted. See the "Code coverage" row above |
@@ -525,7 +525,7 @@ Everything §7 previously listed as a `0.1.0` blocker, plus what `0.2.0` closed:
 - ✅ **`SDK_SURFACE.md` §1 coverage table** — rebuilt mechanically against `src/definitions.ts` in `0.2.0` after the 2026-09 audit found nine wrong rows.
 - ✅ **README quick-start fresh-`cap-init` validation** — surfaced the iOS Podfile requirement, which the quick-start now inlines alongside the three Android Gradle edits.
 - ✅ **Branch protection on `main`** — required status checks (strict), signed commits, no force pushes, no deletions, conversation resolution.
-- ✅ **Native test harnesses (C11)** — 91 Robolectric + 35 XCTest, both running in CI. The iOS suite had no Xcode target until `0.2.0` and had never been compiled.
+- ✅ **Native test harnesses (C11)** — 106 Robolectric + 50 XCTest, both running in CI. The iOS suite had no Xcode target until `0.2.0` and had never been compiled.
 - ✅ **Release pipeline gated on CI**, with a not-already-published guard, a dry run, `--provenance` and an attestation check.
 
 ### Before tagging `0.2.0`
@@ -549,7 +549,7 @@ Plus, before tagging: ☐ **triage the six open Dependabot PRs** — the per-PR 
 ### Still open, and honestly so
 
 - ☐ **Layer 4 manual smoke.** Walk [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) on all three platforms against a real trial and commit the captures. **Neither `0.1.0` nor `0.2.0` is validated against a live Braze backend**, and the README, CHANGELOG and C08 all say so rather than implying otherwise. This is the single largest gap in the project.
-- ☐ **The Capacitor 6/7 compat jobs compile the bridge, not the demo's behaviour.** `verify-capacitor-compat-{ios,android}` build a scratch copy of `example/` against 6.2.2 and 7.6.9 on every install path and assert the bridge class is linked into the artifact — so the supported range is no longer a claim. What still only runs on Capacitor 8 is the demo's richer surface and the 35 iOS / 91 Android tests. The jobs also resolve the latest release of each major at run time, so a new 6.x/7.x can turn CI red with no commit behind it.
+- ☐ **The Capacitor 6/7 compat jobs compile the bridge, not the demo's behaviour.** `verify-capacitor-compat-{ios,android}` build a scratch copy of `example/` against 6.2.2 and 7.6.9 on every install path and assert the bridge class is linked into the artifact — so the supported range is no longer a claim. What still only runs on Capacitor 8 is the demo's richer surface and the 50 iOS / 106 Android tests. The jobs also resolve the latest release of each major at run time, so a new 6.x/7.x can turn CI red with no commit behind it.
 - ☐ **C11's integration tier** — URLProtocol on iOS, MockWebServer on Android, asserting real HTTP rather than DTO shape.
 - ☐ **`inAppMessageReceived` delivery-path coverage on iOS and Android.** Web is covered end to end as of `0.2.0` (the mock server returns real trigger envelopes); the native tiers still cover the DTO only, at the serializer level.
 - ☐ **Setter return values** (audit A1-10): `setEmail('nonsense')` resolves everywhere. Deferred as a cross-platform contract change.

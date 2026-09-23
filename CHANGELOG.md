@@ -38,6 +38,8 @@ Unchanged from 0.2.0 — no Braze SDK moved in this release:
 
 ### Added
 
+- **C11 integration tier on both native platforms.** 15 tests per platform drive the plugin's own bridge into the **real** Braze SDKs (`com.braze:android-sdk-ui` 43.2.0, BrazeKit 18.2.1) against a real local HTTP server and assert the bytes on the wire — MockWebServer under Robolectric on Android, an in-process `NWListener` loopback server on iOS (BrazeKit exposes nothing about its `URLSession`, so a `URLProtocol` intercept would have bet on a private detail whose failure mode is a passing test). Covers the initialize/config handshake, sessions, `changeUser`, attributes, custom events, purchases, subscription groups, push token, feature-flag and content-card refresh, the SDK-Auth signature on the wire, and the privacy/lifecycle off-switches. Native counts: Android 91 → **106**, iOS 35 → **50** (1 skipped: `sdkAuthError` delivery on iOS, BrazeKit response parsing). Runs inside the existing CI test invocations.
+
 - **Swift Package Manager support.** A root [`Package.swift`](./Package.swift) (swift-tools 5.9)
   exposes the library `CapacitorBraze`, depending on `capacitor-swift-pm` and `braze-swift-sdk`
   (products `BrazeKit` + `BrazeUI`). On Capacitor 8 there is nothing for you to configure:
@@ -62,6 +64,7 @@ Unchanged from 0.2.0 — no Braze SDK moved in this release:
 
 ### Changed
 
+- `C11-NATIVE-TEST-HARNESSES.md` rewritten from design to as-built (loopback transport on iOS, the response-shape traps each platform hides — BrazeKit decodes the data response as a strict `Codable`, so a server config missing members Android ignores silently disables feature flags and content cards — and a scenario × platform matrix). `docs/TEST-COVERAGE-AUDIT.md`'s "wire format untested on native" gap is closed.
 - **Android: no Gradle edits are required on Capacitor 8.** Its stock template ships AGP 8.13.0,
   Gradle 8.14.3, compileSdk 36, minSdk 24 and JDK 21, all above the floors Braze's transitive
   androidx dependencies impose. The three edits the README demanded through 0.2.0 now apply only to
@@ -89,6 +92,11 @@ Unchanged from 0.2.0 — no Braze SDK moved in this release:
 - Dependabot no longer ignores `@capacitor/*` majors. The ignore rule existed because the plugin
   capped at Capacitor 7; now that it tracks current Capacitor, the rule only hid drift. Majors are
   still maintainer-verified via CI rather than auto-merged.
+
+### Fixed
+
+- **iOS: a post-`initialize` `wipeData()` no longer leaves the SDK disabled on the next app launch.** BrazeKit's `wipeData()` is the rename of `wipeDataAndDisableForAppRun()` and still flips the persisted `enabled` flag off, so a consumer using `wipeData()` for logout got "Braze SDK disabled: Cannot schedule work" after relaunching. The bridge now restores the pre-wipe `enabled` value (an explicit `disableSDK()` before the wipe is still honoured), matching web and Android, which never disable on wipe. Found by the new iOS integration tier.
+- **Android test flakes** (pre-existing): `initializedPlugin()` now waits for the SDK's `currentUser` (`Braze.configure` does not populate it synchronously), and the custom-event assertion helper matches the named event rather than the first `ce` entry in a batched request.
 
 ### BREAKING
 

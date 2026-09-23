@@ -1817,7 +1817,12 @@ export interface BrazePlugin {
    *
    * Post-init on every platform the wipe is complete and the plugin resets
    * its own state, so the next call to any guarded method rejects with the
-   * standard init-required error until you `initialize` again.
+   * standard init-required error until you `initialize` again. On iOS,
+   * BrazeKit's `wipeData()` also flips its persisted `enabled` flag off; the
+   * plugin restores the pre-wipe value immediately, so a wipe never leaves
+   * the SDK disabled on the next app launch (an explicit
+   * {@link BrazePlugin.disableSDK} made before the wipe is still honoured).
+   * Web and Android never disable on wipe.
    *
    * @example
    * // On logout:

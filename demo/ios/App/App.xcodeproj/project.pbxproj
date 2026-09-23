@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
+		4EC8DE74425553F28406D75A /* BrazePluginWireIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D140B8E6FB7E42D6D69871B /* BrazePluginWireIntegrationTests.swift */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
@@ -18,6 +19,7 @@
 		A084ECDBA7D38E1E42DFC39D /* Pods_App.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */; };
 		F0D49948F99E3B81BE73BEFF /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14CDD5FDD8F27E7856B665A4 /* Foundation.framework */; };
 		F417E24B5595DBF49CE077F1 /* BrazePluginContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6106393CA52C60CCE735D04C /* BrazePluginContractTests.swift */; };
+		FA608EE215CB6362C4B937CB /* BrazeWireHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68609B5A6BD5F7ABDEE54732 /* BrazeWireHarness.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32,6 +34,7 @@
 
 /* Begin PBXFileReference section */
 		14CDD5FDD8F27E7856B665A4 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		2D140B8E6FB7E42D6D69871B /* BrazePluginWireIntegrationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BrazePluginWireIntegrationTests.swift; path = ../../../ios/Tests/BrazePluginTests/BrazePluginWireIntegrationTests.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		382598535B05AC2C7F887FD1 /* Pods-CapacitorBrazeTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-CapacitorBrazeTests.release.xcconfig"; path = "Pods/Target Support Files/Pods-CapacitorBrazeTests/Pods-CapacitorBrazeTests.release.xcconfig"; sourceTree = "<group>"; };
 		3E88221955A68D8472A4FBE3 /* Pods-CapacitorBrazeTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-CapacitorBrazeTests.debug.xcconfig"; path = "Pods/Target Support Files/Pods-CapacitorBrazeTests/Pods-CapacitorBrazeTests.debug.xcconfig"; sourceTree = "<group>"; };
@@ -46,6 +49,7 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		6106393CA52C60CCE735D04C /* BrazePluginContractTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BrazePluginContractTests.swift; path = ../../../ios/Tests/BrazePluginTests/BrazePluginContractTests.swift; sourceTree = "<group>"; };
 		671420438EEFC7C49361E43C /* Pods_CapacitorBrazeTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_CapacitorBrazeTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		68609B5A6BD5F7ABDEE54732 /* BrazeWireHarness.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BrazeWireHarness.swift; path = ../../../ios/Tests/BrazePluginTests/BrazeWireHarness.swift; sourceTree = "<group>"; };
 		AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_App.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF51FD2D460BCFE21FA515B2 /* Pods-App.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.release.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.release.xcconfig"; sourceTree = "<group>"; };
 		FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.debug.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.debug.xcconfig"; sourceTree = "<group>"; };
@@ -86,6 +90,8 @@
 			isa = PBXGroup;
 			children = (
 				6106393CA52C60CCE735D04C /* BrazePluginContractTests.swift */,
+				2D140B8E6FB7E42D6D69871B /* BrazePluginWireIntegrationTests.swift */,
+				68609B5A6BD5F7ABDEE54732 /* BrazeWireHarness.swift */,
 			);
 			name = CapacitorBrazeTests;
 			sourceTree = "<group>";
@@ -315,6 +321,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				F417E24B5595DBF49CE077F1 /* BrazePluginContractTests.swift in Sources */,
+				4EC8DE74425553F28406D75A /* BrazePluginWireIntegrationTests.swift in Sources */,
+				FA608EE215CB6362C4B937CB /* BrazeWireHarness.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

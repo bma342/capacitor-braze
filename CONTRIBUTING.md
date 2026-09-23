@@ -77,13 +77,13 @@ npm test
 # test/web/coverage/, which is gitignored and listed in .prettierignore.
 cd test/web && npm run test:coverage
 
-# Android — 91 Robolectric/JUnit tests. Needs JDK 21 and an Android SDK with
+# Android — 106 Robolectric/JUnit tests. Needs JDK 21 and an Android SDK with
 # platforms;android-35 + build-tools;35.0.0. Export ANDROID_HOME if the Gradle
 # build can't find it, e.g.:
 #   export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
 cd demo/android && ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon
 
-# iOS — 35 XCTests. Needs Xcode 26+ (BrazeKit 18.x) and CocoaPods.
+# iOS — 50 XCTests. Needs Xcode 26+ (BrazeKit 18.x) and CocoaPods.
 # The test target is generated into the demo's Xcode project; the script is
 # idempotent and its output is committed, so CI re-runs it as a staleness check.
 ruby scripts/ios-add-test-target.rb

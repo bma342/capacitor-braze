@@ -31,7 +31,7 @@ arrangement did.
 
 | Method | Web | iOS | Android |
 |---|---|---|---|
-| `wipeData` | init-independent, but **a pre-`initialize` call wipes nothing** — the SDK's storage manager does not exist yet, so it resolves without effect | dual-path: instance `braze.wipeData()` post-init; class-level `Braze.wipeDataAndDisableForAppRun()` pre-init, which **disables the SDK for the rest of the app run** | init-independent (`Braze.wipeData(context)`) |
+| `wipeData` | init-independent, but **a pre-`initialize` call wipes nothing** — the SDK's storage manager does not exist yet, so it resolves without effect | dual-path: instance `braze.wipeData()` post-init (BrazeKit also flips its persisted `enabled` flag off; the bridge restores the pre-wipe value so a wipe never disables the SDK across launches); class-level `Braze.wipeDataAndDisableForAppRun()` pre-init, which **disables the SDK for the rest of the app run** | init-independent (`Braze.wipeData(context)`) |
 | `disableSDK` | init-independent; also clears the plugin's `initialized` flag, because the Web SDK destroys its instance | init-independent: records `disabledPreInit`, and mirrors `braze.enabled = false` when an instance exists | init-independent (`Braze.disableSdk(context)`) |
 | `enableSDK` | init-independent; also clears `initialized` for the same reason | **init-independent** — clears `disabledPreInit`, and mirrors onto the instance when one exists | init-independent (`Braze.enableSdk(context)`) |
 | `isDisabled` | init-independent | **init-independent** — returns the plugin's tracked state pre-init, `!braze.enabled` post-init | init-independent (`Braze.isDisabled`) |

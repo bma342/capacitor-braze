@@ -1254,8 +1254,20 @@ public class BrazePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func wipeData(_ call: CAPPluginCall) {
         Self.onMain { [weak self] in
             if let braze = BrazePlugin.braze {
-                // Post-init: wipe via the instance method.
+                // Post-init: wipe via the instance method. BrazeKit's
+                // `wipeData()` is the rename of `wipeDataAndDisableForAppRun()`
+                // and keeps the disabling half — and `enabled` is persisted, so
+                // without this the *next app launch* would come up with a dead
+                // SDK ("Braze SDK disabled: Cannot schedule work") even though
+                // the consumer only asked for a wipe. Web and Android leave
+                // the SDK enabled after a wipe; restore the pre-wipe state so
+                // iOS matches, while still honouring an explicit `disableSDK()`
+                // made before the wipe (C07 / SECURITY.md §10).
+                let wasEnabled = braze.enabled
                 braze.wipeData()
+                if wasEnabled {
+                    braze.enabled = true
+                }
             } else {
                 // Pre-init: the only class-level wipe BrazeKit exposes. It
                 // also disables the SDK for the remainder of this app run —

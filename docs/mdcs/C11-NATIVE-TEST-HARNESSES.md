@@ -49,7 +49,7 @@ Three reasons to settle the design before building:
 
 ### Approach
 
-`LocalHTTPServer` in `ios/PluginTests/BrazeWireHarness.swift` — a real HTTP/1.1 server on
+`LocalHTTPServer` in `ios/Tests/BrazePluginTests/BrazeWireHarness.swift` — a real HTTP/1.1 server on
 `127.0.0.1` built on `NWListener`, inside the test process. The plugin is initialized against
 `http://127.0.0.1:<ephemeral>` with `allowInsecureEndpoint: true`, and the tests assert the captured
 request bodies and headers.
@@ -65,10 +65,10 @@ We considered booting `test/mock-server` from `setUp()` via `Process`. Pros: zer
 
 ### As built
 
-Both tiers live in `ios/PluginTests/`, in the same generated `CapacitorBrazeTests` bundle:
+Both tiers live in `ios/Tests/BrazePluginTests/`, in the same generated `CapacitorBrazeTests` bundle:
 
 ```
-ios/PluginTests/
+ios/Tests/BrazePluginTests/
 ├── BrazePluginContractTests.swift        # unit tier — 35 tests
 ├── BrazeWireHarness.swift                # integration harness (no tests of its own)
 └── BrazePluginWireIntegrationTests.swift # integration tier — 15 tests
