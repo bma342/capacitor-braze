@@ -556,11 +556,22 @@ describe('a second initialize in the same page', () => {
     const received = vi.fn();
     await plugin.addListener('contentCardsUpdated', received);
 
-    await plugin.requestContentCardsRefresh();
-    await waitUntil(() => received.mock.calls.length > 0, 'contentCardsUpdated');
+    // Re-subscribing on a kept instance makes the SDK issue one automatic
+    // sync (and publish) of its own right after the re-initialize. Let that
+    // settle and take baselines, so the assertion below counts only what the
+    // explicit refresh produces: a stacked subscription would deliver that
+    // single publish twice.
+    await new Promise((r) => setTimeout(r, 400));
+    const pubsBefore = received.mock.calls.length;
+    const syncsBefore = countSyncs(mock);
 
-    const callsAfterFirst = received.mock.calls.length;
-    await new Promise((r) => setTimeout(r, 200));
-    expect(received.mock.calls.length, 'no extra publishes from a stacked subscription').toBe(callsAfterFirst);
+    await plugin.requestContentCardsRefresh();
+    await waitUntil(() => countSyncs(mock) > syncsBefore, 'the refresh sync request');
+    await waitUntil(() => received.mock.calls.length > pubsBefore, 'contentCardsUpdated for the refresh');
+    await new Promise((r) => setTimeout(r, 300));
+    expect(
+      received.mock.calls.length - pubsBefore,
+      'exactly one publish per refresh — a stacked subscription would deliver it twice',
+    ).toBe(1);
   });
 });
