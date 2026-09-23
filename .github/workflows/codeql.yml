@@ -1,0 +1,87 @@
+name: CodeQL
+
+# A4-14 / REVIEW_READINESS §2 — static analysis (SAST).
+#
+# Until 0.2.0 the only scanners on this repo were `npm audit`, gitleaks and
+# GitHub secret scanning: dependency and secret hygiene, no analysis of the
+# code itself. SECURITY.md §12 said so plainly rather than implying otherwise.
+# This workflow closes that gap for the two languages that can be analysed
+# without a build.
+#
+# ---------------------------------------------------------------------------
+# Why only `javascript-typescript` and `actions`
+# ---------------------------------------------------------------------------
+# CodeQL analyses Swift and Kotlin only by observing a full native compilation
+# inside the CodeQL tracer: Swift needs `xcodebuild` on a macOS runner with the
+# BrazeKit/BrazeUI pods resolved, and Kotlin needs the Gradle build with the
+# Android SDK installed. Both of those builds already exist in `test.yml`
+# (verify-ios, verify-android) and each takes 8-15 minutes; wiring CodeQL
+# through them means duplicating the pod/Gradle setup here and roughly doubling
+# their runtime on every PR and every weekly run.
+#
+# That is a deliberate deferral, not an oversight. The bridges are small, have
+# no network or crypto code of their own (BrazeKit / android-sdk-ui do all of
+# it), and are covered by SwiftLint --strict, Android Lint and 100 native
+# contract tests. Adding the native languages is a tracked follow-up; when it
+# happens it belongs in a separate scheduled workflow reusing the verify jobs'
+# setup, not bolted onto the PR path.
+#
+# `actions` analyses these workflow files themselves — untrusted-input
+# injection into `run:` blocks, over-broad permissions, the
+# `pull_request_target` footguns. That is worth having on a repo whose CI
+# publishes to npm.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays 05:27 UTC. Weekly re-analysis catches newly published CodeQL
+    # queries firing on code that has not changed. Off-the-hour to avoid the
+    # top-of-hour scheduling backlog.
+    - cron: '27 5 * * 1'
+
+# Least privilege at the file level; the analyse job widens only what CodeQL
+# needs to upload results.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Superseding a PR commit should cancel its in-flight analysis; a push to
+  # main or a scheduled run should always complete and post its results.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload SARIF to the Security tab
+      contents: read # checkout
+      actions: read # read workflow run metadata (required for private/internal repos)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # `build-mode: none` is the supported replacement for the old
+      # autobuild step for languages CodeQL can analyse from source. Neither
+      # of these languages compiles, so there is no autobuild to run.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          category: '/language:${{ matrix.language }}'

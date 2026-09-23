@@ -28,7 +28,158 @@ If C10 didn't exist as a discipline, integration requirements would drift into t
 
 ---
 
-## iOS — required `Podfile` config
+## The support matrix (0.3.0)
+
+`0.3.0` widened the plugin from "Capacitor 6 or 7, CocoaPods only" to **Capacitor 6, 7 or 8, under
+either CocoaPods or Swift Package Manager**. The single reason the widening was necessary: since
+Capacitor 8, `npx cap add ios` generates an **SPM** project by default, so a CocoaPods-only plugin
+does not install into a stock Capacitor 8 app at all — it installs only into an app whose
+maintainer deliberately chose the Podfile path.
+
+Every cell below is a build that runs in CI. **A ⚠️ or a "should work" in this table is a bug** —
+either add the job or narrow the range.
+
+| Capacitor | npm install | iOS — CocoaPods | iOS — SPM | Android | Web |
+|---|---|---|---|---|---|
+| **6.x** (6.2.2) | ✅ peer `^6.0.0` | ✅ `verify-capacitor-compat-ios` — needs the 2 Podfile edits | ✅ `verify-capacitor-compat-ios` — CLI flag is marked *experimental*; needs the app's iOS target at 15.0 | ✅ `verify-capacitor-compat-android` — needs the 3 Gradle edits | ✅ |
+| **7.x** (7.6.9) | ✅ peer `^7.0.0` | ✅ `verify-capacitor-compat-ios` — needs the 2 Podfile edits | ✅ `verify-capacitor-compat-ios` — needs the app's iOS target at 15.0 | ✅ `verify-capacitor-compat-android` — **no edits**, the stock template already clears every floor | ✅ |
+| **8.x** (8.5.2) | ✅ peer `^8.0.0` | ✅ `verify-ios` — `demo/ios` | ✅ `verify-ios` — `example/ios` | ✅ `verify-android` — `demo/android` | ✅ |
+| **9.x** | ❌ by design | ❌ podspec `< 9.0` | ❌ `capacitor-swift-pm` range is `..<"9.0.0"` | — | — |
+
+**What "✅" means here** is a named CI job, not a claim. `verify-ios` builds `demo/ios` through
+`pod install` + `xcodebuild test` and `example/ios` through SPM; `verify-android` builds
+`demo/android` on JDK 21 with compileSdk 36. The two `verify-capacitor-compat-*` jobs
+(0.3.0, matrix over majors 6 and 7) run [`scripts/compat-app.sh`](../../scripts/compat-app.sh),
+which scaffolds a throwaway copy of `example/`, pins `@capacitor/{core,cli,ios,android}` to the
+**latest release of that major**, applies exactly the edits listed in this MDC, builds, and then
+asserts the bridge actually shipped — `_OBJC_CLASS_$_BrazePlugin` linked into `App.debug.dylib` on
+iOS, `Lcom/bma342/braze/BrazePlugin;` in the APK's dex on Android. "It compiled" is not "the plugin
+is in there".
+
+Because the script resolves the major at run time rather than pinning a patch, a newly published
+6.x or 7.x that breaks the plugin turns CI red on the next run. That is deliberate; the alternative
+is hearing it from a consumer.
+
+**Keep this table and the script in lockstep.** The script *is* the executable copy of the edit
+lists below — if you change an edit in one place and not the other, the job fails and tells you
+which.
+
+### One plugin-registration mechanism for all three majors
+
+`ios/Plugin/BrazePlugin.m` and its 35 `CAP_PLUGIN_METHOD` macros are **gone** as of 0.3.0. An SPM
+target cannot mix Swift and Objective-C sources, so the registration moved into
+`BrazePlugin.swift` as `CAPBridgedPlugin` conformance (`identifier`, `jsName`, `pluginMethods`).
+
+This is safe across 6/7/8 for two verified reasons, not one:
+
+1. `Capacitor/CAPBridgedPlugin.h` is **byte-identical** in `@capacitor/ios` 6.2.2, 7.6.9 and 8.5.2,
+   and `CapacitorBridge.registerPlugins()` in all three tests `plugin as? (CAPPlugin &
+   CAPBridgedPlugin).Type` — it never cared whether the conformance came from an Obj-C category or
+   from Swift.
+2. `@capacitor/cli`'s `findPluginClasses` (`dist/util/iosplugin.js`) is also identical across 6.x
+   and 8.x, and matches `@objc\(([A-Za-z0-9_-]+)\)` in every `.swift` under the plugin's `ios/`
+   directory. `@objc(BrazePlugin)` is still there, so `capacitor.config.json`'s `packageClassList`
+   still resolves to `["BrazePlugin"]` with no `.m` present. Confirmed by inspecting the file
+   `cap sync ios` wrote into `demo/ios/App/App/`.
+
+### Source layout
+
+Also moved in 0.3.0, to the layout Capacitor's own plugins use so SPM's default target discovery
+works without `exclude:` gymnastics:
+
+| Was | Is |
+|---|---|
+| `ios/Plugin/*.swift` | `ios/Sources/BrazePlugin/*.swift` |
+| `ios/Plugin/PrivacyInfo.xcprivacy` | `ios/Sources/BrazePlugin/PrivacyInfo.xcprivacy` |
+| `ios/Plugin/BrazePlugin.m` | *(deleted)* |
+| `ios/PluginTests/*.swift` | `ios/Tests/BrazePluginTests/*.swift` |
+
+**This only affects people who referenced the paths** (forks, patches, a `patch-package` diff, or a
+Podfile pointing at `:path`). Consumers installing from npm see no difference: the podspec's
+`source_files` and the package's `files` list were updated in the same commit.
+
+---
+
+## iOS — install path A: Swift Package Manager (Capacitor 8 default)
+
+Nothing to configure. `Package.swift` at the repo root declares the library `CapacitorBraze`, and
+`npx cap sync ios` writes the wiring into your app's `ios/App/CapApp-SPM/Package.swift` for you:
+
+```swift
+// ios/App/CapApp-SPM/Package.swift — DO NOT MODIFY, generated by the Capacitor CLI
+dependencies: [
+    .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", exact: "8.5.2"),
+    .package(name: "CapacitorBraze", path: "../../../../node_modules/capacitor-braze")
+],
+```
+
+Xcode then resolves `braze-swift-sdk` **18.2.1 exactly** transitively through the plugin's own
+manifest. You do not add a Braze package reference yourself, and you must not — a second, differently
+versioned reference is how you get two BrazeKits in one binary.
+
+Things worth knowing:
+
+- **`BrazeKit` is a `binaryTarget`.** The first resolve downloads `BrazeKit.zip` from GitHub
+  Releases, which is slow (tens of seconds to minutes) and needs network access. A CI cache of
+  `~/Library/Caches/org.swift.swiftpm` or `DerivedData/SourcePackages` pays for itself.
+- **`BrazeUI` is a source target**, so it compiles in your build rather than arriving prebuilt.
+- **iOS 15 floor.** `Package.swift` declares `platforms: [.iOS(.v15)]`, matching the podspec.
+- **`swift build` from the command line does not work** for this package, and that is expected, not
+  a bug: `capacitor-swift-pm` ships iOS-only xcframeworks, so a host-platform (macOS) build cannot
+  resolve them. Build through Xcode / `xcodebuild` with an iOS destination, which is what
+  `verify-ios` does.
+- **The privacy manifest ships as an SPM resource** (`resources: [.copy("PrivacyInfo.xcprivacy")]`),
+  so both install paths give Xcode the same manifest to aggregate.
+
+### SPM on Capacitor 6 / 7 — one extra step
+
+Both majors can generate an SPM project (`npx cap add ios --packagemanager SPM`; Capacitor 6 prints
+`SPM Support is still experimental`), and both work — `verify-capacitor-compat-ios` builds them. One
+thing differs from Capacitor 8, and it is not obvious:
+
+**Raise the App target's `IPHONEOS_DEPLOYMENT_TARGET` to 15.0 before `npx cap sync ios`.** On the
+SPM path there is no Podfile, so this is where the plugin's iOS 15 floor gets met. The CLI *derives*
+`CapApp-SPM/Package.swift`'s `platforms: [.iOS(.vN)]` from the app target — `getMajoriOSVersion()`
+in `@capacitor/cli` literally substrings `IPHONEOS_DEPLOYMENT_TARGET = ` out of your `project.pbxproj`
+— and the generated file carries a `DO NOT MODIFY THIS FILE` banner and is rewritten on every sync,
+so editing it directly is not a fix. Capacitor 6's template ships `13.0` and Capacitor 7's ships
+`14.0`, and leaving either produces:
+
+```
+error: The package product 'CapacitorBraze' requires minimum platform version 15.0
+for the iOS platform, but this target supports 14.0 (in target 'CapApp-SPM' from
+project 'CapApp-SPM')
+```
+
+Capacitor 8's template already ships `15.0`, which is why this step has no Capacitor 8 equivalent.
+
+One Capacitor 7 CLI quirk worth naming so it does not read as a plugin fault: `npx cap add ios
+--packagemanager SPM` generates the SPM project correctly and *then* fails trying to run `pod
+install` (`ENOENT ... ios/App/Podfile`). `npx cap sync ios` afterwards takes the SPM path and
+finishes the job. Capacitor 6 and 8 do not do this.
+
+## iOS — install path B: CocoaPods
+
+Still fully supported, and still what `demo/ios` uses. Two Podfile lines are **non-optional**, and
+Capacitor's stock Podfile template has neither.
+
+### Required `Podfile` config
+
+**Xcode 26 or newer is required.** BrazeKit raised its Xcode floor to 26.0 at 15.0.0 and the plugin
+pins 18.2.1. Capacitor 8 wants Xcode 26 as well, so the two floors coincide.
+
+One failure mode is worth naming because it does not look like a version error: an
+Xcode 26 install whose **iOS simulator runtime** is older than its iOS SDK reports *no* iOS
+Simulator destinations at all —
+
+```
+[MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.
+xcodebuild: error: Unable to find a destination matching the provided destination specifier
+```
+
+with the real cause only visible from a direct target build (`No simulator runtime version from
+[...] available to use with iphonesimulator SDK version ...`). Fix: `xcodebuild -downloadPlatform iOS`.
+This applies to CI images as well as developer machines.
 
 The consumer's `ios/App/Podfile` MUST set both of the following:
 
@@ -37,13 +188,29 @@ platform :ios, '15.0'
 use_frameworks! :linkage => :static
 ```
 
-Both are non-optional. Capacitor's stock `cap add ios` template ships with `platform :ios, '13.0'` and `use_frameworks!` (dynamic) — those defaults will fail `pod install` against this plugin.
+Both are non-optional, on every major that still uses a Podfile. The stock `cap add ios` template
+ships `platform :ios, '13.0'` on Capacitor 6 and `'14.0'` on Capacitor 7 (Capacitor 8 ships `15.0`),
+and plain `use_frameworks!` (dynamic) on all three — those defaults fail `pod install` against this
+plugin. Raise the App target's `IPHONEOS_DEPLOYMENT_TARGET` to 15.0 too, so the app is not deploying
+below its own dependencies; `verify-capacitor-compat-ios` does both.
 
 ### Why `platform :ios, '15.0'`
 
-BrazeKit 14.x sets `s.ios.deployment_target = '15.0'` in its podspec. CocoaPods aborts the install with `"required a higher minimum deployment target"` if the consumer's Podfile sets a lower floor.
+**This is the plugin's own floor, not BrazeKit's.** `CapacitorBraze.podspec` sets
+`s.ios.deployment_target = '15.0'`, and CocoaPods aborts with `"required a higher minimum deployment
+target"` when the consumer's Podfile sets a lower one — the exact failure a stock Capacitor 6 or 7
+`npx cap add ios` hits.
 
-This is BrazeKit's choice, not ours. The plugin's own podspec also pins `s.ios.deployment_target = '15.0'`; consumers can set their Podfile *higher* (e.g. iOS 16 or 17 to drop older devices) but not lower.
+An earlier version of this MDC — and the README — said BrazeKit required iOS 15. **That is false,
+and verifiably so:** `BrazeKit.podspec` declares `12.0` at tag 14.1.0, at 15.0.0 and at 18.2.1, and
+`Package.swift` declares `.iOS(.v12)` throughout. Getting the *reason* wrong matters because a
+consumer who checks upstream and finds iOS 12 reasonably concludes the requirement is spurious and
+removes the line.
+
+The real reason to keep 15.0: it matches Capacitor's modern floor (Capacitor 8 requires iOS 15), so
+it costs nothing a Capacitor consumer is not already paying, and it avoids a per-release argument
+about which BrazeKit APIs are available. Consumers may set their Podfile *higher* (iOS 16, 17) but
+not lower.
 
 ### Why `use_frameworks! :linkage => :static`
 
@@ -64,7 +231,7 @@ Three resolutions exist in theory; only one is correct for this plugin:
 | `use_modular_headers!` instead of `use_frameworks!` | ❌ Capacitor's own Pods (`Capacitor`, `CapacitorCordova`) assume framework linkage. Switching breaks Capacitor's bootstrap. |
 | Suppress the validation with `install! 'cocoapods', :warn_for_unused_master_specs_repo => false` style flags | ❌ Suppresses the symptom, leaves the runtime mixing of static + dynamic linkage which can cause duplicate-symbol crashes at app launch. |
 
-Worked example — the demo's Podfile (verified working as of 0.0.11):
+Worked example — the demo's Podfile (verified working against Capacitor 8.5.2 at 0.3.0):
 
 ```ruby
 require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'
@@ -100,83 +267,294 @@ If the consumer plans to use Braze-orchestrated push notifications, they must ad
 
 1. Enable the **Push Notifications** capability in Xcode (Signing & Capabilities tab).
 2. Enable **Background Modes → Remote notifications** in Xcode.
-3. Forward the APNs device token from `@capacitor/push-notifications`' `registration` event to `Braze.registerPushToken({ token })` per the [JSDoc](../../src/definitions.ts) on `registerPushToken`.
+3. Forward the APNs device token from `@capacitor/push-notifications`' `registration` event to
+   `Braze.registerPushToken({ token })`. The token arrives as a hex string; the bridge decodes it,
+   and rejects whitespace-only or zero-byte tokens rather than registering an empty one.
 
-The plugin does not require these for non-push consumers (a consumer who only uses events + content cards needs neither).
+```ts
+import { PushNotifications } from '@capacitor/push-notifications';
+import { Braze } from 'capacitor-braze';
+
+PushNotifications.addListener('registration', ({ value }) => {
+  Braze.registerPushToken({ token: value });
+});
+await PushNotifications.requestPermissions();
+await PushNotifications.register();
+```
+
+**That covers registration only — Braze will record sends but no opens.** To hand notification
+opens, deep links, rich push payloads and background push to BrazeKit, pass
+`enablePushAutomation: true` to `initialize`:
+
+- It is **iOS-only**; Android and Web ignore it (Android's manifest-declared receiver already does
+  the equivalent, and Web Push has no comparable concept).
+- It is **off by default**, so an app with its own `UNUserNotificationCenter` delegate keeps full
+  control until it opts in. With the flag off, the plugin never touches the notification centre.
+- When on, the bridge sets `configuration.push.automation = true` and registers Braze's notification
+  categories with `UNUserNotificationCenter.current().setNotificationCategories(...)`.
+- **It does not request permission for you.** That stays with `@capacitor/push-notifications`.
+- **Attribution caveat:** `initialize` necessarily runs after app launch, so a push that *launched*
+  the app may already have been delivered before Braze is configured, and may not be attributed.
+  Initialize as early in your startup path as you can.
+
+The plugin requires none of this for non-push consumers (events + content cards need neither).
 
 ---
 
 ## Android — required config
 
-The consumer's `android/variables.gradle` and `android/build.gradle` need three adjustments beyond Capacitor 6's stock template. All three are forced by `com.braze:android-sdk-ui 42.2.0`'s transitive dependencies and were discovered during the Phase O Gradle-build verification.
+Two independent floors stack here, and the higher one wins:
 
-### `android/variables.gradle` — bump `compileSdkVersion` to 35
+| Source | AGP | Gradle | Kotlin | compileSdk | minSdk | JDK |
+|---|---|---|---|---|---|---|
+| Braze `com.braze:android-sdk-ui:43.2.0`, via its transitive androidx deps | 8.6.0 | 8.7 | 2.2.0 | 35 | (21) | — |
+| Capacitor 8 (`@capacitor/android` 8.5.2 + its project template) | 8.13.0 | 8.14.3 | — | 36 | 24 | 21 |
+| **Plugin defaults in `android/build.gradle`** | **8.13.0** | *(consumer's wrapper)* | **2.2.20** | **36** | **24** | **21** |
 
-Capacitor 6's stock template ships `compileSdkVersion = 34`. Braze SDK 42.x pulls in `androidx.recyclerview 1.4.0` and `androidx.swiperefreshlayout 1.2.0`, both of which require `compileSdk >= 35` and fail the build with:
+Nothing in Braze's own AAR metadata forces any of the Braze column: `com.braze:android-sdk-ui:43.2.0`
+declares `minCompileSdk=21` and `minAndroidGradlePluginVersion=1.0.0` in its
+`aar-metadata.properties`. The numbers come from `androidx.recyclerview 1.4.0` (compileSdk 35) and
+`androidx.swiperefreshlayout 1.2.0` (AGP 8.6.0). Worth stating because Braze 43.1.0's changelog
+mentions AGP 9.2.1, which describes how Braze *builds* the SDK and is not a consumer requirement.
+
+**A Capacitor 8 consumer therefore has nothing to configure on Android.** The stock Capacitor 8
+template already exceeds every Braze floor. This is new in 0.3.0 — through 0.2.0 the README listed
+three mandatory Gradle edits, and all three are now the template's own defaults.
+
+**A Capacitor 7 consumer has nothing to configure either.** Capacitor 7.6.9's template ships
+AGP 8.7.2 / Gradle 8.11.1 / compileSdk 35, which clears every Braze floor above.
+`verify-capacitor-compat-android` builds Capacitor 7 with **zero** edits to prove it.
+
+**A Capacitor 6 consumer needs three edits**, because Capacitor 6.2.2's template ships AGP 8.2.1 /
+Gradle 8.2.1 / compileSdk 34 — under every floor:
 
 ```
+# android/gradle/wrapper/gradle-wrapper.properties — AGP 8.6.0 needs Gradle 8.7+
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
+```
+
+```groovy
+// android/build.gradle
+buildscript {
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.6.0'   // from 8.2.1
+    }
+}
+```
+
+```groovy
+// android/variables.gradle
+ext {
+    compileSdkVersion = 35   // from 34
+}
+```
+
+Those exact three values — not "use the latest" — are what
+`verify-capacitor-compat-android` applies, so they are a tested minimum rather than a guess. JDK 21
+works once the wrapper is at 8.7; Capacitor 6's *stock* Gradle 8.2.1 predates Java 21 support, which
+is one more reason the wrapper bump is not optional.
+
+Skipping the edits produces, in the order you will hit them:
+
+```
+Failed to create Jar file .../caches/jars-9/.../bcprov-jdk18on-1.79.jar
+```
+— Gradle 8.2.1 choking on a Java-21 multi-release jar it pulls in while configuring
+`:capacitor-braze`. It names neither AGP nor Braze, so it reads like a corrupt cache; it is the
+wrapper being too old. Then:
+
+```
+Dependency 'androidx.swiperefreshlayout:swiperefreshlayout:1.2.0' requires
+Android Gradle plugin 8.6.0 or higher.
+
 Dependency 'androidx.recyclerview:recyclerview:1.4.0' requires libraries and
 applications that depend on it to compile against version 35 or later of
 the Android APIs.
 ```
 
-Fix:
+**No Kotlin classpath entry is needed.** Earlier revisions of this MDC listed one; that was wrong.
+Braze 43.x does ship Kotlin **2.2.0** metadata, which Kotlin 1.9.x cannot read — but the plugin's
+own `android/build.gradle` puts `kotlin-gradle-plugin:2.2.20` on its `buildscript` classpath, and
+Capacitor's app template declares no Kotlin plugin at all, so there is nothing to conflict with. The
+Capacitor 6 build above succeeds with an untouched Kotlin setup.
+
+### Why the plugin's raised defaults do not break Capacitor 6/7
+
+Every value in the plugin's `android {}` block is read from `rootProject.ext` **first**:
 
 ```groovy
-ext {
-    minSdkVersion = 22
-    compileSdkVersion = 35   // bumped from Capacitor stock 34
-    targetSdkVersion = 34
-    // ...
-}
+compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 36
+minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 24
+targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 36
 ```
 
-`targetSdkVersion` can stay at 34 (it controls runtime opt-in, not compile-time API access).
+A Capacitor 6 app's `variables.gradle` sets all three, so it gets its own numbers and the plugin's
+defaults never apply. The defaults matter only when the module is built standalone, with no host
+app — which is why they track the newest Capacitor major rather than the oldest.
 
-### `android/build.gradle` — bump AGP to 8.6.0
+The same logic covers the `buildscript` classpath, which is *not* `rootProject.ext`-driven and is
+the one thing here that could plausibly have broken an older app. It does not, because Gradle
+resolves a subproject's buildscript classes parent-first: the AGP the app's own root
+`build.gradle` declares is the AGP that configures `:capacitor-braze`, and the plugin's
+`com.android.tools.build:gradle:8.13.0` line is inert inside a host app. Verified, not assumed —
+`verify-capacitor-compat-android` builds Capacitor 6 with root AGP **8.6.0** and the plugin's 8.13.0
+line untouched. Removing that line would not lower any consumer floor either, since Braze's
+transitive androidx deps demand AGP 8.6.0 regardless.
 
-Capacitor 6's stock template ships AGP 8.2.1. The transitive `androidx.swiperefreshlayout 1.2.0` requires AGP 8.6.0+ and fails with:
+### Bytecode level — deliberately still 17
 
+The library emits **JVM 17** bytecode (`compileOptions` + the `kotlin { compilerOptions { jvmTarget } }`
+block), while Capacitor 8's `:capacitor-android` is compiled at Java 21 and the CLI writes
+`JavaVersion.VERSION_21` into your app's generated `capacitor.build.gradle`.
+
+That mix is fine, and it was **checked rather than assumed**: `demo/android`'s
+`:app:assembleDebug` links the JVM-17 plugin AAR against the Java-21 `:capacitor-android` and
+succeeds. Staying at 17 keeps the plugin loadable from a Capacitor 6/7 app whose own modules are
+still at Java 17 — raising it would be a consumer-facing break for no gain.
+
+**On Capacitor 8, JDK 21 is required to build** (its AGP 8.13 needs it), even though the output is
+17. On Capacitor 6/7 the JDK floor is the consumer's own AGP: the Capacitor 6 compat build runs on
+JDK 17 *and* on JDK 21 once its wrapper is at Gradle 8.7, and CI uses 21 for both majors so one
+`setup-java` step covers the matrix.
+
+### Sessions are handled by the plugin
+
+As of 0.2.0 the plugin registers `BrazeActivityLifecycleCallbackListener(sessionHandlingEnabled = true,
+registerInAppMessageManager = false)` on the `Application` **once per process** during `initialize`,
+and immediately opens a session for the host Activity. Before that, no session was ever opened and
+every event was logged outside one, which silently broke DAU/MAU, session length, sessions-per-user,
+session-start triggers and flush-on-background.
+
+**Consumers must not register their own** `BrazeActivityLifecycleCallbackListener`, or sessions are
+double-counted. In-app message manager registration stays with the plugin's
+`handleOnResume`/`handleOnPause` (gated by `enableInAppMessageUI`), which is why the listener above
+is constructed with `registerInAppMessageManager = false`.
+
+### Android push setup (only if consumers use push)
+
+**The plugin declares nothing here.** `android/src/main/AndroidManifest.xml` is empty — no
+`<application>`, no service, no receiver — and the bridge has zero Firebase references. So the
+plugin cannot collide with `@capacitor/push-notifications`, and equally it cannot wire inbound push
+for you. Everything below is consumer-side.
+
+Common to both paths:
+
+1. Add a Firebase project, download `google-services.json`, drop it into `android/app/`.
+2. Apply the Google Services Gradle plugin in `android/app/build.gradle`.
+3. Forward the FCM token from `@capacitor/push-notifications`' `registration` event to
+   `Braze.registerPushToken({ token })` — unless you use Braze's automatic registration (below).
+
+The demo's `android/app/google-services.json` is intentionally absent; the consumer's Firebase
+project is the consumer's account.
+
+#### Path A — you have no `FirebaseMessagingService` of your own
+
+Register Braze's directly. This is Braze's documented step 1 and it is **required** for Braze's open
+and click-action tracking to work:
+
+```xml
+<!-- android/app/src/main/AndroidManifest.xml, inside <application> -->
+<service
+    android:name="com.braze.push.BrazeFirebaseMessagingService"
+    android:exported="false">
+    <intent-filter>
+        <action android:name="com.google.firebase.MESSAGING_EVENT" />
+    </intent-filter>
+</service>
 ```
-Dependency 'androidx.swiperefreshlayout:swiperefreshlayout:1.2.0' requires
-Android Gradle plugin 8.6.0 or higher.
-```
 
-Fix:
+#### Path B — you already have one
 
-```groovy
-buildscript {
-    dependencies {
-        classpath 'com.android.tools.build:gradle:8.6.0'  // bumped from 8.2.1
-        // ...
+Only one service can win the `com.google.firebase.MESSAGING_EVENT` intent filter, so a consumer who
+also uses `@capacitor/push-notifications` must **not** register Braze's as well. Forward instead —
+this is the shape Braze documents:
+
+```kotlin
+// android/app/src/main/java/<your-package>/AppFirebaseMessagingService.kt
+import com.braze.Braze
+import com.braze.push.BrazeFirebaseMessagingService
+import com.google.firebase.messaging.FirebaseMessagingService
+import com.google.firebase.messaging.RemoteMessage
+
+class AppFirebaseMessagingService : FirebaseMessagingService() {
+    override fun onMessageReceived(remoteMessage: RemoteMessage) {
+        super.onMessageReceived(remoteMessage)
+        // Returns true when the message came from Braze and a notification was displayed.
+        if (!BrazeFirebaseMessagingService.handleBrazeRemoteMessage(this, remoteMessage)) {
+            // Not a Braze message — pass it to your own / Capacitor handling.
+        }
+    }
+
+    override fun onRegistered(installationId: String) {
+        super.onRegistered(installationId)
+        Braze.getInstance(this).registeredPushToken = installationId
     }
 }
 ```
 
-### `android/gradle/wrapper/gradle-wrapper.properties` — bump Gradle to 8.7
-
-AGP 8.6.0 requires Gradle 8.7+. The stock wrapper ships Gradle 8.2.1.
-
-Fix:
-
-```
-distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
+```xml
+<service android:name=".AppFirebaseMessagingService" android:exported="false">
+    <intent-filter android:priority="-1">
+        <action android:name="com.google.firebase.MESSAGING_EVENT" />
+    </intent-filter>
+</service>
 ```
 
-### Min SDK and runtime requirements
+`BrazeFirebaseMessagingService` also exposes `handleOnNewToken(Context, String)` and
+`isBrazePushNotification(RemoteMessage)`; both exist at 43.2.0, but Braze's *documented* recipe for
+FCM uses `onRegistered` + `registeredPushToken`, so prefer the shape above.
 
-- **`minSdkVersion`**: 21 (Braze Android SDK 42.x floor). Capacitor's stock template sets `minSdkVersion 22`, which satisfies this — no consumer action needed.
-- **`targetSdkVersion`**: ≥ 34 (per current Google Play submission requirements as of 2026).
+#### Path B′ — Braze's fallback service
 
-### Android push setup (only if consumers use push)
+Instead of forwarding by hand, Braze's service can stay registered and delegate non-Braze messages
+to yours. **Both** keys are required, in `android/app/src/main/res/values/braze.xml`:
 
-For Braze-orchestrated push via FCM, consumers must additionally:
+```xml
+<bool name="com_braze_fallback_firebase_cloud_messaging_service_enabled">true</bool>
+<string name="com_braze_fallback_firebase_cloud_messaging_service_classpath">com.company.OurFirebaseMessagingService</string>
+```
 
-1. Add a Firebase project, download `google-services.json`, drop it into `android/app/`.
-2. Apply the Google Services Gradle plugin in `android/app/build.gradle`.
-3. Forward the FCM token from `@capacitor/push-notifications`' `registration` event to `Braze.registerPushToken({ token })`.
+(Runtime equivalents exist on `BrazeConfig.Builder`. The plugin does not expose either as an
+`initialize` option today — that is a tracked contract change.)
 
-The plugin doesn't bundle Firebase config because the consumer's Firebase project is the consumer's account. The demo's `android/app/google-services.json` is intentionally absent — consumers add their own.
+#### `braze.xml` — notification presentation
+
+Notification appearance is configured through Android resources, not through this plugin's API. A
+small icon is effectively required: without one Braze falls back to your app icon, which usually
+looks wrong in the status bar.
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <drawable name="com_braze_push_small_notification_icon">@drawable/ic_notification</drawable>
+    <drawable name="com_braze_push_large_notification_icon">@drawable/ic_notification_large</drawable>
+    <integer name="com_braze_default_notification_accent_color">0xFFf33e3e</integer>
+    <string name="com_braze_default_notification_channel_name">Notifications</string>
+    <string name="com_braze_default_notification_channel_description">Offers and order updates</string>
+</resources>
+```
+
+Note the element types — `<drawable>` with an `@drawable/…` reference for icons (the bare
+`drawable/…` form is wrong), and `<integer>` (or `<color>` with a `@color/…` reference) for the
+accent colour.
+
+#### Braze 43.0.0's automatic FCM registration
+
+43.0.0 added registration via the **Firebase Installation ID** when `firebase-messaging` ≥ 25.1.0 is
+present. That path runs alongside the explicit `Braze.registerPushToken({ token })` handoff — pick
+one, not both. Braze's 43.0.0 changelog documents the opt-out as:
+
+- `com_appboy_firebase_cloud_messaging_registration_enabled` set to `false` in `appboy.xml` — note
+  the **legacy** `com_appboy_*` / `appboy.xml` spelling; Braze has not published a `com_braze_*`
+  equivalent for this particular flag, and the `com_braze_firebase_cloud_messaging_registration_enabled`
+  key is documented only with value `true`, for *enabling* automatic registration;
+- plus `<meta-data android:name="firebase_messaging_installation_id_enabled" android:value="false"
+  tools:replace="android:value" />` in the manifest. The `tools:replace` is needed because Braze's
+  own manifest sets it; the flag itself is Firebase's, not Braze's.
+
+**Verify these against [Braze's current Android push docs](https://www.braze.com/docs/developer_guide/push_notifications?sdktab=android)
+before relying on them.** The plugin reads none of these resources, so nothing in this repo's tests
+exercises them.
 
 ---
 
@@ -195,11 +573,69 @@ Beyond the peer dep, no additional consumer config is required. The Web SDK does
 The Web SDK uses VAPID via the Push API + a Service Worker. Setup:
 
 1. Host a Service Worker file at a known path (the SDK's default is `/service-worker.js`).
-2. Call `Braze.requestPushPermission()` — **not yet implemented in this plugin** (planned for v0.2). For now, consumers call `braze.requestPushPermission()` directly on the Web SDK after `Braze.initialize`.
+2. Call `braze.requestPushPermission()` **directly on the Web SDK** after `Braze.initialize`. The
+   plugin does not expose a `requestPushPermission` method on any platform; it is a roadmap item in
+   [`SDK_SURFACE.md`](../../SDK_SURFACE.md) and [C07](./C07-INIT-INDEPENDENT-METHODS.md) uses it as
+   a worked counter-example.
 
 Note that Web push has no token concept; [`Braze.registerPushToken`](../../src/definitions.ts) **throws** on web (per [C03](./C03-CROSS-PLATFORM-TRANSLATION.md)).
 
 ---
+
+## Deep-link handling — what opting in costs you
+
+`initialize({ deepLinkHandling: 'app' })` is the only option in the plugin that takes something
+away from the host app, so the trade is stated here rather than discovered:
+
+- **You must register a `deepLinkReceived` listener.** In `'app'` mode the plugin tells the SDK not
+  to open the URL *before* emitting the event. A consumer who opts in and writes no listener gets
+  an app where every Braze campaign CTA does nothing. That is why the default is `'sdk'`.
+- **iOS: the plugin takes `braze.delegate`.** In the default mode that slot is deliberately left
+  free so a host app can claim it for `braze(_:willPresentModalWithContext:)` or
+  `braze(_:noMatchingTriggerForEvent:)`. Opting into `'app'` mode means giving that up; there is no
+  way to have both, because `Braze` holds one delegate. `sdkAuthError` is unaffected — it lives on
+  the separate `sdkAuthDelegate`.
+- **iOS: push opens are only covered when `enablePushAutomation: true`.** With automation off (the
+  default) your own `UNUserNotificationCenter` delegate owns the notification tap and BrazeKit is
+  not in the path, so neither is the plugin.
+- **Android: the plugin replaces the process-global `BrazeDeeplinkHandler`.** It captures whatever
+  was installed and restores it on `wipeData`, Activity destruction and a re-`initialize` that
+  drops the option — but if your app installs its own custom `IBrazeDeeplinkHandler`, install it
+  **before** `Braze.initialize` runs so the plugin wraps yours rather than the SDK default.
+- **Keep `server.allowNavigation` set either way.** It is Capacitor's control, it applies to the
+  channels the plugin cannot intercept (notably HTML in-app message iframes on web), and
+  `deepLinkHandling: 'app'` does not replace it.
+
+Per-channel coverage is [`SECURITY.md` §7](../../SECURITY.md#7-deep-link-security); the listener
+lifecycle is [C05](./C05-LISTENERS.md).
+
+---
+
+## Privacy declarations you must make
+
+The plugin ships `ios/Sources/BrazePlugin/PrivacyInfo.xcprivacy` on **both** install paths — via
+the podspec's `resource_bundles` under CocoaPods, and via `resources: [.copy(...)]` on the SPM
+target — so neither path silently drops it. It declares that **the bridge binary** tracks nothing
+(`NSPrivacyTracking: false`) and calls no required-reason APIs — verified: no `UserDefaults`,
+file-timestamp, boot-time, disk-space or keyboard API calls anywhere in `ios/Sources/BrazePlugin/`. BrazeKit ships its own manifest declaring
+UserDefaults (CA92.1), FileTimestamp (C617.1) and the UserID / DeviceID / ProductInteraction data
+types, which Xcode aggregates.
+
+**That covers the plugin only. The app's own declarations are the consumer's, and this is a common
+cause of store rejections**, which is exactly the class of consumer obligation C10 exists to
+enumerate:
+
+- **App Store privacy nutrition label** — identifiers (user ID, device ID) and usage data (product
+  interaction) under *Data Linked to You*. Add contact info / sensitive info if the app calls
+  `setEmail`, `setPhoneNumber` or `setDateOfBirth`.
+- **Google Play Data Safety** — the same categories, plus the FCM token if push is wired.
+- **iOS ATT / `NSUserTrackingUsageDescription`** — required if *the app* combines Braze data with
+  third-party data for advertising. The plugin's manifest says the *plugin* does not track; that is
+  not the same claim as the *app* not tracking.
+
+Check the category list against [Braze's own data-collection disclosure](https://www.braze.com/docs/developer_guide/reference/)
+before submitting — Braze's SDK is what collects, and their disclosure is the authority. The
+README's Security section carries a short version of this list and links here.
 
 ## Rules for extending
 
@@ -208,7 +644,7 @@ When you bump a native SDK pin (per [C08](./C08-NATIVE-SDK-PINNING.md) bump prot
 1. Read the upstream changelog for any new setup requirements (new manifest entries, new permission declarations, deployment-target bumps, linkage changes).
 2. If new requirements were introduced, update this MDC in the same PR as the version bump.
 3. Update README.md's setup sections if the new requirement changes the consumer-facing onboarding.
-4. Run `npx cap sync` on the demo against the new pin and verify the bundled config still works. The demo's `Podfile` / `build.gradle` are the canonical worked example — keep them in sync with C10.
+4. Run `npx cap sync` on **both** apps against the new pin and verify the bundled config still works — `demo/` is the CocoaPods + Android worked example, `example/` is the SPM one. Keep both in sync with C10; a pin that only ever gets a Pods build is half-verified.
 
 When you add a new plugin method that has its own consumer-side requirement (e.g. a new permission, a new entitlement):
 

@@ -24,7 +24,7 @@ This is **not** an Aromo derivative; it's a fresh, MIT-licensed reference that s
 - **Tailwind CSS 4** — CSS-first config (no `tailwind.config.js`; theme tokens live in `src/styles/index.css` via `@theme`).
 - **TanStack Router** — typed routes, programmatic route tree (one router file).
 - **Zustand 5** — minimal state with `persist` middleware for cart + auth.
-- **Capacitor 6** — peer-aligned with the plugin's published pin.
+- **Capacitor 8** — the current major, and the CocoaPods verification leg for the plugin's iOS bridge (`example/` is the SPM leg). The plugin's peer range is `^6 || ^7 || ^8`; this app pins the newest.
 
 ## Quick start
 

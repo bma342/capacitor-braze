@@ -2,7 +2,7 @@
 
 **A small, named set of plugin methods must work before `initialize()` has been called. The set is bounded by regulatory necessity, not convenience. Adding a method to it is a deliberate design decision, documented per-method and per-MDC.**
 
-Most plugin methods reject with "Braze.initialize() must be called before any other Braze method." Four don't. This MDC says which four, why, and what would justify adding a fifth.
+Most plugin methods reject with "Braze.initialize() must be called before any other Braze method." Four don't. This MDC says which four, why, what each one actually does before `initialize` on each platform, and what would justify adding a fifth.
 
 ---
 
@@ -17,29 +17,44 @@ Init-independent methods skip the [C01](./C01-METHOD-ANATOMY.md#init-guards) ini
 
 A fifth method joins this set only when consumer code may legitimately need to call it before `initialize`, AND the underlying Braze SDK exposes a class-level static that operates without a configured instance, AND the regulatory pathway justifies the exception. See "Rules for adding" below.
 
-### Per-platform init-independence asymmetry — verified post-Phase-N
+### Per-platform behaviour — verified at BrazeKit 18.2.1 / Braze Android 43.2.0 / web-sdk 6.13
 
-When this MDC was first written (Phase G timeframe), we asserted all four methods were init-independent on all three platforms. **Phase O's iOS verification proved that's not strictly true on BrazeKit 14.x.** The actual situation:
+An earlier version of this MDC documented an **iOS asymmetry**: `enableSDK` required `initialize`
+and `isDisabled` reported `false` after a pre-init `disableSDK()`, because BrazeKit 14.x had no
+class-level form of either. **That asymmetry is gone as of 0.2.0, and it is gone by construction.**
 
-| Method | Web | iOS BrazeKit 14.x | Android |
+The iOS bridge no longer depends on BrazeKit having a class-level enable/disable at all. It keeps
+the consent decision in its own `disabledPreInit` state and applies it to the `Braze` instance the
+moment `initialize` creates one. Because the correctness now lives in the plugin rather than in the
+SDK, it cannot silently regress on a future pin bump — which is exactly what the previous
+arrangement did.
+
+| Method | Web | iOS | Android |
 |---|---|---|---|
-| `wipeData` | init-independent (class-level `braze.wipeData()`) | dual-path: instance `braze.wipeData()` post-init, class-level `Braze.wipeDataAndDisableForAppRun()` pre-init | init-independent (`Braze.wipeData(context)` class-level) |
-| `disableSDK` | init-independent (class-level) | init-independent (class-level `Braze.disableSDK()`) | init-independent (`Braze.disableSdk(context)` class-level) |
-| `enableSDK` | init-independent (class-level) | **post-init only** — no class-level form in BrazeKit 14.x; instance setter `braze.enabled = true` is the only path | init-independent (`Braze.enableSdk(context)` class-level) |
-| `isDisabled` | init-independent (class-level) | **post-init only** — no class-level `isDisabled` static; query instance via `braze.enabled` | init-independent (`Braze.isDisabled` class-level) |
+| `wipeData` | init-independent, but **a pre-`initialize` call wipes nothing** — the SDK's storage manager does not exist yet, so it resolves without effect | dual-path: instance `braze.wipeData()` post-init (BrazeKit also flips its persisted `enabled` flag off; the bridge restores the pre-wipe value so a wipe never disables the SDK across launches); class-level `Braze.wipeDataAndDisableForAppRun()` pre-init, which **disables the SDK for the rest of the app run** | init-independent (`Braze.wipeData(context)`) |
+| `disableSDK` | init-independent; also clears the plugin's `initialized` flag, because the Web SDK destroys its instance | init-independent: records `disabledPreInit`, and mirrors `braze.enabled = false` when an instance exists | init-independent (`Braze.disableSdk(context)`) |
+| `enableSDK` | init-independent; also clears `initialized` for the same reason | **init-independent** — clears `disabledPreInit`, and mirrors onto the instance when one exists | init-independent (`Braze.enableSdk(context)`) |
+| `isDisabled` | init-independent | **init-independent** — returns the plugin's tracked state pre-init, `!braze.enabled` post-init | init-independent (`Braze.isDisabled`) |
 
-The plugin's iOS bridge handles this by:
+Two genuine platform differences remain, and both are documented in the method JSDoc, the README and
+`SECURITY.md` §10 rather than smoothed over:
 
-- **`wipeData`**: dual-path — instance `wipeData()` if `BrazePlugin.braze` exists, else class-level `Braze.wipeDataAndDisableForAppRun()`. Either way, drops the instance reference + cancels subscriptions on exit.
-- **`disableSDK`**: still calls `Braze.disableSDK()` unconditionally (class-level). Also mirrors `braze.enabled = false` on the instance when one exists so a same-frame `isDisabled()` read returns the new state.
-- **`enableSDK`**: requires an initialized instance — uses `requireInitialized` guard. This is an iOS-specific deviation from C07's original "all four are init-independent" claim.
-- **`isDisabled`**: pre-init returns `false` (uninitialized != disabled, by convention). Post-init reads `!braze.enabled`.
+1. **iOS pre-`initialize` `wipeData()` disables the SDK for the app run.** A subsequent `initialize`
+   no-ops until the app relaunches. `Braze.wipeDataAndDisableForAppRun()` is still the only
+   class-level wipe BrazeKit 18.2.1 offers, and every alternative (`sharedInstance()`,
+   `unsafeInstance()`, `start(withApiKey:)`) is deprecated too, so there is nothing better to switch
+   to. It is the source of the one deliberate deprecation warning in the iOS build.
+2. **Web pre-`initialize` `wipeData()` cannot wipe.** There is no SDK storage manager before
+   `initialize`, so the call resolves without effect rather than implicitly initializing the SDK
+   just to erase it. A consumer whose erasure flow can run pre-init should call `disableSDK()` —
+   which *does* work pre-init and persists an opt-out marker across page loads — and call
+   `wipeData()` once the SDK is up.
 
-The user-facing TS contract still declares all four init-independent. iOS consumers who call `enableSDK` before `initialize` see the standard "init required" reject; that's a small, documented behavioral asymmetry vs. Web/Android. The alternative — restricting the public contract to "init-independent on the most restrictive platform" — would unnecessarily handicap Web and Android consumers who do legitimately need to call these pre-init.
+   The opt-out marker has a consequence worth knowing: a browser where `disableSDK()` ran and
+   `enableSDK()` did not will refuse to initialize on the next page load, and `initialize` correctly
+   rejects. That is the SDK working as designed, not a plugin bug.
 
-If BrazeKit ever re-adds class-level `Braze.enableSDK()` / `Braze.isDisabled`, the iOS bridge should switch back to the unconditional path and this section becomes historical.
-
-`getDeviceId` is **NOT** init-independent today even though the TS contract suggested it could be — see "Why getDeviceId is init-dependent" below.
+`getDeviceId` is **NOT** init-independent — see "Why `getDeviceId` is init-dependent" below. The TS contract once claimed it was; that claim was removed in 0.1.0, but the *web* bridge did not actually acquire its guard until 0.2.0, so for four months the contract and the code disagreed in the other direction. Both now agree.
 
 ## Rationale
 
@@ -61,7 +76,7 @@ For any other method, the regulatory pathway is absent and the guard wins.
 
 ### TS contract
 
-[`src/definitions.ts:371`](../../src/definitions.ts) declares the set in the `initialize` JSDoc:
+The `initialize` JSDoc in [`src/definitions.ts`](../../src/definitions.ts) declares the set:
 
 ```ts
 /**
@@ -82,47 +97,66 @@ Each of the four methods carries its own JSDoc tag `Init-independent: safe to ca
 ```ts
 async wipeData(): Promise<void> {
   const braze = await this.loadSdk();
+  // Tear down BEFORE wiping: the SDK's clearData() publishes an empty
+  // ContentCards payload synchronously, which a live subscription would
+  // forward to consumers as a spurious "you have no cards" event.
+  this.teardownSubscriptions(braze);
   braze.wipeData();
   this.initialized = false;
 }
 
 async disableSDK(): Promise<void> {
   const braze = await this.loadSdk();
+  this.teardownSubscriptions(braze);
   braze.disableSDK();
-}
-
-async enableSDK(): Promise<void> {
-  const braze = await this.loadSdk();
-  braze.enableSDK();
-}
-
-async isDisabled(): Promise<BrazeIsDisabledResult> {
-  const braze = await this.loadSdk();
-  return { disabled: braze.isDisabled() };
+  this.initialized = false;   // disableSDK() ends in the SDK's own destroy()
 }
 ```
 
-The `loadSdk()` helper handles the `@braze/web-sdk` peer-dep dynamic import. A consumer calling these without having imported the SDK at all gets a clear error pointing at the missing peer dep, not a TypeError.
+Two rules the web bridge learned the hard way and that any new init-independent method must follow:
+
+- **Tear down subscriptions before the destructive call**, in that order ([C05](./C05-LISTENERS.md)).
+- **Reset `initialized` whenever the SDK destroys its instance.** `disableSDK` and `enableSDK` both
+  end in the Web SDK's `destroy()`. Leaving the flag set meant a later guarded call sailed past
+  `requireInitialized` and failed deep inside the SDK with an unrelated "getUser() returned null".
+
+The `loadSdk()` helper handles the `@braze/web-sdk` peer-dep dynamic import. A consumer calling
+these without the SDK installed gets the underlying import error, with a peer-dep hint — not a bare
+TypeError.
 
 ### iOS bridge
 
-[`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift) — calls static methods on the `Braze` type, not instance methods on `BrazePlugin.braze`:
+[`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift) — calls static methods on the `Braze` type, not instance methods on `BrazePlugin.braze`:
 
 ```swift
 @objc func wipeData(_ call: CAPPluginCall) {
-    Braze.wipeData()
-    BrazePlugin.braze = nil
-    featureFlagsSubscription = nil
-    call.resolve()
+    Self.onMain {
+        if let braze = BrazePlugin.braze {
+            braze.wipeData()                       // post-init: instance method
+        } else {
+            Braze.wipeDataAndDisableForAppRun()    // pre-init: the only class-level wipe
+        }
+        BrazePlugin.teardownSubscriptions()
+        BrazePlugin.braze = nil
+        call.resolve()
+    }
 }
 
 @objc func disableSDK(_ call: CAPPluginCall) {
-    Braze.disableSDK()
-    call.resolve()
+    Self.onMain {
+        BrazePlugin.disabledPreInit = true         // remembered even with no instance
+        BrazePlugin.braze?.enabled = false         // mirrored when one exists
+        call.resolve()
+    }
 }
 ```
 
-`Braze.wipeData()` is a class function in BrazeKit; calling it before `Braze(configuration: ...)` is valid. After `wipeData`, the bridge nils out the instance reference and the feature-flag subscription so the next `initialize` rebuilds both ([C05](./C05-LISTENERS.md)).
+Three things to copy from this shape. **The whole body runs on the main actor** (`Self.onMain`),
+which is what serialises `wipeData` against a concurrent `initialize` — an earlier version could
+attach a presenter to an instance a racing `wipeData` had already disowned. **The deprecated
+`Braze.disableSDK()` static is not used**; the plugin owns the state instead. And after `wipeData`,
+the bridge drops every subscription and the instance reference so the next `initialize` rebuilds
+both ([C05](./C05-LISTENERS.md)).
 
 ### Android bridge
 
@@ -172,7 +206,10 @@ If a candidate method fails any of these, leave the init guard in.
 
 ## Worked counter-example — `requestPushPermission`
 
-A future v0.x will add `requestPushPermission`. Tempting to make init-independent because the consumer may want to ask for push permission during onboarding, before they're ready to initialize Braze.
+`requestPushPermission` **does not exist in this plugin** and is a roadmap item in
+[`SDK_SURFACE.md`](../../SDK_SURFACE.md); it is used here purely as a worked counter-example. If it
+is ever built, it would be tempting to make it init-independent, because a consumer may want to ask
+for push permission during onboarding, before they are ready to initialize Braze.
 
 **Don't.** Reasoning:
 
@@ -186,5 +223,6 @@ Conclusion: `requestPushPermission` keeps the init guard. The README documents t
 
 - **Skipping the init guard "for convenience."** Convenience is not in the regulatory column.
 - **Adding a method to the set without updating this MDC and the `initialize` JSDoc.** A consumer reading either source should find the complete list.
-- **Per-platform init-independence.** If you have to write "init-independent on Web only" you have a [C03](./C03-CROSS-PLATFORM-TRANSLATION.md) violation, not an init-independent method.
+- **Per-platform init-independence.** If you have to write "init-independent on Web only" you have a [C03](./C03-CROSS-PLATFORM-TRANSLATION.md) violation, not an init-independent method. Where the *effect* genuinely differs — iOS's app-run disable, web's no-op wipe — the method is still init-independent everywhere, and the difference is documented in the JSDoc, not hidden.
+- **Leaning on an SDK class-level static to make a method init-independent when the plugin could own the state itself.** The iOS `enableSDK` / `isDisabled` asymmetry existed for exactly that reason and was removed by tracking a flag in the plugin. A behaviour that depends on an SDK's pre-init semantics silently regresses on the next pin bump.
 - **Subscribing to events from an init-independent method.** Subscriptions tie to the configured instance and are governed by [C05](./C05-LISTENERS.md). The quartet calls SDK statics that don't subscribe.

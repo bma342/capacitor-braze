@@ -1,8 +1,6 @@
 ext {
     junitVersion = project.hasProperty('junitVersion') ? rootProject.ext.junitVersion : '4.13.2'
     androidxAppCompatVersion = project.hasProperty('androidxAppCompatVersion') ? rootProject.ext.androidxAppCompatVersion : '1.7.0'
-    androidxJunitVersion = project.hasProperty('androidxJunitVersion') ? rootProject.ext.androidxJunitVersion : '1.2.1'
-    androidxEspressoCoreVersion = project.hasProperty('androidxEspressoCoreVersion') ? rootProject.ext.androidxEspressoCoreVersion : '3.6.1'
 }
 
 buildscript {
@@ -11,15 +9,27 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        // AGP + Kotlin bumped from Capacitor's stock 8.2.2 / 1.9.22 to
-        // match what Braze Android SDK 42.x (com.braze:android-sdk-ui)
-        // demands. Braze 42 ships with Kotlin 2.2.0 metadata; Kotlin
-        // 1.9.x can only read up to 2.0.0 and aborts the compile with
-        // "incompatible version of Kotlin" errors. AGP 8.6.0 is the
-        // lowest version compatible with Braze's transitive
-        // androidx.swiperefreshlayout:1.2.0 dep. See plugin MDC C10.
-        classpath 'com.android.tools.build:gradle:8.6.0'
-        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0'
+        // Two independent floors stack here; the higher one wins.
+        //
+        //  * Braze. `com.braze:android-sdk-ui` 43.x ships Kotlin 2.2.0
+        //    metadata, so the Kotlin plugin must be >= 2.2.0 or every Braze
+        //    class fails with "incompatible version of Kotlin". Its
+        //    transitive androidx.swiperefreshlayout:1.2.0 needs AGP >= 8.6.0
+        //    and its androidx.recyclerview:1.4.0 needs compileSdk >= 35.
+        //    The 43.2.0 AARs themselves declare only
+        //    minAndroidGradlePluginVersion=1.0.0 / minCompileSdk=21.
+        //  * Capacitor 8. `@capacitor/android` 8.5.2 builds `:capacitor-android`
+        //    with AGP 8.13.0, compileSdk 36, minSdk 24, targetSdk 36 and
+        //    Java 21 (see demo/node_modules/@capacitor/android/capacitor/build.gradle),
+        //    and its project template ships Gradle 8.14.3.
+        //
+        // So the defaults below are Capacitor 8's, which are >= Braze's
+        // everywhere. Capacitor 6/7 consumers keep working because every
+        // `android {}` value is read from `rootProject.ext` first — their
+        // stock `variables.gradle` (compileSdk 34/35, minSdk 22) still wins.
+        // See C10 for the full matrix.
+        classpath 'com.android.tools.build:gradle:8.13.0'
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20'
     }
 }
 
@@ -28,28 +38,32 @@ apply plugin: 'kotlin-android'
 
 android {
     namespace "com.bma342.braze"
-    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 35
+    compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 36
     defaultConfig {
-        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 26
-        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 35
+        // Standalone defaults match Capacitor 8's stock template (the newest
+        // Capacitor major the peer dep allows) and the values C10 documents;
+        // a consumer's rootProject.ext always wins, which is what keeps
+        // Capacitor 6/7 projects on their own lower numbers.
+        minSdkVersion project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 24
+        targetSdkVersion project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 36
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles 'consumer-rules.pro'
     }
     buildTypes {
         release {
             minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
-    lintOptions {
-        abortOnError false
+    lint {
+        // C09: Android Lint is the Kotlin half of the quality gate, and a
+        // gate that can't fail the build isn't one. Warnings stay
+        // advisory; errors stop CI.
+        abortOnError true
+        warningsAsErrors false
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = '17'
     }
     testOptions {
         // Phase 15 / C11: enable Robolectric for the JVM unit-test tier.
@@ -61,17 +75,27 @@ android {
     }
 }
 
+// Kotlin 2.x replacement for the deprecated android.kotlinOptions block.
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}
+
 repositories {
     google()
     mavenCentral()
 }
 
 dependencies {
-    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    // Required on the compile classpath, not merely transitive:
+    // Capacitor's Bridge.getActivity() is typed AppCompatActivity, and
+    // :capacitor-android declares appcompat with `implementation`, so it
+    // is not exported to consumers of that project.
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation project(':capacitor-android')
-    // Braze native SDK pins — see SDK_SURFACE.md §4 (pinning policy).
-    implementation 'com.braze:android-sdk-ui:42.2.0'
+    // Braze native SDK pins — see SDK_SURFACE.md §4 (pinning policy) and C08.
+    implementation 'com.braze:android-sdk-ui:43.2.0'
     testImplementation "junit:junit:$junitVersion"
     // Phase 15 / C11 native-harness deps. Robolectric runs the JVM
     // test tier against a synthesized Android context so the plugin's
@@ -81,6 +105,9 @@ dependencies {
     testImplementation 'org.mockito:mockito-core:5.14.2'
     testImplementation 'org.mockito.kotlin:mockito-kotlin:5.4.0'
     testImplementation 'com.google.truth:truth:1.4.4'
-    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
-    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    // C11 integration tier: a real local HTTP server the Braze SDK's own
+    // networking stack talks to, so tests assert the bytes that reached the
+    // wire rather than the bridge's intent. MockWebServer 4.x matches the
+    // OkHttp 4.x line the Braze SDK already pulls in transitively.
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
 }

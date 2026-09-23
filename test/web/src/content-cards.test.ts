@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { BrazeWeb } from '../../../src/web';
 
-import { freshMockServer } from './test-utils';
+import { freshMockServer, teardownPlugin } from './test-utils';
 
 /**
  * Behavioral tests for the Content Cards surface (getContentCards,
@@ -19,12 +19,9 @@ import { freshMockServer } from './test-utils';
  * Lookup-miss is a clear-error contract that the consumer-facing API
  * promises; that's what these tests assert.
  *
- * What this file does NOT cover yet (mock-server enhancement needed):
- *   - getContentCards returning real cards from a refreshed cache
- *   - logContentCardClick / logContentCardImpression actually firing
- *     for a card that DOES exist (requires populating the cache)
- * Filed in the test-coverage gap audit; deferred to a follow-up that
- * enhances the mock to return populated content-card payloads.
+ * The populated-cache half — real cards from a refreshed cache, and
+ * click / impression events firing for a card that DOES exist — now lives
+ * in `content-cards-populated.test.ts`.
  */
 describe('content cards (web bridge → @braze/web-sdk → mock)', () => {
   let mock: MockServer;
@@ -45,10 +42,7 @@ describe('content cards (web bridge → @braze/web-sdk → mock)', () => {
   });
 
   afterAll(async () => {
-    try {
-      await plugin.wipeData();
-    } catch {}
-    await mock.stop();
+    await teardownPlugin(plugin, mock);
   });
 
   it('requestContentCardsRefresh does not throw and reaches the SDK', async () => {

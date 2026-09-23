@@ -1,10 +1,32 @@
 name: CI
 
+# Triggers
+#   - push to main / PRs targeting main — the normal gate.
+#   - push of a `v*` tag — so a release commit is verified even if the
+#     Release workflow itself is never dispatched.
+#   - workflow_call — `release.yml` calls this workflow as its publish gate,
+#     which is what keeps the native verify jobs (verify-ios / verify-android)
+#     in front of `npm publish`. See the header of release.yml.
+#
+# A tag push therefore produces two CI runs (this workflow's own tag trigger
+# plus the one release.yml calls). That redundancy costs a few macOS minutes
+# a couple of times a year and buys an independent signal if the Release
+# workflow fails to start; drop the `tags:` trigger below if you'd rather not
+# pay it.
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
+  workflow_call:
+
+# A4-17 / A5-11: declare least privilege in the file rather than inheriting
+# the repo-level default (which a settings change could flip to `write`).
+# Every job in this workflow only reads the repo. Any job that needs more
+# must override `permissions:` at the job level, not here.
+permissions:
+  contents: read
 
 # Cancel in-progress runs on the same ref when a new commit arrives.
 concurrency:
@@ -16,10 +38,10 @@ jobs:
     name: Lint (ESLint + Prettier)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -28,8 +50,8 @@ jobs:
         run: npm ci
 
       # SwiftLint is bundled in the `lint` script but skipped on ubuntu
-      # runners (no brew). We run it on macOS in a future verify:ios job
-      # alongside the iOS build.
+      # runners (no brew). It runs for real in verify-ios, where the binary
+      # is installed explicitly (A5-07).
       - name: ESLint
         run: npm run eslint
 
@@ -40,10 +62,10 @@ jobs:
     name: Build plugin (TS + Rollup + docgen)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -59,7 +81,6 @@ jobs:
           test -f dist/esm/index.js
           test -f dist/esm/index.d.ts
           test -f dist/plugin.cjs.js
-          test -f dist/plugin.js
           test -f dist/docs.json
           echo "All expected dist artifacts present."
 
@@ -74,15 +95,50 @@ jobs:
           fi
           echo "README docgen section is populated."
 
+      # A5-20 / L7-02: REVIEW_READINESS.md §2 published bundle budgets that
+      # nothing measured and nothing enforced. This asserts the gzipped ESM
+      # tree against a budget derived from a real measurement; the script
+      # header records the measurement and the re-measure protocol.
+      - name: Assert bundle-size budget
+        run: node .github/scripts/assert-size.mjs
+
+  # A4-20 / A5-20: assert the published tarball's contents before a consumer
+  # (or the Release workflow) ever sees it. Catches both halves of a `files`
+  # regression: a consumer-required artifact dropped, and repo-internal
+  # material leaking into the package.
+  pack-check:
+    name: Verify npm tarball contents
+    runs-on: ubuntu-latest
+    needs: build-plugin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Build explicitly; the assert step packs with --ignore-scripts so
+      # tsc's stdout can't corrupt the JSON manifest it parses.
+      - name: Build
+        run: npm run build
+
+      - name: Assert tarball manifest
+        run: npm run pack:check
+
   build-example:
     name: Build example app
     runs-on: ubuntu-latest
     needs: build-plugin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -96,9 +152,12 @@ jobs:
       - name: Build plugin (so example file:.. resolves)
         run: npm run build
 
+      # A4-15 / A5-13: `npm ci` honours the committed lockfile; `npm install`
+      # is free to resolve newer in-range transitives, so CI would not be
+      # building the tree that was reviewed.
       - name: Install example deps
         working-directory: example
-        run: npm install
+        run: npm ci
 
       - name: Build example app
         working-directory: example
@@ -109,10 +168,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-plugin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -128,7 +187,7 @@ jobs:
 
       - name: Install demo deps
         working-directory: demo
-        run: npm install
+        run: npm ci
 
       - name: Build demo app
         working-directory: demo
@@ -139,10 +198,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-plugin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -159,28 +218,48 @@ jobs:
 
       - name: Install mock-server deps
         working-directory: test/mock-server
-        run: npm install
+        run: npm ci
 
       - name: Install web-test deps
         working-directory: test/web
-        run: npm install
+        run: npm ci
+
+      # A5-14: vitest transpiles via esbuild and never type-checks, so
+      # test/web's strict + noUncheckedIndexedAccess settings were inert and
+      # test/mock-server's own `build` script was never invoked anywhere.
+      - name: Type-check mock server
+        working-directory: test/mock-server
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Type-check web tests
+        working-directory: test/web
+        run: npx tsc --noEmit -p tsconfig.json
 
       - name: Run web behavioral tests
         working-directory: test/web
         run: npm test
 
+      # Coverage ratchet for src/web.ts (thresholds in test/web/vitest.config.ts
+      # sit just below the measured numbers and may only move up).
+      - name: Web coverage thresholds
+        working-directory: test/web
+        run: npm run test:coverage
+
+  # Dependency + secret hygiene. Static analysis of the code itself lives in
+  # the separate CodeQL workflow (.github/workflows/codeql.yml), which needs
+  # `security-events: write` and a language matrix this job has no use for.
   audit:
     name: Security audit (plugin only)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # gitleaks needs the full history to scan. Without this, the action
         # only sees the latest commit.
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -197,25 +276,14 @@ jobs:
       # covers API keys, JWTs, private keys, AWS/GCP creds, etc. — the
       # supply-chain hygiene SECURITY.md §13 promises. Catches an
       # accidental Braze trial-key commit before it lands on main.
+      #
+      # v3 is a runtime-only bump (node20 -> node24); inputs, outputs and
+      # behaviour are unchanged, and no GITLEAKS_LICENSE is required for
+      # public repositories.
       - name: Scan for committed secrets (gitleaks)
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # L5-05: Snyk's broader vulnerability scan complements npm audit by
-      # catching deeper transitive issues + known CVEs in the runtime
-      # surface. Requires SNYK_TOKEN to be provisioned in repo secrets;
-      # without it the step skips with a warning rather than failing the
-      # job (so PRs from forks / first-time clones don't hard-error).
-      # See CONTRIBUTING.md for the SNYK_TOKEN setup procedure.
-      - name: Snyk vulnerability scan
-        if: env.SNYK_TOKEN != ''
-        uses: snyk/actions/node@master
-        continue-on-error: true
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=high --all-projects
 
   # ------------------------------------------------------------------
   # Native verify jobs — compile the demo's Xcode + Gradle projects
@@ -231,23 +299,42 @@ jobs:
   # ------------------------------------------------------------------
 
   verify-ios:
-    name: Verify iOS (Xcode build against BrazeKit)
+    name: Verify iOS (CocoaPods + SPM builds against BrazeKit)
     runs-on: macos-latest
     needs: build-plugin
+    env:
+      # BrazeKit 18.x requires Xcode 26+. `macos-latest` is the macOS 26
+      # Arm64 image, whose default is Xcode 26.6 — but the default moves as
+      # the image is rebuilt, so pin it and let the guard step below fall
+      # back to the newest installed 26.x if this exact path is ever dropped.
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
             demo/package-lock.json
+            example/package-lock.json
 
-      - name: Show Xcode + CocoaPods versions
+      - name: Select Xcode 26.x
         run: |
+          set -euo pipefail
+          if [ ! -d "$DEVELOPER_DIR" ]; then
+            echo "::warning::$DEVELOPER_DIR not present on this image; selecting the newest installed Xcode 26.x."
+            FALLBACK=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+            if [ -z "$FALLBACK" ]; then
+              echo "::error::No Xcode 26.x found on the runner. BrazeKit 18.x requires Xcode 26+."
+              exit 1
+            fi
+            echo "DEVELOPER_DIR=$FALLBACK" >> "$GITHUB_ENV"
+            export DEVELOPER_DIR="$FALLBACK"
+          fi
+          echo "Using DEVELOPER_DIR=$DEVELOPER_DIR"
           xcodebuild -version | head -2
           pod --version
 
@@ -256,41 +343,115 @@ jobs:
           npm ci
           npm run build
 
+      # A5-07: `node-swiftlint` warns and exits 0 when the binary is absent,
+      # so this gate used to pass silently. SwiftLint is NOT preinstalled on
+      # the macOS 26 image — install it, then assert the binary answers
+      # before running the strict lint.
+      - name: Install SwiftLint
+        run: |
+          set -euo pipefail
+          which swiftlint || brew install swiftlint
+          swiftlint version
+
       - name: SwiftLint
-        # L7-01: enforce iOS code style in CI. SwiftLint is already a
-        # devDependency (via @ionic/swiftlint-config) and `npm run swiftlint`
-        # is wired in package.json; macos-latest ships swiftlint pre-installed.
         run: npm run swiftlint -- lint --strict
 
       - name: Install demo deps + build web assets
         working-directory: demo
         run: |
-          npm install
+          npm ci
           npm run build
 
       - name: Capacitor sync (copies web assets + runs pod install)
         working-directory: demo
         run: npx cap sync ios
 
-      - name: Build iOS demo for simulator
+      # A5-12: previously this built twice — once piped through an
+      # uninstalled `xcpretty` with `|| true` swallowing the failure, then
+      # again for the real exit code. `xcodebuild test` below builds the app
+      # AND runs the plugin's XCTest bundle, so there is one build and one
+      # exit code.
+      #
+      # Diagnostic: BrazeKit >= 15 needs Xcode 26, and an Xcode 26 image whose
+      # iOS simulator runtime is older than its iOS SDK reports *no* simulator
+      # destinations at all. Printing both makes that failure self-explanatory.
+      - name: Show toolchain + simulators
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes
+          xcrun simctl list devices available | grep -E 'iPhone 1[6-9]' || true
+
+      # A5-01 / C11: the plugin's XCTest bundle (ios/Tests/BrazePluginTests) is hosted by
+      # the demo app. The generated target + shared scheme are committed; the
+      # script is idempotent, so running it here is a consistency check that
+      # fails loudly if a new test file was added without regenerating.
+      - name: Generate the XCTest target (idempotent)
+        run: |
+          set -euo pipefail
+          ruby scripts/ios-add-test-target.rb
+          git diff --exit-code -- demo/ios/App/App.xcodeproj || {
+            echo "::error::scripts/ios-add-test-target.rb produced changes; run it locally and commit the result."
+            exit 1
+          }
+
+      - name: pod install (picks up the test target)
+        working-directory: demo/ios/App
+        env:
+          LANG: en_US.UTF-8
+        run: pod install
+
+      - name: Build iOS demo + run plugin XCTests
         working-directory: demo/ios/App
         run: |
-          set -o pipefail
-          xcodebuild build \
+          set -euo pipefail
+          xcodebuild test \
             -workspace App.xcworkspace \
             -scheme App \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
             -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO \
-            | xcpretty || true
-          # Re-run without xcpretty to get the actual exit code if the
-          # piped build above didn't surface a failure status.
+            CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/xcodebuild-test.log"
+          grep -E 'Executed [0-9]+ tests' "$RUNNER_TEMP/xcodebuild-test.log" | tail -1
+
+      # ----------------------------------------------------------------
+      # SPM leg. `demo/ios` above is the CocoaPods verification; `example/ios`
+      # is a Capacitor 8 SPM project (`cap add ios --packagemanager SPM`), so
+      # between them every cell of the Pods x SPM matrix compiles on every PR.
+      #
+      # This is the only thing that exercises the root `Package.swift`: it
+      # resolves `capacitor-swift-pm` and `braze-swift-sdk` from the network
+      # and compiles `ios/Sources/BrazePlugin` as an SPM target, which is a
+      # different code path from the Pods build (no `.m`, no resource bundle,
+      # module-scoped `Bundle.module`). A CocoaPods-only CI would not catch an
+      # SPM-breaking change to Package.swift or the source layout.
+      #
+      # Cost note, for whoever watches the first run on this branch: `BrazeKit`
+      # is an SPM *binary* target, so the first resolve mirror-clones
+      # `braze-swift-sdk` (~180 MB per the GitHub API) and downloads
+      # BrazeKit.zip. That is minutes on a GitHub runner and can be over an
+      # hour on a slow connection. If it turns out to dominate this job, cache
+      # `~/Library/Caches/org.swift.swiftpm` — deliberately not added up front,
+      # since the repo does not carry CI machinery it has not measured.
+      # ----------------------------------------------------------------
+      - name: Install example deps + build web assets
+        working-directory: example
+        run: |
+          npm ci
+          npm run build
+
+      - name: Capacitor sync (regenerates CapApp-SPM/Package.swift)
+        working-directory: example
+        env:
+          LANG: en_US.UTF-8
+        run: npx cap sync ios
+
+      - name: Build iOS example via Swift Package Manager
+        working-directory: example/ios/App
+        run: |
+          set -euo pipefail
           xcodebuild build \
-            -workspace App.xcworkspace \
+            -project App.xcodeproj \
             -scheme App \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO
 
@@ -299,10 +460,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-plugin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -310,16 +471,21 @@ jobs:
             package-lock.json
             demo/package-lock.json
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v5
+      # JDK 21 is the baseline modern AGP expects; the library still targets
+      # JVM 17 bytecode (android/build.gradle), which 21 compiles fine.
+      - name: Setup Java 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          # compileSdk 36 / build-tools 36.0.0 are Capacitor 8's stock values,
+          # which android/build.gradle now defaults to. Keep this in step with
+          # `compileSdkVersion` in demo/android/variables.gradle.
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
 
       - name: Install plugin deps + build
         run: |
@@ -329,7 +495,7 @@ jobs:
       - name: Install demo deps + build web assets
         working-directory: demo
         run: |
-          npm install
+          npm ci
           npm run build
 
       - name: Capacitor sync (copies web assets into Android project)
@@ -347,3 +513,147 @@ jobs:
         # `:capacitor-braze` library, exposed via the demo's settings.
         working-directory: demo/android
         run: ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon
+
+      # A5-17: Android Lint never ran, and `abortOnError` was off so even a
+      # manual invocation could not fail. Both are fixed; this is the only
+      # tool that catches e.g. a missing @RequiresApi against the minSdk floor.
+      - name: Android Lint (library module)
+        working-directory: demo/android
+        run: ./gradlew :capacitor-braze:lintDebug --no-daemon
+
+  # ------------------------------------------------------------------
+  # Capacitor 6 / 7 compatibility matrix.
+  #
+  # The peer dep allows `^6 || ^7 || ^8`, the podspec allows `>= 6.0, < 9.0`
+  # and Package.swift allows `6.0.0..<9.0.0` — but `demo/` and `example/` both
+  # run Capacitor 8, so through 0.3.0 the 6 and 7 columns of C10's matrix were
+  # reasoning, not builds. These jobs build them.
+  #
+  # scripts/compat-app.sh scaffolds a throwaway copy of `example/` against the
+  # latest release of the requested major and applies exactly the consumer
+  # edits C10 documents — so the documented edit list and the tested edit list
+  # are the same list, and a doc that drifts turns the job red. It resolves
+  # `@capacitor/core@<major>` at run time, which means a *newly published* 6.x
+  # or 7.x that breaks the plugin also turns it red. That is deliberate: the
+  # alternative is finding out from a consumer.
+  #
+  # Cost: 2 ubuntu jobs + 2 macOS jobs on top of verify-ios / verify-android.
+  # If the macOS minutes ever need trimming, drop the `6` leg before the `7`
+  # leg (Capacitor 7 is the likelier consumer) and say so in C10's matrix
+  # rather than leaving a ✅ that nothing runs.
+  # ------------------------------------------------------------------
+
+  verify-capacitor-compat-android:
+    name: Verify Capacitor ${{ matrix.capacitor }} (Android)
+    runs-on: ubuntu-latest
+    needs: build-plugin
+    strategy:
+      # One major failing should not hide the other's result.
+      fail-fast: false
+      matrix:
+        capacitor: [6, 7]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            example/package-lock.json
+
+      # JDK 21 for both majors. Capacitor 6's *stock* wrapper (Gradle 8.2.1)
+      # predates Java 21 support, but the script bumps it to 8.7 — which the
+      # plugin's Braze pin requires anyway — and 8.7 runs on 21 happily.
+      - name: Setup Java 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          # compileSdk 35 is what both majors land on here: Capacitor 7 ships it,
+          # and Capacitor 6 is raised to it because androidx.recyclerview 1.4.0
+          # (transitive via Braze 43.2.0) refuses anything lower. Both build-tools
+          # are listed because AGP 8.6.0 (Capacitor 6's raised floor) defaults to
+          # 34.0.0 while AGP 8.7.2 (Capacitor 7's own) defaults to 35.0.0.
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 build-tools;34.0.0'
+
+      - name: Install plugin deps + build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build example against Capacitor ${{ matrix.capacitor }}
+        env:
+          COMPAT_WORKDIR: ${{ runner.temp }}/compat
+        run: bash scripts/compat-app.sh ${{ matrix.capacitor }} android
+
+  verify-capacitor-compat-ios:
+    name: Verify Capacitor ${{ matrix.capacitor }} (iOS CocoaPods + SPM)
+    runs-on: macos-latest
+    needs: build-plugin
+    strategy:
+      fail-fast: false
+      matrix:
+        capacitor: [6, 7]
+    env:
+      # Same pin + fallback as verify-ios: BrazeKit 18.x requires Xcode 26+,
+      # and macos-latest's default moves as the image is rebuilt.
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            example/package-lock.json
+
+      - name: Select Xcode 26.x
+        run: |
+          set -euo pipefail
+          if [ ! -d "$DEVELOPER_DIR" ]; then
+            echo "::warning::$DEVELOPER_DIR not present on this image; selecting the newest installed Xcode 26.x."
+            FALLBACK=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+            if [ -z "$FALLBACK" ]; then
+              echo "::error::No Xcode 26.x found on the runner. BrazeKit 18.x requires Xcode 26+."
+              exit 1
+            fi
+            echo "DEVELOPER_DIR=$FALLBACK" >> "$GITHUB_ENV"
+            export DEVELOPER_DIR="$FALLBACK"
+          fi
+          echo "Using DEVELOPER_DIR=$DEVELOPER_DIR"
+          xcodebuild -version | head -2
+          pod --version
+
+      - name: Install plugin deps + build
+        run: |
+          npm ci
+          npm run build
+
+      # CocoaPods leg: the two Podfile edits C10 calls non-optional
+      # (platform :ios, '15.0' + static linkage).
+      - name: Build example against Capacitor ${{ matrix.capacitor }} (CocoaPods)
+        env:
+          COMPAT_WORKDIR: ${{ runner.temp }}/compat
+          LANG: en_US.UTF-8
+        run: bash scripts/compat-app.sh ${{ matrix.capacitor }} ios-pods
+
+      # SPM leg. Capacitor 7 has `cap add ios --packagemanager SPM`; Capacitor 6
+      # has it too, flagged experimental. Both generate a CapApp-SPM package that
+      # consumes the plugin's root Package.swift, so this is the only thing that
+      # proves the SPM manifest's `capacitor-swift-pm "6.0.0"..<"9.0.0"` lower
+      # bound is real rather than aspirational.
+      - name: Build example against Capacitor ${{ matrix.capacitor }} (SPM)
+        env:
+          COMPAT_WORKDIR: ${{ runner.temp }}/compat
+          LANG: en_US.UTF-8
+        run: bash scripts/compat-app.sh ${{ matrix.capacitor }} ios-spm

@@ -41,7 +41,7 @@ Stop on first failure. Don't return an `errors[]` list — there's no UX benefit
 ### Required-presence with type hint
 
 ```ts
-// src/web.ts:439 — requireGroupId
+// `requireGroupId` in src/web.ts
 private requireGroupId(groupId: string, method: string): void {
   if (!groupId || typeof groupId !== 'string') {
     throw new Error(`Braze.${method}: \`groupId\` is required (string).`);
@@ -51,7 +51,7 @@ private requireGroupId(groupId: string, method: string): void {
 
 Both the empty-string check (`!groupId`) and the type check are required — `!''` and `typeof '' === 'string'` both pass independently; the consumer might pass `0` or `null` or `undefined`. The combined check rejects all of them with one message.
 
-Mirror on iOS ([`ios/Plugin/BrazePlugin.swift`](../../ios/Plugin/BrazePlugin.swift)):
+Mirror on iOS ([`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift)):
 
 ```swift
 guard let groupId = call.getString("groupId"), !groupId.isEmpty else {
@@ -75,7 +75,7 @@ Same field name in backticks, same error text. Identical UX across platforms.
 ### Range validation — DOB
 
 ```ts
-// src/web.ts:449 — validateDateOfBirth
+// `validateDateOfBirth` in src/web.ts
 private validateDateOfBirth(options: BrazeSetDateOfBirthOptions): void {
   const { year, month, day } = options;
   if (!Number.isInteger(year) || year < 1900 || year > 2100) {
@@ -97,7 +97,7 @@ iOS and Android duplicate the same ranges (1900-2100, 1-12, 1-31) in their nativ
 ### Composite validation — purchase
 
 ```ts
-// src/web.ts:504 — validatePurchase
+// `validatePurchase` in src/web.ts
 private validatePurchase(options: BrazeLogPurchaseOptions): void {
   if (!options.productId || typeof options.productId !== 'string') {
     throw new Error('Braze.logPurchase: `productId` is required (string).');
@@ -130,7 +130,18 @@ iOS / Android bridges duplicate each check verbatim. They are independent code p
 ## Type-coercion quirks worth knowing
 
 - **Android `call.data.opt("value")`**: returns the raw `JSONObject` value, preserving Boolean / Integer / Double type. The wrapper methods (`call.getBool`, `call.getInt`, `call.getDouble`) silently coerce. Use `call.data.opt(...)` when you need to dispatch on the original JSON type (see `setCustomUserAttribute` in [`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt) for the canonical case).
-- **iOS `call.getBool` → `call.getString` → `call.getInt` → `call.getDouble`**: the order matters when you dispatch on inferred type. `getBool` first means JSON `true`/`false` isn't misread as integer `1`/`0`.
+- **iOS `call.getBool` is unusable for type dispatch.** This entry used to prescribe `getBool` first "so JSON `true`/`false` isn't misread as integer `1`/`0`". It is the reverse: `getBool` succeeds for **any** `NSNumber` whose value is 0 or 1, so `{ value: 1 }` was written to Braze as `true` — silently, permanently, and only on iOS. Dispatch on the bridged object's real type instead:
+
+  ```swift
+  let raw = call.getValue("value")
+  if let n = raw as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() { /* real Bool */ }
+  else if let s = raw as? String { /* String */ }
+  else if let n = raw as? NSNumber { /* Double iff CFNumberIsFloatType && fractional, else Int */ }
+  ```
+
+  See `classifyAttributeValue` in [`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift), which is unit-tested against the exact `NSNumber`s `JSTypes` produces.
+- **iOS `call.getInt` truncates.** A JS `number` with a fractional part silently loses it. Where the contract says integer, *reject* rather than truncate — `quantity` and `sessionTimeoutInSeconds` both did the wrong thing until 0.2.0. Note that an integer helper must also reject booleans, because a JSON `true` bridges to `Int` 1.
+- **Android: distinguish absent from present-but-invalid.** `call.getInt("x")` returns null for both. Use `call.data.has("x")` / `isNull("x")` to decide between "apply the default" and "reject".
 - **Web `Number.isFinite` vs `isFinite`**: ALWAYS the `Number` static method. The global `isFinite('14.99')` coerces strings; `Number.isFinite('14.99')` returns false. The global form is footgun.
 - **Web JSON parse**: when an example app or test parses consumer JSON, validate the parsed object the same way you'd validate a runtime JS object — don't trust `JSON.parse` output to match a TS type.
 
@@ -141,8 +152,51 @@ When you add a new method that takes input:
 1. List every input field. Mark which are required, which optional, which have constrained sets.
 2. Write a TS validator helper (`validate<MethodName>` or `require<FieldName>`) near the existing ones in `src/web.ts`. Use the same `throw new Error(...)` style.
 3. Call the validator first thing in the web impl, before forwarding to the Web SDK.
-4. Duplicate every check on iOS and Android, with the same error message text. Tests for "did I get the order right" exist in the example app — exercise every invalid path manually before shipping.
+4. Duplicate every check on iOS and Android, with **byte-identical** message text. Then pin it:
+   `android/src/test/.../BrazePluginContractTest.kt` asserts every Android string against
+   `src/web.ts`, and `ios/Tests/BrazePluginTests/` does the same for iOS. Copy-pasting the string is not
+   enough — two of them lost their second sentence at some point and nobody noticed for months.
 5. Add a one-line entry to C04's "Worked examples" or "Type-coercion quirks" section if your method surfaces a new validation pattern.
+
+## Sanctioned divergences
+
+C04's byte-identical rule has exactly four exceptions. They are listed here so a reviewer can tell a
+deliberate difference from drift — which was the actual problem: three strings differed and nobody
+could tell which were intentional.
+
+1. **Android's `requireUser` says `currentUser`, web says `getUser()`.**
+
+   | | message |
+   |---|---|
+   | web | ``Braze: `getUser()` returned null. …`` |
+   | Android | ``Braze: `currentUser` returned null. …`` |
+
+   Both name the SDK accessor that returned null, and the accessors genuinely have different names.
+   Naming web's accessor in an Android stack trace would send a developer looking for a method their
+   SDK does not have. **This is the only sanctioned divergence in a message body.**
+
+2. **Two validators exist only on web**, because the Web SDK is the only one whose `initialize`
+   reports success and whose flush reports completion:
+
+   ```
+   Braze.initialize: the Braze Web SDK refused to initialize (check `apiKey` and `endpoint`; crawler user-agents are ignored by design).
+   Braze.requestImmediateDataFlush: the Braze SDK reported the flush failed.
+   ```
+
+   Do **not** add these to the native bridges; there is nothing there to report them.
+
+3. **iOS reports a different offending key when a property bag has more than one bad value.**
+   `logCustomEvent` / `logPurchase` name the first offending key; web and Android walk in insertion
+   order, iOS in sorted order, because Swift dictionaries have none. Same message format, possibly a
+   different `<key>`. Documented on `BrazeEventProperties` in `src/definitions.ts`.
+
+4. **iOS never emits the `getDeviceId` "not generated yet" error.** The string exists on all three
+   platforms for parity, but BrazeKit's asynchronous `deviceId(_:)` accessor always yields a value,
+   so the branch is unreachable on iOS. It is retained rather than deleted so the three bridges stay
+   textually comparable.
+
+Anything not on this list is drift. Add to the list in the same PR as the divergence, or don't
+diverge.
 
 ## Forbidden
 
@@ -150,4 +204,6 @@ When you add a new method that takes input:
 - **Accumulating error arrays.** One error, one message, one bail point. Consumers can't act on `errors[]`.
 - **Letting Braze reject the bad input.** By the time it reaches Braze, the consumer is too far from the bug to debug. Reject at the bridge with a clear message.
 - **Validating against the inverse of an SDK accept-list.** Don't write "reject if not in our hardcoded allowed-currencies list" — Braze maintains the currency list, and ours will drift. Validate the SHAPE (non-empty string, ISO 4217 length), not the SET.
-- **Different error messages across platforms.** The text after `Braze.<methodName>: ` must be byte-identical across web/iOS/Android. If you wrote `\`year\` must be...` on Web and `\`year\` should be...` on Android, that's a bug.
+- **Different error messages across platforms**, unless the difference is on the sanctioned list above. The text after `Braze.<methodName>: ` must be byte-identical across web/iOS/Android. If you wrote `\`year\` must be...` on Web and `\`year\` should be...` on Android, that's a bug — and so is dropping a trailing sentence, which is how the HTTPS and card-not-found strings drifted.
+- **Silently coercing an out-of-shape value into a valid one.** A fractional `quantity` rewritten to `1`, or a non-integer `sessionTimeoutInSeconds` falling back to the default, means the consumer's intent was discarded without a word. Reject.
+- **Silently dropping a value the SDK can't take.** Android dropped non-scalar event properties for months; the event was logged, minus the data. Reject, naming the key.
