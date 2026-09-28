@@ -404,6 +404,17 @@ class BrazePluginWireIntegrationTest {
         wire.awaitRequest("the pre-disable event") {
             it.customEvent("wire_before_disable") != null
         }
+        // The server config that `initialize` receives enables Feature Flags
+        // and Content Cards, so the SDK follows it with one sync of each. Those
+        // are dispatched before the opt-out and still reach the wire after it;
+        // on a slow JVM (JaCoCo's agent is enough) they land inside the quiet
+        // window below and fail it for the wrong reason. Drain them first.
+        wire.awaitRequest("the initialize-triggered feature-flag sync") {
+            it.path.contains("feature_flags/sync")
+        }
+        wire.awaitRequest("the initialize-triggered content-card sync") {
+            it.path.contains("content_cards/sync")
+        }
 
         wire.plugin.disableSDK(wire.call())
         // `Braze.disableSdk` returns before the opt-out takes effect, so an

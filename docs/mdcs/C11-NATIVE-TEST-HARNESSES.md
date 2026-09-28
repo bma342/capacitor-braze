@@ -7,8 +7,10 @@
 > too, **15 tests per platform**, driving the real Braze SDKs against a real local HTTP server and
 > asserting the bytes on the wire. Totals: **106 Android**, **50 iOS** (1 skipped). Everything runs
 > in CI on every PR inside the existing `:capacitor-braze:testDebugUnitTest` and `xcodebuild test`
-> invocations — no workflow change was needed. See "Status" at the end for the per-file breakdown
-> and the two scenarios that remain out of reach on iOS.
+> invocations. Since `0.3.0` both tiers are also **coverage-measured and ratcheted** — JaCoCo on
+> Android (89.82% lines / 76.37% branches), `xccov` on iOS (58.54% lines / 51.61% functions); see
+> "Coverage" below. See "Status" at the end for the per-file breakdown and the two scenarios that
+> remain out of reach on iOS.
 
 The web bridge runs against a Fastify mock under jsdom (206 vitest tests across 18 files, ~3.5s,
 with measured V8 coverage of `src/web.ts` ratcheted in CI). The
@@ -300,7 +302,7 @@ capture would close: record the real responses, replay them through the harness.
 ### Android — 106 Robolectric/JUnit tests, in CI
 
 Run with `cd demo/android && ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon` (JDK 21 +
-`ANDROID_HOME`). CI runs it in `verify-android`, followed by `:capacitor-braze:lintDebug`.
+`ANDROID_HOME`). CI runs it in `verify-android`, followed by the JaCoCo ratchet (see "Coverage") and `:capacitor-braze:lintDebug`.
 
 | File | Tests | Covers |
 |---|---|---|
@@ -382,18 +384,54 @@ muddle consumer-facing reference code with plugin tests — is preserved.
   message. Nothing reproduces that on iOS or Android; the DTO is covered at the serializer level on
   all three platforms. The harnesses can now host it; what is missing is a trigger envelope each
   native SDK's trigger engine accepts.
-- **Coverage instrumentation on the native bridges.** The web bridge is measured by
-  `@vitest/coverage-v8` (`npm --prefix test/web run test:coverage`) at 97.45% statements/lines on
-  `src/web.ts`, with thresholds that fail the `test-web` job on a regression. The native tiers report
-  **test counts, not coverage**: neither JaCoCo (a `jacocoTestReport` task wired to
-  `testDebugUnitTest`) nor `xcodebuild -enableCodeCoverage YES` is configured, so nobody knows which
-  bridge branches the 106 + 50 tests actually reach. `docs/TEST-COVERAGE-AUDIT.md` tracks it as the
-  open coverage item.
+- **20 of the 35 iOS `@objc` bridge methods are never entered by an XCTest** — the first thing the
+  coverage measurement below surfaced. The iOS unit tier tests the helpers those methods call; it
+  does not drive each `CAPPluginCall` through the method the way Android's contract sweep does. The
+  list is in `docs/TEST-COVERAGE-AUDIT.md`; each is an ordinary XCTest on the existing harness.
 - **Per-class JVM forking on Android.** Robolectric shares one sandbox across test classes in a JVM,
   so the process-global Braze singleton carries state between them. The harnesses handle this
   explicitly (reset on the way in, hand over a usable SDK on the way out), and the suite is stable —
   but `testOptions { unitTests { all { forkEvery 1 } } }` in `android/build.gradle` would make the
   isolation structural rather than by convention, for the cost of three extra JVM starts.
+
+### Coverage
+
+Both native tiers are instrumented and ratcheted, mirroring the web bridge's `@vitest/coverage-v8`
+thresholds. The floors are the measured values rounded down to the whole percent and **may only move
+up** — when a change lowers coverage, add the test; do not lower the floor.
+
+| Platform | Tool | Measured (2026-09-28, `0.3.0`) | Floor | Where the floor lives | CI step |
+|---|---|---|---|---|---|
+| Android | JaCoCo 0.8.15 (Gradle `jacoco` plugin) | lines 600/668 = **89.82%**, branches 433/567 = **76.37%** | 89 / 76 | `jacocoCoverageVerification` in `android/build.gradle` | `verify-android`, after the unit tests |
+| iOS | `xcrun xccov` | lines 908/1551 = **58.54%**, functions 80/155 = **51.61%** | 58 / 51 | top of `scripts/ios-coverage-gate.mjs` | `verify-ios`, after `xcodebuild test` |
+
+```bash
+# Android (from demo/android)
+./gradlew :capacitor-braze:testDebugUnitTest :capacitor-braze:jacocoTestReport \
+          :capacitor-braze:jacocoCoverageVerification --no-daemon
+
+# iOS (from demo/ios/App), then the gate from the repo root
+xcodebuild test -workspace App.xcworkspace -scheme App \
+  -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
+  -enableCodeCoverage YES -resultBundlePath /tmp/tests.xcresult CODE_SIGNING_ALLOWED=NO
+node scripts/ios-coverage-gate.mjs /tmp/tests.xcresult
+```
+
+Rules that keep the gates honest:
+
+- **Android: `includeNoLocationClasses = true` is load-bearing.** Robolectric's sandbox class loader
+  hides the classes under test from JaCoCo's default filter; without it the report is empty.
+- **iOS: filter by path, not by target, and fail on a missing file.** The demo links the pods
+  statically, so which target `xccov` attributes the plugin's code to is an implementation detail.
+  The gate keeps `ios/Sources/BrazePlugin/*.swift` by path and fails when any `.swift` file in that
+  directory is absent from the report, so a scheme or flag change that stops instrumenting the
+  plugin turns CI red instead of passing on nothing.
+- **iOS: the committed scheme gathers coverage for every target.** `scripts/ios-add-test-target.rb`
+  sets `codeCoverageEnabled` but not `onlyGenerateCoverageForSpecifiedTargets` — the plugin's target
+  lives in the gitignored, CocoaPods-generated `Pods.xcodeproj`, and a committed scheme must not
+  depend on that project's UUIDs.
+- **Both gates were seen red** (floor above the measured value; an extra source file with no
+  coverage) before being trusted, per C09's "a gate that cannot fail" rule.
 
 The 2026-05 audit's L6-01 finding is closed. Ongoing coverage tracks against
 [`docs/audits/2026-09/A5-tests-ci.md`](../audits/2026-09/A5-tests-ci.md) and the smoke-test

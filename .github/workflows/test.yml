@@ -400,7 +400,10 @@ jobs:
           LANG: en_US.UTF-8
         run: pod install
 
-      - name: Build iOS demo + run plugin XCTests
+      # `-enableCodeCoverage YES` + `-resultBundlePath` feed the coverage gate
+      # below. The committed scheme also sets codeCoverageEnabled, so this flag
+      # is belt and braces — a regenerated scheme cannot quietly drop it.
+      - name: Build iOS demo + run plugin XCTests (with coverage)
         working-directory: demo/ios/App
         run: |
           set -euo pipefail
@@ -409,8 +412,26 @@ jobs:
             -scheme App \
             -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
             -configuration Debug \
+            -enableCodeCoverage YES \
+            -resultBundlePath "$RUNNER_TEMP/tests.xcresult" \
             CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/xcodebuild-test.log"
           grep -E 'Executed [0-9]+ tests' "$RUNNER_TEMP/xcodebuild-test.log" | tail -1
+
+      # C11 coverage ratchet for the Swift bridge: line + function coverage of
+      # ios/Sources/BrazePlugin/*.swift from the result bundle above, against
+      # floors in the script that may only move up. Fails on a missing file too,
+      # so instrumentation that stops reaching the plugin cannot pass as green.
+      - name: iOS coverage ratchet (xccov)
+        run: node scripts/ios-coverage-gate.mjs "$RUNNER_TEMP/tests.xcresult" --out "$RUNNER_TEMP/ios-coverage"
+
+      - name: Upload iOS coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-coverage
+          path: ${{ runner.temp }}/ios-coverage/
+          if-no-files-found: warn
+          retention-days: 14
 
       # ----------------------------------------------------------------
       # SPM leg. `demo/ios` above is the CocoaPods verification; `example/ios`
@@ -513,6 +534,23 @@ jobs:
         # `:capacitor-braze` library, exposed via the demo's settings.
         working-directory: demo/android
         run: ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon
+
+      # C11 coverage ratchet for the Kotlin bridge. The unit tests above leave
+      # the JaCoCo exec file behind, so this re-runs nothing: it writes the
+      # XML + HTML report and fails if LINE or BRANCH coverage drops below the
+      # floors in android/build.gradle (which may only move up).
+      - name: Android coverage ratchet (JaCoCo)
+        working-directory: demo/android
+        run: ./gradlew :capacitor-braze:jacocoTestReport :capacitor-braze:jacocoCoverageVerification --no-daemon
+
+      - name: Upload Android coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-coverage
+          path: android/build/reports/jacoco/jacocoTestReport/
+          if-no-files-found: warn
+          retention-days: 14
 
       # A5-17: Android Lint never ran, and `abortOnError` was off so even a
       # manual invocation could not fail. Both are fixed; this is the only

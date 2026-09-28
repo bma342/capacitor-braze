@@ -22,6 +22,8 @@ The plugin's quality gates are exactly the set Capacitor's official plugins (`@c
 | `@ionic/swiftlint-config` | Capacitor's swift rules |
 | `@capacitor/docgen` | Auto-generates README API section from JSDoc |
 | `@vitest/coverage-v8` (in `test/web`) | V8 coverage over `src/web.ts`, with ratcheted thresholds — see "CI integration" below |
+| Gradle `jacoco` plugin (in `android/build.gradle`, tool 0.8.15) | JaCoCo coverage over the Kotlin bridge's Robolectric tier: `jacocoTestReport` (XML + HTML) and `jacocoCoverageVerification` (LINE + BRANCH floors). Not an npm dependency — Gradle resolves it only when the module's own tests run |
+| `xcrun xccov` + `scripts/ios-coverage-gate.mjs` | Line + function coverage of `ios/Sources/BrazePlugin/*.swift` from the XCTest result bundle, against floors in the script. Xcode ships `xccov`; the script uses node builtins only |
 
 ### Required scripts
 
@@ -204,8 +206,8 @@ publish path, and is a tracked pre-tag item to make a required check.
 | `build-demo` | ubuntu-latest | Builds the `demo/` reference app's web assets against the freshly built plugin |
 | `test-web` | ubuntu-latest | Type-checks `test/mock-server` and `test/web` (vitest never type-checks), runs the **205** behavioral tests, then re-runs them under `npm run test:coverage` so a drop below the `src/web.ts` coverage ratchet fails the job. Both steps are kept so a test failure and a coverage regression are distinguishable in the log |
 | `audit` | ubuntu-latest | `npm audit --audit-level=high --omit=dev` + gitleaks over full history. Snyk was removed in `0.2.0` — its token was never provisioned, so the step always skipped |
-| `verify-ios` | macos-latest | Pins `DEVELOPER_DIR` to an Xcode 26.x, installs SwiftLint, runs `swiftlint lint --strict`, regenerates the XCTest target and fails if the committed project is stale, then **one** `xcodebuild test` that builds the demo against BrazeKit 18.2.1 and runs the **35** XCTests |
-| `verify-android` | ubuntu-latest | JDK 21. `:app:assembleDebug` against `com.braze:android-sdk-ui` 43.2.0, then `:capacitor-braze:testDebugUnitTest` (**91** Robolectric tests), then `:capacitor-braze:lintDebug` (Android Lint, `abortOnError true`) |
+| `verify-ios` | macos-latest | Pins `DEVELOPER_DIR` to an Xcode 26.x, installs SwiftLint, runs `swiftlint lint --strict`, regenerates the XCTest target and fails if the committed project is stale, then **one** `xcodebuild test -enableCodeCoverage YES -resultBundlePath …` that builds the demo against BrazeKit 18.2.1 and runs the **50** XCTests, then `node scripts/ios-coverage-gate.mjs` — the Swift coverage ratchet (line + function floors; also fails if any bridge source is missing from the report). Uploads the `ios-coverage` artifact (raw `xccov` JSON + per-file summary) |
+| `verify-android` | ubuntu-latest | JDK 21. `:app:assembleDebug` against `com.braze:android-sdk-ui` 43.2.0, then `:capacitor-braze:testDebugUnitTest` (**106** Robolectric tests), then `:capacitor-braze:jacocoTestReport :capacitor-braze:jacocoCoverageVerification` — the Kotlin coverage ratchet (LINE + BRANCH floors in `android/build.gradle`), then `:capacitor-braze:lintDebug` (Android Lint, `abortOnError true`). Uploads the `android-coverage` artifact (JaCoCo XML + HTML) |
 | `analyze (javascript-typescript)` | ubuntu-latest | CodeQL SAST, `build-mode: none`. Separate workflow (`codeql.yml`): push + PR to `main`, plus Mondays 05:27 UTC |
 | `analyze (actions)` | ubuntu-latest | CodeQL over the workflow files themselves — `run:`-block injection, over-broad permissions. Same workflow and triggers |
 

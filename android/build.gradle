@@ -35,6 +35,10 @@ buildscript {
 
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
+// C11 / C09: coverage for the Robolectric unit tier. Applying the plugin only
+// registers tasks and an agent configuration that resolves when this module's
+// own tests run, so a consumer's app build never touches it.
+apply plugin: 'jacoco'
 
 android {
     namespace "com.bma342.braze"
@@ -110,4 +114,84 @@ dependencies {
     // wire rather than the bridge's intent. MockWebServer 4.x matches the
     // OkHttp 4.x line the Braze SDK already pulls in transitively.
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+}
+
+// ---------------------------------------------------------------------------
+// Coverage ratchet (C11 "Coverage", C09 gates table).
+//
+//   ./gradlew :capacitor-braze:testDebugUnitTest \
+//             :capacitor-braze:jacocoTestReport \
+//             :capacitor-braze:jacocoCoverageVerification
+//
+// The report covers the bridge's own compiled classes — BrazePlugin.kt and
+// the Kotlin synthetics it produces — and nothing generated (R, BuildConfig,
+// Manifest). The minimums sit just below the measured numbers recorded in
+// docs/TEST-COVERAGE-AUDIT.md and may only move up: when a change lowers the
+// measured value, add tests rather than lowering the floor.
+// ---------------------------------------------------------------------------
+jacoco {
+    toolVersion = '0.8.15'
+}
+
+tasks.withType(Test).configureEach {
+    jacoco {
+        // Robolectric loads the classes under test through its own sandbox
+        // class loader, which JaCoCo treats as "no location" and skips by
+        // default — without this the report is empty rather than wrong.
+        includeNoLocationClasses = true
+        excludes = ['jdk.internal.*']
+    }
+}
+
+def coverageExcludes = [
+    '**/R.class',
+    '**/R$*.class',
+    '**/BuildConfig.*',
+    '**/Manifest*.*',
+]
+def coverageClassDirs = files(
+    fileTree(layout.buildDirectory.dir('tmp/kotlin-classes/debug')) { exclude coverageExcludes },
+    fileTree(layout.buildDirectory.dir('intermediates/javac/debug/compileDebugJavaWithJavac/classes')) { exclude coverageExcludes },
+)
+def coverageExecData = files(layout.buildDirectory.file('jacoco/testDebugUnitTest.exec'))
+
+tasks.register('jacocoTestReport', JacocoReport) {
+    group = 'verification'
+    description = 'JaCoCo XML + HTML report for the Robolectric unit tier (testDebugUnitTest).'
+    dependsOn 'testDebugUnitTest'
+    classDirectories.setFrom(coverageClassDirs)
+    sourceDirectories.setFrom(files('src/main/java'))
+    executionData.setFrom(coverageExecData)
+    reports {
+        xml.required = true
+        html.required = true
+        csv.required = false
+    }
+}
+
+tasks.register('jacocoCoverageVerification', JacocoCoverageVerification) {
+    group = 'verification'
+    description = 'Fails the build when BrazePlugin coverage drops below the ratcheted floor.'
+    dependsOn 'testDebugUnitTest'
+    classDirectories.setFrom(coverageClassDirs)
+    sourceDirectories.setFrom(files('src/main/java'))
+    executionData.setFrom(coverageExecData)
+    violationRules {
+        // Measured 2026-09-28 at 0.3.0 (106 tests): LINE 600/668 = 89.82%,
+        // BRANCH 433/567 = 76.37%. Floors are the measured value rounded
+        // down to the whole percent; raise them when coverage improves.
+        rule {
+            element = 'BUNDLE'
+            limit {
+                counter = 'LINE'
+                value = 'COVEREDRATIO'
+                minimum = 0.89
+            }
+            limit {
+                counter = 'BRANCH'
+                value = 'COVEREDRATIO'
+                minimum = 0.76
+            }
+        }
+    }
 }
