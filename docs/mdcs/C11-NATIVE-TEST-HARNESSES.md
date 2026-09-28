@@ -4,13 +4,14 @@
 
 > **Status: both tiers implemented.** The **unit / contract tier** is live on both platforms —
 > **91** Robolectric/JUnit tests on Android, **35** XCTests on iOS. The **integration tier** is live
-> too, **15 tests per platform**, driving the real Braze SDKs against a real local HTTP server and
-> asserting the bytes on the wire. Totals: **106 Android**, **50 iOS** (1 skipped). Everything runs
-> in CI on every PR inside the existing `:capacitor-braze:testDebugUnitTest` and `xcodebuild test`
-> invocations. Since `0.3.0` both tiers are also **coverage-measured and ratcheted** — JaCoCo on
-> Android (89.82% lines / 76.37% branches), `xccov` on iOS (58.54% lines / 51.61% functions); see
-> "Coverage" below. See "Status" at the end for the per-file breakdown and the two scenarios that
-> remain out of reach on iOS.
+> too, **17 tests per platform**, driving the real Braze SDKs against a real local HTTP server,
+> asserting the bytes on the wire and — for all four SDK-driven listener events — the payload the
+> SDK's own parse delivered to `notifyListeners`. Totals: **108 Android**, **52 iOS**, none skipped.
+> Everything runs in CI on every PR inside the existing `:capacitor-braze:testDebugUnitTest` and
+> `xcodebuild test` invocations — no workflow change was needed. Since `0.3.0` both tiers are also
+> **coverage-measured and ratcheted** — JaCoCo on Android (89.82% lines / 76.37% branches), `xccov`
+> on iOS (58.54% lines / 51.61% functions); see "Coverage" below. See "Status" at the end for the
+> per-file breakdown and what is still out of reach.
 
 The web bridge runs against a Fastify mock under jsdom (206 vitest tests across 18 files, ~3.5s,
 with measured V8 coverage of `src/web.ts` ratcheted in CI). The
@@ -73,7 +74,7 @@ Both tiers live in `ios/Tests/BrazePluginTests/`, in the same generated `Capacit
 ios/Tests/BrazePluginTests/
 ├── BrazePluginContractTests.swift        # unit tier — 35 tests
 ├── BrazeWireHarness.swift                # integration harness (no tests of its own)
-└── BrazePluginWireIntegrationTests.swift # integration tier — 15 tests
+└── BrazePluginWireIntegrationTests.swift # integration tier — 17 tests
 ```
 
 `BrazeWireHarness.swift` holds three things:
@@ -105,7 +106,8 @@ func testSomething() async throws {
 `RecordedCall` constructs a `CAPPluginCall` whose success/error handlers record into it, because
 production `CAPPluginCall` resolves asynchronously and every plugin entry point hops to the main
 actor first. Listener events are captured by registering a `RecordedCall` through Capacitor's own
-`addEventListener`, so the assertion covers the real `notifyListeners` dispatch path.
+`addEventListener`, so the assertion covers the real `notifyListeners` dispatch path — which only
+works because `WireHarness.init` creates the plugin's listener registry (trap 5 below).
 
 ### The four things that made iOS hard
 
@@ -137,10 +139,55 @@ All four are documented at their call sites; this is the index.
    `global_request_rate_limit`, `request_backoff`, `sdk_debugger`. The three `*_blacklist` arrays
    are required; `BrazeWire.serverConfig` is the smallest shape verified to decode.
 
-A fifth, smaller one: BrazeKit rate-limits outbound requests, and an immediate flush that arrives
-too soon is *dropped, not deferred*. The symptom is alternating pass/fail down the suite, because
-every timeout refills the bucket for the test after it. `awaitFlushedRequest` re-issues the flush
-until the request lands.
+Three more, found closing the listener-delivery gaps in `0.3.0`. The first two had been mistaken
+for BrazeKit refusing to deliver, which is why the Feature Flag, Content Card and `sdkAuthError`
+listener assertions were missing or skipped until then:
+
+5. **A bare `BrazePlugin()` has no listener registry.** `CAPPlugin`'s `eventListeners` and
+   `retainedEventArguments` are created by `initWithBridge:pluginId:pluginName:` or Capacitor's
+   `load(on:)`, not by `init()`. Without them `addEventListener` is Objective-C messaging a nil
+   dictionary — it stores nothing and raises nothing — and `notifyListeners` finds no listener.
+   Every listener assertion then times out while BrazeKit's log shows it did everything right.
+   `WireHarness.init` assigns both.
+6. **BrazeKit's request-token bucket is persisted and slow to refill.** Outbound requests draw on a
+   30-token bucket kept in the app container, so it survives `wipeData`, new `Braze` instances and
+   whole suite runs. Drain it (a retried refresh does) and BrazeKit schedules the next request up to
+   an hour out — "Failed to send API request (rate-limited)", `rate-limited until: shared rate
+   limit` — and every later test on that simulator times out until `simctl erase`. The server
+   config can reconfigure it: `BrazeWire.serverConfig` sends
+   `"global_request_rate_limit":{"enabled":true,"capacity":1000,"refill_rate":0.01}`, where
+   `refill_rate` is **seconds per token** (a value of `10000` pushed the next allowed request
+   ~10 000 s out). BrazeKit echoes the applied config in its "Applying remote configuration" log
+   line, which is how the shape was confirmed to decode. The older symptom — an immediate flush that
+   arrives too soon is *dropped, not deferred* — is still why `awaitFlushedRequest` re-issues the
+   flush until the request lands.
+7. **Every response body is a strict `Codable`, not just the server config.** One missing member
+   and BrazeKit drops the whole body with a single log line. The accepted shapes, each recorded on
+   its `BrazeWire` fixture:
+   - **Content Cards sync:** `last_full_sync_at` and `last_card_updated_at` are required alongside
+     `cards` / `full_sync`.
+   - **Card:** `id`, `tp`, `ca`, `ea`, `tt`, `ds`, `u`, `uw`, `v`, `cl`, `p`, `r`, `db`, `t`, `e`
+     (plus `i` for an image card) — and the `id` must be a Braze *composite* identifier, base64 of
+     `<campaign>_$_cc=<uuid>&mv=<variation>&pi=cmp`. Anything else fails with "The string is not a
+     valid composite identifier" and takes the whole sync down with it.
+   - **In-app message:** `type`, `message`, `click_action`, `message_close`, `orientation`,
+     `use_webview` (plus `header` for a modal). The web fixture's shape, which omits the middle
+     three, is silently discarded.
+   - **Trigger:** the web tier's `mockTrigger` shape, with a composite `id` (base64 of
+     `<campaign>_$_mv=<variation>&pi=cmp`) and the message's `trigger_id` to match.
+   - **SDK-Authentication error:** `optional_auth_error` on a 200 data response. BrazeKit 18.2.1
+     decodes the `auth_error` member Android and web use but never hands it to the delegate — tried
+     at 200 and, with and without an `error` sibling, at 400, 401 and 403; every non-2xx answer is
+     rejected on its status line ("HTTP invalid status code error") before the body is read.
+
+   **How the shapes were recovered, for the next pin bump.** Most of these types are public and
+   `Codable` even though the response wrappers are not: `JSONDecoder().decode(Braze.ContentCardRaw.self, …)`
+   and `Braze.InAppMessageRaw.self` name the first missing key (`keyNotFound … "uw"`), converting
+   with `Braze.ContentCard(raw)` surfaces the composite-id rule, and `Braze.InAppMessage.json()` /
+   `Braze.ContentCardRaw(card).json()` print a complete shape to remove keys from one at a time. For
+   the wrappers (`ContentCardsResponse`, `DataResponse`), run the harness with `enableLogging: true`
+   and read BrazeKit's own `[braze]` lines in the `xcodebuild` output. Long key names also appear
+   in the binary's `strings`; keys of 15 bytes or fewer are Swift small-string immediates and do not.
 
 ### CI integration
 
@@ -173,7 +220,7 @@ android/src/test/java/com/bma342/braze/
 ├── BrazePluginSerializerTest.kt        # 24 tests
 ├── BrazePluginLifecycleTest.kt         # 22 tests
 ├── IntegrationSupport.kt               # integration harness (no tests of its own)
-└── BrazePluginWireIntegrationTest.kt   # 15 tests
+└── BrazePluginWireIntegrationTest.kt   # 17 tests
 ```
 
 `IntegrationSupport.kt` holds `IntegrationSupport` (SDK reset, harness construction), `WireRequest`
@@ -231,6 +278,13 @@ class BrazePluginWireIntegrationTest {
    only calls `openSession` when `bridge.activity` is non-null, and the Robolectric-built activity
    must have `Theme_AppCompat` set *before* `create()` or it throws.
 
+A fifth, found adding in-app message delivery: **the in-app message manager lives on the main
+looper.** Robolectric runs the test on the main thread in `PAUSED` looper mode, and Braze delivers
+`InAppMessageEvent`s — and `BrazeInAppMessageManager.requestDisplayInAppMessage`, the only caller of
+`beforeInAppMessageDisplayed` — on the main thread, so nothing happens until the test yields the
+looper. `WireHarness.awaitEvent` drains it (`ShadowLooper.idleMainLooper()`) on every poll; the
+Feature Flag and Content Card subscribers run on Braze's own threads and are unaffected.
+
 Listener events are captured by registering a `fakePluginCall` through Capacitor's own
 `Plugin.addListener`, so assertions cover the real `notifyListeners` dispatch rather than a stub of
 it.
@@ -259,24 +313,30 @@ means the assertion is on the HTTP body or headers; `listener` means it also ass
 | `logCustomEvent` + properties | wire (`ce` / `n` / `p`) | wire (`ce` / `n` / `p`) |
 | `logPurchase` | wire (`p` / `pid,c,p,q`) | wire (`p` / `pid,c,p,q`) |
 | Subscription groups, both directions | wire (`sgu` / `status`) | wire (`sgu` / `status`) |
-| `refreshFeatureFlags` | wire + listener + `getFeatureFlag` | wire only ¹ |
-| `requestContentCardsRefresh` | wire + listener + `getContentCards` | wire only ¹ |
+| `refreshFeatureFlags` | wire + listener + `getFeatureFlag` | wire + listener + `getFeatureFlag` |
+| `requestContentCardsRefresh` | wire + listener + `getContentCards` | wire + listener + `getContentCards` |
+| `inAppMessageReceived` — session-start (`open`) slide-up | listener ¹ | listener ¹ |
+| `inAppMessageReceived` — `custom_event` modal with buttons | listener ¹ | listener ¹ |
 | SDK-Auth signature on the wire | wire (header) | wire (header) |
-| `sdkAuthError` delivery | wire + listener | **skipped** ² |
+| `sdkAuthError` delivery | wire + listener (`auth_error`) | wire + listener (`optional_auth_error`) ² |
 | `disableSDK` stops traffic, `enableSDK` resumes | wire (bracketed by positive controls) | same |
 | `wipeData` discards queued analytics, new device id | wire | wire |
 
-¹ The sync *request* is asserted. Getting BrazeKit to turn the sync *response* into a
-`subscribeToUpdates` emission was not reachable from a mock; the response is accepted without a
-decoding error and the subscription never fires. Covered end to end on Android.
+¹ The trigger rides on the `/api/v3/data/` response and the SDK's own trigger engine fires it, so
+this is the real delivery path, not a hand-built message. The two platforms render differently
+under test: iOS initializes with `enableInAppMessageUI: false`, which exercises the non-rendering
+`BrazeObservingInAppMessagePresenter`; Android keeps the default, because with the UI off the
+Android bridge **never emits the event at all** — `registerInAppMessageManager` is what subscribes
+`BrazeInAppMessageManager` to in-app message events and gives it an Activity, and
+`beforeInAppMessageDisplayed` is only called from a registered manager. That contradicts the
+`enableInAppMessageUI` JSDoc ("the listener still fires") and is reported as a bridge bug rather
+than tested around.
 
-² BrazeKit 18.2.1 does not surface a mock server's `auth_error` response to `sdkAuthDelegate`. Four
-envelope/status combinations were tried and are recorded in the test's doc comment. The signature
-*is* asserted on the wire, the payload shape is unit-tested, and the whole path is covered on
-Android.
-
-Both gaps are iOS response-*parsing*, not bridge behaviour, and both are what a Layer 4 smoke
-capture would close: record the real responses, replay them through the harness.
+² Different envelopes, same bridge path. BrazeKit 18.2.1 reports `optional_auth_error` to
+`sdkAuthDelegate` and does not report the `auth_error` member Android and web use — see trap 7
+above. What a *required*-mode failure from the real backend looks like on iOS is the one envelope
+here still inferred rather than captured; a Layer 4 smoke run with SDK Authentication set to
+*required* would settle it.
 
 ## Forbidden
 
@@ -299,7 +359,7 @@ capture would close: record the real responses, replay them through the harness.
 
 **Both tiers are implemented on both platforms and run in CI**, inside the existing test invocations — no workflow change was required.
 
-### Android — 106 Robolectric/JUnit tests, in CI
+### Android — 108 Robolectric/JUnit tests, in CI
 
 Run with `cd demo/android && ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon` (JDK 21 +
 `ANDROID_HOME`). CI runs it in `verify-android`, followed by the JaCoCo ratchet (see "Coverage") and `:capacitor-braze:lintDebug`.
@@ -311,7 +371,7 @@ Run with `cd demo/android && ./gradlew :capacitor-braze:testDebugUnitTest --no-d
 | `BrazePluginSerializerTest.kt` | 24 | Every serializer, driven against **real Braze model objects parsed from Braze's own wire JSON**, including content-card `useWebView` |
 | `BrazePluginLifecycleTest.kt` | 22 | Log level (both branches + reversibility), double-`initialize`, `handleOnDestroy` / `wipeData` teardown, the listener-ordering guard, `sdkAuthError` payload, the `IBrazeDeeplinkHandler` install/chain for `deepLinkHandling: 'app'`, and the SDK-rejection warning |
 | `IntegrationSupport.kt` | — | MockWebServer harness: SDK reset, `WireRequest` JSON accessors, `WireHarness` polling helpers, `BrazeWire` envelopes |
-| `BrazePluginWireIntegrationTest.kt` | 15 | The integration tier — see the scenario matrix above |
+| `BrazePluginWireIntegrationTest.kt` | 17 | The integration tier — see the scenario matrix above |
 
 **The unlock was running `initialize` end-to-end under Robolectric.** Stub the `Bridge` so
 `getContext()` returns the Robolectric application, and `Braze.configure`, `currentUser`, `deviceId`,
@@ -330,7 +390,7 @@ everything else is a real object from real JSON. The serializers were widened `p
 **To add a test:** write it in the matching file. Nothing else — the Gradle module is already wired
 through the demo's `settings.gradle`.
 
-### iOS — 50 XCTests (1 skipped), in CI
+### iOS — 52 XCTests, in CI
 
 ```bash
 ruby scripts/ios-add-test-target.rb      # idempotent; regenerates the target from the directory
@@ -359,9 +419,10 @@ strings (4), `BrazeExtras.stringify` (3), the `sdkAuthError` payload including `
 the `BrazeSDKAuthDelegate`-not-`BrazeDelegate` type assertion (4), the slide-up icon (1), and the
 `deepLinkHandling` validation + `Braze.Channel` → `source` mapping + content-card `useWebView` (9).
 
-Integration tier (15, in `BrazePluginWireIntegrationTests.swift` on `BrazeWireHarness.swift`): the
-scenario matrix above. One is skipped — `sdkAuthError` delivery — and carries the full account of
-what was tried in its doc comment.
+Integration tier (17, in `BrazePluginWireIntegrationTests.swift` on `BrazeWireHarness.swift`): the
+scenario matrix above, none skipped. The five listener-delivery tests (Feature Flags, Content Cards,
+two in-app messages, `sdkAuthError`) were each confirmed red against a bridge with its
+`notifyListeners` call removed.
 
 **To add a test:** add the file to `ios/Tests/BrazePluginTests/`, then re-run `ruby scripts/ios-add-test-target.rb`
 and commit the regenerated project. Adding a test *method* to an existing file needs neither.
@@ -374,16 +435,9 @@ muddle consumer-facing reference code with plugin tests — is preserved.
 
 ### What's left
 
-- **Two iOS response-parsing scenarios**, both detailed in the scenario matrix above:
-  `featureFlagsUpdated` / `contentCardsUpdated` delivery (the refresh *request* is asserted; the
-  response never reaches `subscribeToUpdates`) and `sdkAuthError` delivery (skipped). Both are
-  BrazeKit-side unknowns, both are covered end to end on Android, and both are what a Layer 4 smoke
-  capture would close.
-- **`inAppMessageReceived` delivery on the native tiers.** Web is covered end to end as of `0.2.0` —
-  the mock server returns real trigger envelopes and the Web SDK's own trigger engine builds the
-  message. Nothing reproduces that on iOS or Android; the DTO is covered at the serializer level on
-  all three platforms. The harnesses can now host it; what is missing is a trigger envelope each
-  native SDK's trigger engine accepts.
+- **iOS `sdkAuthError` from a *required*-mode response.** Delivery is covered through
+  `optional_auth_error`; the real backend's *required*-mode envelope is not reproducible from a
+  mock (footnote ²). A Layer 4 smoke capture closes it.
 - **20 of the 35 iOS `@objc` bridge methods are never entered by an XCTest** — the first thing the
   coverage measurement below surfaced. The iOS unit tier tests the helpers those methods call; it
   does not drive each `CAPPluginCall` through the method the way Android's contract sweep does. The

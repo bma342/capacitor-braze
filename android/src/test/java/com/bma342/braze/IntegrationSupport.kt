@@ -18,6 +18,7 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import org.robolectric.Robolectric
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.shadows.ShadowLooper
 import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -248,13 +249,15 @@ internal object BrazeWire {
      * newer. `refresh_rate_limit: 0` removes the client-side throttle so a
      * test can refresh immediately after initialize.
      */
-    fun serverConfig(extra: String = ""): String =
-        """
+    fun serverConfig(extra: String = "", triggers: String? = null): String {
+        val triggersMember = triggers?.let { ""","triggers":[$it]""" }.orEmpty()
+        return """
         {"message":"success",
          "config":{"time":${System.currentTimeMillis() / 1000},
            "feature_flags":{"enabled":true,"refresh_rate_limit":0},
-           "content_cards":{"enabled":true,"refresh_rate_limit":0}}$extra}
+           "content_cards":{"enabled":true,"refresh_rate_limit":0}}$triggersMember$extra}
         """.trimIndent()
+    }
 
     /**
      * A `/api/v3/feature_flags/sync` response. The array is top-level
@@ -270,14 +273,78 @@ internal object BrazeWire {
      * `com.braze.enums.CardKey`'s wire names — `tp` selects the concrete
      * `Card` subclass from `banner_image` / `captioned_image` /
      * `text_announcement` / `short_news` / `control`.
+     *
+     * `last_full_sync_at` / `last_card_updated_at` are ignored here but
+     * **required** by BrazeKit's strict `ContentCardsResponse` decoder; they
+     * are in the shared envelope so the iOS tier's identical fixture decodes
+     * too (see the iOS `BrazeWire.contentCardsSync`).
      */
     fun contentCardsSync(cards: String): String =
-        """{"message":"success","full_sync":true,"cards":[$cards]}"""
+        """{"message":"success","full_sync":true,"last_full_sync_at":1700000000,""" +
+            """"last_card_updated_at":1700000000,"cards":[$cards]}"""
 
-    /** A `short_news` card: `tt` title, `ds` description, `i` image, `u` url. */
+    /**
+     * A Braze *composite* card id: base64 of
+     * `<campaign>_$_cc=<uuid>&mv=<message-variation>&pi=cmp`, which is the
+     * form the real backend issues. Android accepts any string; BrazeKit
+     * rejects anything else ("The string is not a valid composite
+     * identifier") and drops the whole sync, so the shared fixture uses the
+     * real form on both platforms.
+     */
+    const val CARD_ID: String =
+        "NWY1YjlhNGY4YTVkNmUwMDEyMzQ1Njc4XyRfY2M9MmRhNjA3MzgtYWRjMi02NGM1LWI1YzktNzRkYmIxMjdhZDgxJm12PTVmNWI5YTRmOGE1ZDZlMDAxMjM0NTY3OSZwaT1jbXA="
+
+    /**
+     * A `short_news` card: `tt` title, `ds` description, `i` image, `u` url,
+     * `uw` open-in-webview. The flag keys (`v` viewed, `cl` clicked, `p`
+     * pinned, `r` removed, `db` dismissible, `t` test, `e` extras, `ea`
+     * expires-at, `-1` = never) are optional to Android and required by
+     * BrazeKit, so they are always present.
+     */
     fun shortNewsCard(id: String, title: String, description: String): String =
-        """{"id":"$id","tp":"short_news","ca":1700000000,"tt":"$title","ds":"$description",
-           "u":"https://example.test/click","i":"https://example.test/image.png"}"""
+        """{"id":"$id","tp":"short_news","ca":1700000000,"ea":-1,"tt":"$title","ds":"$description",
+           "u":"https://example.test/click","uw":true,"i":"https://example.test/image.png",
+           "v":false,"cl":false,"p":false,"r":false,"db":true,"t":false,"e":{}}"""
+
+    /** Composite trigger id (`<campaign>_$_mv=<variation>&pi=cmp`, base64) for the slide-up campaign. */
+    const val SLIDEUP_TRIGGER_ID: String =
+        "NWY1YjlhNGY4YTVkNmUwMDEyMzQ1Njc4XyRfbXY9NWY1YjlhNGY4YTVkNmUwMDEyMzQ1Njc5JnBpPWNtcA=="
+
+    /** Composite trigger id for the modal campaign. */
+    const val MODAL_TRIGGER_ID: String =
+        "NWY1YjlhNGY4YTVkNmUwMDEyMzQ1NmFhXyRfbXY9NWY1YjlhNGY4YTVkNmUwMDEyMzQ1NmFiJnBpPWNtcA=="
+
+    /**
+     * One entry of the data response's top-level `triggers` array — an
+     * in-app message campaign. The same JSON the web tier's `mockTrigger`
+     * serves (`test/web/src/test-utils.ts`); `min_seconds_since_last_trigger:
+     * 0` lifts the per-campaign throttle so back-to-back tests can fire.
+     *
+     * [condition] is a `trigger_condition` entry: `{"type":"open"}` (session
+     * start) or `{"type":"custom_event","data":{"event_name":"…"}}`.
+     */
+    fun trigger(id: String, condition: String, message: String): String =
+        """{"id":"$id","type":"inapp","trigger_condition":[$condition],"start_time":null,
+           "end_time":null,"priority":0,"delay":0,"re_eligibility":-1,"timeout":600000,
+           "min_seconds_since_last_trigger":0,"data":$message}"""
+
+    /**
+     * A slide-up message payload. `message_close` / `orientation` /
+     * `use_webview` are optional to Android and required by BrazeKit's
+     * strict `InAppMessageRaw` decoder, so the shared fixture carries them.
+     */
+    fun slideupMessage(triggerId: String, message: String, uri: String): String =
+        """{"type":"SLIDEUP","trigger_id":"$triggerId","message":"$message","slide_from":"TOP",
+           "click_action":"URI","uri":"$uri","use_webview":true,"message_close":"SWIPE",
+           "orientation":"ANY","extras":{"orderId":"42","channel":"pickup"}}"""
+
+    /** A modal with a header and two buttons: one opening [buttonUri], one closing. */
+    fun modalMessage(triggerId: String, header: String, message: String, buttonUri: String): String =
+        """{"type":"MODAL","trigger_id":"$triggerId","header":"$header","message":"$message",
+           "click_action":"NONE","use_webview":false,"message_close":"SWIPE","orientation":"ANY",
+           "extras":{"campaign":"post_purchase"},
+           "btns":[{"id":0,"text":"Track it","click_action":"URI","uri":"$buttonUri","use_webview":false},
+                   {"id":1,"text":"Not now","click_action":"NONE","use_webview":false}]}"""
 
     /**
      * The SDK-Authentication failure envelope, delivered on an otherwise
@@ -394,10 +461,46 @@ internal class WireHarness(
         )
     }
 
-    /** Polls until [listener] has received a payload satisfying [predicate]. */
-    fun awaitEvent(listener: PluginCall, label: String, predicate: (JSObject) -> Boolean): JSObject {
+    /**
+     * Polls until [listener] has received a payload satisfying [predicate].
+     *
+     * Each poll also drains the main looper. Robolectric runs the test on the
+     * main thread in `PAUSED` looper mode, so anything the SDK posts to the
+     * main thread sits in the queue until the test yields it — and the
+     * in-app message manager is exactly such a subscriber: Braze delivers
+     * `InAppMessageEvent`s on the main thread, and
+     * `BrazeInAppMessageManager.requestDisplayInAppMessage` (the only caller
+     * of `beforeInAppMessageDisplayed`, and therefore of
+     * `inAppMessageReceived`) runs there. Without the drain the listener would
+     * never fire and the test would time out blaming the SDK. The Feature
+     * Flag and Content Card subscribers run on Braze's own threads and are
+     * unaffected either way.
+     */
+    fun awaitEvent(listener: PluginCall, label: String, predicate: (JSObject) -> Boolean): JSObject =
+        awaitEventRetrying(listener, label, action = {}, predicate = predicate)
+
+    /**
+     * [awaitEvent], but re-running [action] roughly every half second.
+     *
+     * For events whose trigger can lose a race with the response that arms
+     * it — a `custom_event` in-app message trigger only matches once the
+     * trigger set from the data response has been stored, and nothing on the
+     * wire says when that has happened.
+     */
+    fun awaitEventRetrying(
+        listener: PluginCall,
+        label: String,
+        action: () -> Unit,
+        predicate: (JSObject) -> Boolean,
+    ): JSObject {
         val deadline = System.currentTimeMillis() + IntegrationSupport.TIMEOUT_MS
+        var nextAction = 0L
         while (System.currentTimeMillis() < deadline) {
+            if (System.currentTimeMillis() >= nextAction) {
+                action()
+                nextAction = System.currentTimeMillis() + 500
+            }
+            ShadowLooper.idleMainLooper()
             eventsFor(listener).firstOrNull(predicate)?.let { return it }
             Thread.sleep(25)
         }
@@ -424,6 +527,29 @@ internal class WireHarness(
             }
             Thread.sleep(25)
         }
+    }
+
+    /**
+     * Waits (bounded by [IntegrationSupport.TIMEOUT_MS]) until the server has
+     * received nothing new for [quietMs] — i.e. until requests that were
+     * already in flight have landed. Not an assertion: callers use it to
+     * separate traffic a previous step legitimately caused from traffic the
+     * next step must not cause.
+     */
+    fun awaitNoTrafficFor(quietMs: Long) {
+        val deadline = System.currentTimeMillis() + IntegrationSupport.TIMEOUT_MS
+        var seen = requests.size
+        var quietSince = System.currentTimeMillis()
+        while (System.currentTimeMillis() < deadline) {
+            if (requests.size != seen) {
+                seen = requests.size
+                quietSince = System.currentTimeMillis()
+            } else if (System.currentTimeMillis() - quietSince >= quietMs) {
+                return
+            }
+            Thread.sleep(25)
+        }
+        throw AssertionError("The server never went quiet for ${quietMs}ms.\n" + dump())
     }
 
     /** Drops captured requests so a later assertion can't match an earlier one. */

@@ -32,8 +32,15 @@ import XCTest
 /// | `attributes[].{user_id,email,push_token,…}` | user-profile attributes |
 /// | `X-Braze-Auth-Signature` header | SDK Authentication JWT |
 /// | `/api/v3/data/` | analytics + server config |
+/// | `/api/v3/data/` response `triggers[]` | in-app message campaigns (`BrazeWire.trigger`) |
+/// | `/api/v3/data/` response `optional_auth_error` | SDK-Authentication failure BrazeKit reports |
 /// | `/api/v3/feature_flags/sync` | feature-flag refresh |
 /// | `/api/v3/content_cards/sync` | content-card refresh |
+///
+/// BrazeKit decodes every response body as a strict `Codable`, and a body
+/// it cannot decode is dropped with one log line and no other symptom. The
+/// exact accepted shapes — and how each was recovered — are documented on
+/// the `BrazeWire` fixtures in `BrazeWireHarness.swift`.
 @MainActor
 final class BrazePluginWireIntegrationTests: XCTestCase {
 
@@ -228,31 +235,22 @@ final class BrazePluginWireIntegrationTests: XCTestCase {
 
     // MARK: - Feature flags and Content Cards
     //
-    // These two cover the *request* half only, and that is a deliberate,
-    // documented limit rather than an oversight.
+    // Request, parsed response, listener *and* accessor, end to end — the same
+    // four links the Android tier asserts. These were request-only until 0.3.0,
+    // and the reasons are worth keeping, because each one looked like BrazeKit
+    // refusing to deliver when it was not:
     //
-    // What works: pointing BrazeKit at a mock, getting the server config it
-    // needs past its decoder (see `BrazeWire.serverConfig`, whose required
-    // members had to be recovered from the shipped binary's coding keys), and
-    // proving that `refreshFeatureFlags` / `requestContentCardsRefresh` put a
-    // correctly shaped POST on the right endpoint. That is real wire coverage
-    // and it is what these assert.
-    //
-    // What does not work: getting BrazeKit to turn the *response* into a
-    // `featureFlags.subscribeToUpdates` / `contentCards.subscribeToUpdates`
-    // emission. The sync response is accepted without a decoding error, and the
-    // subscription the plugin registers at `initialize` never fires. The
-    // remaining unknown is BrazeKit-side and not visible in the binary.
-    //
-    // The response half is covered end to end on **Android**, where the same
-    // envelopes drive `featureFlagsUpdated` / `contentCardsUpdated` through the
-    // real SDK (`BrazePluginWireIntegrationTest`), and the iOS serializers are
-    // pinned against real BrazeKit model objects in `BrazePluginContractTests`.
-    // Between the three, the only uncovered link on iOS is BrazeKit's own
-    // parse-and-publish step. Close it with the Layer 4 real-Braze smoke in
-    // `docs/smoke-tests/`, then fold the listener assertions back in here.
+    //  1. **Every listener in the harness was inert.** A bare `BrazePlugin()`
+    //     has a nil `eventListeners`, so `addEventListener` stored nothing.
+    //     Fixed in `WireHarness.init`; see the comment there.
+    //  2. **The Content Cards envelope and card were not decodable.** BrazeKit
+    //     requires `last_full_sync_at` / `last_card_updated_at` on the sync
+    //     response, fifteen keys on every card, and a *composite* card id
+    //     (`BrazeWire.contentCardsSync` / `shortNewsCard` / `cardId`).
+    //  3. **The request budget.** Retried refreshes drained BrazeKit's
+    //     persisted token bucket; `BrazeWire.serverConfig` now raises it.
 
-    func testRefreshFeatureFlagsPutsASyncRequestOnTheWire() async throws {
+    func testRefreshFeatureFlagsDeliversTheParsedFlagsToTheListenerAndTheAccessor() async throws {
         // The responder is armed *before* `initialize`, not after. Feature
         // Flags are off until the server config arrives, the config only rides
         // on a `/api/v3/data/` response, and `initialize` produces exactly one
@@ -282,6 +280,7 @@ final class BrazePluginWireIntegrationTests: XCTestCase {
         // re-reads it dynamically; this is a genuine platform difference, not a
         // test artefact.
         try await wire.reinitialize()
+        let listener = wire.listen("featureFlagsUpdated")
 
         let syncRequest = try await wire.awaitRequestRetrying(
             "a /api/v3/feature_flags/sync POST",
@@ -290,13 +289,29 @@ final class BrazePluginWireIntegrationTests: XCTestCase {
             },
             { $0.path.contains("feature_flags/sync") }
         )
-
         XCTAssertEqual(syncRequest.method, "POST")
         XCTAssertEqual(syncRequest.json["api_key"] as? String, "integration-test-key")
         XCTAssertFalse((syncRequest.json["device_id"] as? String ?? "").isEmpty)
+
+        let payload = try await wire.awaitEvent(listener, "featureFlagsUpdated carrying wire_flag") {
+            !(($0["flags"] as? [[String: Any]]) ?? []).isEmpty
+        }
+        let flag = try XCTUnwrap((payload["flags"] as? [[String: Any]])?.first)
+        XCTAssertEqual(flag["id"] as? String, "wire_flag")
+        XCTAssertEqual(flag["enabled"] as? Bool, true)
+        // C02: feature-flag properties are a tagged union, and the value has
+        // to survive BrazeKit's own parse as well as the bridge's serializer.
+        let tier = try XCTUnwrap((flag["properties"] as? [String: Any])?["tier"] as? [String: Any])
+        XCTAssertEqual(tier["type"] as? String, "string")
+        XCTAssertEqual(tier["value"] as? String, "gold")
+
+        // The same flag must be readable back through the accessor, which is
+        // what a consumer actually calls.
+        let read = try await wire.invoke("getFeatureFlag", ["id": "wire_flag"]) { wire.plugin.getFeatureFlag($0) }
+        XCTAssertEqual((read.resolved?["flag"] as? [String: Any])?["id"] as? String, "wire_flag")
     }
 
-    func testRequestContentCardsRefreshPutsASyncRequestOnTheWire() async throws {
+    func testRequestContentCardsRefreshDeliversTheParsedCardsToTheListenerAndTheAccessor() async throws {
         // Armed before `initialize` for the same reason as the feature-flag
         // test: Content Cards stay disabled until the server config lands.
         wire.server.responder = { request in
@@ -304,7 +319,7 @@ final class BrazePluginWireIntegrationTests: XCTestCase {
                 return .init(
                     BrazeWire.contentCardsSync(
                         cards: BrazeWire.shortNewsCard(
-                            id: "wire-card-1",
+                            id: BrazeWire.cardId,
                             title: "Wire title",
                             description: "Wire description"
                         )
@@ -315,6 +330,7 @@ final class BrazePluginWireIntegrationTests: XCTestCase {
         }
         try await wire.initialize()
         try await wire.reinitialize()
+        let listener = wire.listen("contentCardsUpdated")
 
         let syncRequest = try await wire.awaitRequestRetrying(
             "a /api/v3/content_cards/sync POST",
@@ -325,12 +341,148 @@ final class BrazePluginWireIntegrationTests: XCTestCase {
             },
             { $0.path.contains("content_cards/sync") }
         )
-
         XCTAssertEqual(syncRequest.method, "POST")
         // The sync is incremental: Braze needs both watermarks to decide
         // between a delta and a full sync.
         XCTAssertNotNil(syncRequest.json["last_full_sync_at"])
         XCTAssertNotNil(syncRequest.json["last_card_updated_at"])
+
+        let payload = try await wire.awaitEvent(listener, "contentCardsUpdated carrying the wire card") {
+            !(($0["cards"] as? [[String: Any]]) ?? []).isEmpty
+        }
+        let card = try XCTUnwrap((payload["cards"] as? [[String: Any]])?.first)
+        XCTAssertEqual(card["id"] as? String, BrazeWire.cardId)
+        // `tp: short_news` with an image is BrazeKit's `classicImage`, which
+        // C02 maps onto the contract's `classic` discriminator.
+        XCTAssertEqual(card["type"] as? String, "classic")
+        XCTAssertEqual(card["title"] as? String, "Wire title")
+        XCTAssertEqual(card["description"] as? String, "Wire description")
+        XCTAssertEqual(card["imageUrl"] as? String, "https://example.test/image.png")
+        XCTAssertEqual(card["url"] as? String, "https://example.test/click")
+        XCTAssertEqual(card["useWebView"] as? Bool, true)
+        // C03: the DTO's timestamps are epoch **milliseconds**, while the wire
+        // `ca` is seconds; `ea: -1` ("never expires") is null, not -1000.
+        XCTAssertEqual((card["updated"] as? NSNumber)?.int64Value, 1_700_000_000_000)
+        XCTAssertTrue(card["expiresAt"] is NSNull)
+        XCTAssertNotNil(payload["lastUpdated"] as? NSNumber)
+
+        let read = try await wire.invoke("getContentCards") { wire.plugin.getContentCards($0) }
+        let cached = try XCTUnwrap(read.resolved?["cards"] as? [[String: Any]])
+        XCTAssertEqual(cached.map { $0["id"] as? String }, [BrazeWire.cardId])
+    }
+
+    // MARK: - In-app messages
+    //
+    // The trigger envelope rides on the `/api/v3/data/` response, BrazeKit's
+    // own trigger engine evaluates it, and the plugin's presenter emits the
+    // DTO. Both tests initialize with `enableInAppMessageUI: false`, so the
+    // path under test is `BrazeObservingInAppMessagePresenter` — nothing is
+    // drawn in the test host, which keeps the rest of the suite unaffected.
+
+    func testASessionStartTriggerDeliversTheInAppMessageToTheListener() async throws {
+        // Armed before `initialize`: BrazeKit asks for triggers
+        // (`respond_with.triggers`, `X-Braze-TriggersRequest`) on the data
+        // POST that carries the session start, and fires an `open` condition
+        // as soon as that response's trigger set is stored — so the trigger
+        // must be on the very first response. It is the path a real "welcome
+        // back" campaign takes.
+        wire.server.responder = { request in
+            if request.path.contains("/api/v3/data") {
+                return .init(
+                    BrazeWire.serverConfig(
+                        triggers: BrazeWire.trigger(
+                            id: BrazeWire.slideupTriggerId,
+                            condition: #"{"type":"open"}"#,
+                            message: BrazeWire.slideupMessage(
+                                triggerId: BrazeWire.slideupTriggerId,
+                                message: "Your order is ready",
+                                uri: "https://example.com/orders/42"
+                            )
+                        )
+                    )
+                )
+            }
+            return BrazeWire.defaultReply(for: request)
+        }
+        let listener = wire.listen("inAppMessageReceived")
+        try await wire.initialize(["enableInAppMessageUI": false])
+
+        let payload = try await wire.awaitEvent(listener, "inAppMessageReceived for the session-start slide-up") { _ in
+            true
+        }
+        let message = try XCTUnwrap(payload["message"] as? [String: Any])
+        XCTAssertEqual(message["type"] as? String, "slideup")
+        // `id` is BrazeKit's `data.id`, which comes from the message payload's
+        // `trigger_id` — the value an analytics consumer joins on.
+        XCTAssertEqual(message["id"] as? String, BrazeWire.slideupTriggerId)
+        XCTAssertEqual(message["message"] as? String, "Your order is ready")
+        XCTAssertEqual(message["slideFrom"] as? String, "top")
+        let clickAction = try XCTUnwrap(message["clickAction"] as? [String: Any])
+        XCTAssertEqual(clickAction["type"] as? String, "url")
+        XCTAssertEqual(clickAction["uri"] as? String, "https://example.com/orders/42")
+        XCTAssertEqual(clickAction["useWebView"] as? Bool, true)
+        XCTAssertEqual(message["extras"] as? [String: String], ["orderId": "42", "channel": "pickup"])
+    }
+
+    func testACustomEventTriggerDeliversAModalWithItsButtonsToTheListener() async throws {
+        wire.server.responder = { request in
+            if request.path.contains("/api/v3/data") {
+                return .init(
+                    BrazeWire.serverConfig(
+                        triggers: BrazeWire.trigger(
+                            id: BrazeWire.modalTriggerId,
+                            condition: #"{"type":"custom_event","data":{"event_name":"wire_order_placed"}}"#,
+                            message: BrazeWire.modalMessage(
+                                triggerId: BrazeWire.modalTriggerId,
+                                header: "Thanks for your order",
+                                message: "We are firing up the grill.",
+                                buttonUri: "https://example.com/track"
+                            )
+                        )
+                    )
+                )
+            }
+            return BrazeWire.defaultReply(for: request)
+        }
+        let listener = wire.listen("inAppMessageReceived")
+        try await wire.initialize(["enableInAppMessageUI": false])
+
+        // The condition is matched locally by `logCustomEvent`, but only once
+        // the trigger set from the data response has been stored — and nothing
+        // on the wire says when that is. Re-logging until the listener fires
+        // removes the race; `re_eligibility: -1` means the first match is the
+        // only one, so the retries cannot produce a second message.
+        let payload = try await wire.awaitEventRetrying(
+            listener,
+            "inAppMessageReceived for the custom-event modal",
+            action: {
+                try? await wire.invoke("logCustomEvent", ["name": "wire_order_placed"]) {
+                    wire.plugin.logCustomEvent($0)
+                }
+            },
+            { _ in true }
+        )
+
+        let message = try XCTUnwrap(payload["message"] as? [String: Any])
+        XCTAssertEqual(message["type"] as? String, "modal")
+        XCTAssertEqual(message["id"] as? String, BrazeWire.modalTriggerId)
+        XCTAssertEqual(message["header"] as? String, "Thanks for your order")
+        XCTAssertEqual(message["message"] as? String, "We are firing up the grill.")
+        XCTAssertEqual((message["clickAction"] as? [String: Any])?["type"] as? String, "none")
+        XCTAssertEqual(message["extras"] as? [String: String], ["campaign": "post_purchase"])
+
+        // Each button carries its own click action — what a consumer rendering
+        // its own UI needs, and what a message-level serializer would flatten.
+        let buttons = try XCTUnwrap(message["buttons"] as? [[String: Any]])
+        XCTAssertEqual(buttons.count, 2)
+        XCTAssertEqual(buttons[0]["id"] as? Int, 0)
+        XCTAssertEqual(buttons[0]["text"] as? String, "Track it")
+        let track = try XCTUnwrap(buttons[0]["clickAction"] as? [String: Any])
+        XCTAssertEqual(track["type"] as? String, "url")
+        XCTAssertEqual(track["uri"] as? String, "https://example.com/track")
+        XCTAssertEqual(track["useWebView"] as? Bool, false)
+        XCTAssertEqual(buttons[1]["text"] as? String, "Not now")
+        XCTAssertEqual((buttons[1]["clickAction"] as? [String: Any])?["type"] as? String, "none")
     }
 
     // MARK: - SDK Authentication
@@ -353,45 +505,53 @@ final class BrazePluginWireIntegrationTests: XCTestCase {
         XCTAssertFalse(request.text.contains("SIG-WIRE-1"))
     }
 
-    /// **Skipped.** The `sdkAuthError` delivery path is the one scenario in
-    /// this suite that could not be reached from a mock server on iOS, and the
-    /// blocker is BrazeKit's, not the plugin's.
+    /// Server envelope → BrazeKit → `sdkAuthDelegate` → `notifyListeners`.
     ///
-    /// What *is* covered: the signature reaches the wire
-    /// (``testSdkAuthenticationAttachesTheSignatureHeaderToEveryRequest()``),
-    /// the delegate conforms to `BrazeSDKAuthDelegate` rather than
-    /// `BrazeDelegate` and its payload shape is exact
-    /// (`BrazePluginContractTests`), and the whole path — server envelope →
-    /// SDK subscriber → `notifyListeners` — is covered end to end on **Android**
-    /// by `BrazePluginWireIntegrationTest`'s equivalent. What is not covered is
-    /// BrazeKit turning an `auth_error` response into a
-    /// `Braze.SDKAuthenticationError`.
-    ///
-    /// Envelopes tried, all with `enableSdkAuthentication: true`, a
-    /// `changeUser` carrying `sdkAuthSignature`, and the response scoped to the
-    /// matching `respond_with.user_id` so BrazeKit could not discard it as
-    /// "for a user other than the current user":
-    ///
-    /// | Status | Body | Result |
-    /// |---|---|---|
-    /// | 200 | `auth_error` with `error_code` / `reason` / `signature` / `user_id` / `request_time` — the exact shape that works on Android | no delegate call |
-    /// | 200 | same, with `error` in place of `reason` | no delegate call |
-    /// | 200 | `auth_error` wrapping an `auth` object plus `expiration`, mirroring the keys adjacent to `auth_error` in the binary | no delegate call |
-    /// | 401 | any of the above | BrazeKit logs "HTTP invalid status code error (401)" and retries; body never parsed |
-    ///
-    /// The key names are right — `auth_error`, `error_code`, `reason`,
-    /// `signature`, `request_time` all appear in BrazeKit 18.2.1's binary — so
-    /// what is missing is a required sibling or a status/shape combination the
-    /// binary does not reveal. Reaching it needs either a real Braze workspace
-    /// with SDK Authentication enabled (the Layer 4 smoke in
-    /// `docs/smoke-tests/`) or schema detail from Braze. Un-skip when either
-    /// arrives.
+    /// Delivered through `optional_auth_error`, not the `auth_error` member
+    /// the Android and web tiers use: BrazeKit 18.2.1 decodes `auth_error`
+    /// but does not hand it to the delegate at any status tried (200; 400,
+    /// 401 and 403 with and without an `error` sibling), and every non-2xx
+    /// answer is rejected on its status line before the body is read. See
+    /// `BrazeWire.optionalAuthError` for the full account. This test was
+    /// skipped until 0.3.0, when the real blocker turned out to be the
+    /// harness — its listeners were never registered (see `WireHarness.init`).
     func testAnAuthErrorResponseIsDeliveredToTheSdkAuthErrorListener() async throws {
-        throw XCTSkip(
-            "BrazeKit 18.2.1 does not surface a mock server's `auth_error` response to "
-                + "`sdkAuthDelegate`; see this test's doc comment for the envelopes tried. "
-                + "The equivalent Android test covers the path end to end."
+        try await wire.initialize(["enableSdkAuthentication": true])
+        let listener = wire.listen("sdkAuthError")
+        try await wire.invoke(
+            "changeUser",
+            ["userId": "wire-auth-user", "sdkAuthSignature": "SIG-BAD"]
+        ) { wire.plugin.changeUser($0) }
+        _ = try await wire.awaitFlushedRequest("the signed request") {
+            $0.header(BrazeWire.authHeader) == "SIG-BAD"
+        }
+
+        wire.server.responder = { request in
+            if request.path.contains("/api/v3/data") {
+                return .init(BrazeWire.optionalAuthError(userId: "wire-auth-user", signature: "SIG-BAD"))
+            }
+            return BrazeWire.defaultReply(for: request)
+        }
+        // Keep producing data POSTs until one of them carries the error back;
+        // the flush that follows `changeUser` may already be in flight with
+        // the previous responder.
+        let payload = try await wire.awaitEventRetrying(
+            listener,
+            "an sdkAuthError event",
+            action: {
+                try? await wire.invoke("logCustomEvent", ["name": "wire_auth_probe"]) {
+                    wire.plugin.logCustomEvent($0)
+                }
+                try? await wire.flush()
+            },
+            { _ in true }
         )
+        XCTAssertEqual(payload["userId"] as? String, "wire-auth-user")
+        XCTAssertEqual(payload["errorCode"] as? Int, 21)
+        XCTAssertEqual(payload["errorReason"] as? String, "bad signature")
+        XCTAssertEqual(payload["signature"] as? String, "SIG-BAD")
+        // No BrazeKit counterpart; null for cross-platform parity (C03).
+        XCTAssertTrue(payload["errorEventId"] is NSNull)
     }
 
     // MARK: - Privacy / lifecycle

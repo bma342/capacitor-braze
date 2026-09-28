@@ -306,7 +306,7 @@ class BrazePluginWireIntegrationTest {
         wire.responder = { request ->
             if (request.path?.contains("content_cards/sync") == true) {
                 BrazeWire.contentCardsSync(
-                    BrazeWire.shortNewsCard("wire-card-1", "Wire title", "Wire description"),
+                    BrazeWire.shortNewsCard(BrazeWire.CARD_ID, "Wire title", "Wire description"),
                 )
             } else {
                 BrazeWire.serverConfig()
@@ -323,11 +323,14 @@ class BrazePluginWireIntegrationTest {
         assertThat(syncRequest.json.has("last_full_sync_at")).isTrue()
         assertThat(syncRequest.json.has("last_card_updated_at")).isTrue()
 
-        val payload = wire.awaitEvent(listener, "contentCardsUpdated carrying wire-card-1") {
+        val payload = wire.awaitEvent(listener, "contentCardsUpdated carrying the wire card") {
             it.getJSONArray("cards").length() > 0
         }
         val card = payload.getJSONArray("cards").getJSONObject(0)
-        assertThat(card.getString("id")).isEqualTo("wire-card-1")
+        // The card id is Braze's *composite* form (see `BrazeWire.CARD_ID`):
+        // the same fixture drives the iOS tier, where BrazeKit rejects any
+        // other shape.
+        assertThat(card.getString("id")).isEqualTo(BrazeWire.CARD_ID)
         // `tp: short_news` is the SDK's ShortNewsCard, which C02 maps onto
         // the contract's `classic` discriminator.
         assertThat(card.getString("type")).isEqualTo("classic")
@@ -336,10 +339,108 @@ class BrazePluginWireIntegrationTest {
         // C03: the DTO's timestamps are epoch **milliseconds**, while the
         // Android SDK's `ca` is seconds.
         assertThat(card.getLong("updated")).isEqualTo(1_700_000_000_000L)
+        assertThat(card.getString("url")).isEqualTo("https://example.test/click")
+        assertThat(card.getBoolean("useWebView")).isTrue()
 
         val getCall = wire.call()
         wire.plugin.getContentCards(getCall)
         assertThat(TestSupport.resolutionOf(getCall).getJSONArray("cards").length()).isEqualTo(1)
+    }
+
+    // -------------------------------------------------------------------------
+    // In-app messages — trigger envelope, the SDK's trigger engine, listener
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `a session-start trigger delivers the in-app message to the listener`() {
+        // Armed before `initialize`: the SDK asks for triggers on the data
+        // POST that carries the session start, and an `open` condition fires
+        // as soon as that response's trigger set is stored — so the trigger
+        // has to be on the very first response. It is the path a real
+        // "welcome back" campaign takes.
+        wire.responder = {
+            BrazeWire.serverConfig(
+                triggers = BrazeWire.trigger(
+                    id = BrazeWire.SLIDEUP_TRIGGER_ID,
+                    condition = """{"type":"open"}""",
+                    message = BrazeWire.slideupMessage(
+                        BrazeWire.SLIDEUP_TRIGGER_ID,
+                        "Your order is ready",
+                        "https://example.com/orders/42",
+                    ),
+                ),
+            )
+        }
+        val listener = wire.listen("inAppMessageReceived")
+        wire.initialize()
+
+        val payload = wire.awaitEvent(listener, "inAppMessageReceived for the session-start slide-up") { true }
+        val message = payload.getJSONObject("message")
+        assertThat(message.getString("type")).isEqualTo("slideup")
+        // `id` is the SDK's trigger id, which comes from the message payload's
+        // `trigger_id` — the value an analytics consumer joins on.
+        assertThat(message.getString("id")).isEqualTo(BrazeWire.SLIDEUP_TRIGGER_ID)
+        assertThat(message.getString("message")).isEqualTo("Your order is ready")
+        assertThat(message.getString("slideFrom")).isEqualTo("top")
+        val clickAction = message.getJSONObject("clickAction")
+        assertThat(clickAction.getString("type")).isEqualTo("url")
+        assertThat(clickAction.getString("uri")).isEqualTo("https://example.com/orders/42")
+        assertThat(clickAction.getBoolean("useWebView")).isTrue()
+        val extras = message.getJSONObject("extras")
+        assertThat(extras.getString("orderId")).isEqualTo("42")
+        assertThat(extras.getString("channel")).isEqualTo("pickup")
+    }
+
+    @Test
+    fun `a custom-event trigger delivers a modal with its buttons to the listener`() {
+        wire.responder = {
+            BrazeWire.serverConfig(
+                triggers = BrazeWire.trigger(
+                    id = BrazeWire.MODAL_TRIGGER_ID,
+                    condition = """{"type":"custom_event","data":{"event_name":"wire_order_placed"}}""",
+                    message = BrazeWire.modalMessage(
+                        BrazeWire.MODAL_TRIGGER_ID,
+                        "Thanks for your order",
+                        "We are firing up the grill.",
+                        "https://example.com/track",
+                    ),
+                ),
+            )
+        }
+        val listener = wire.listen("inAppMessageReceived")
+        wire.initialize()
+
+        // The condition is matched locally by `logCustomEvent`, but only once
+        // the trigger set from the data response has been stored — and nothing
+        // on the wire says when that is. Re-logging until the listener fires
+        // removes the race; `re_eligibility: -1` means the first match is the
+        // only one, so the retries cannot produce a second message.
+        val payload = wire.awaitEventRetrying(
+            listener,
+            "inAppMessageReceived for the custom-event modal",
+            action = { wire.plugin.logCustomEvent(wire.call(JSObject().put("name", "wire_order_placed"))) },
+        ) { true }
+        val message = payload.getJSONObject("message")
+        assertThat(message.getString("type")).isEqualTo("modal")
+        assertThat(message.getString("id")).isEqualTo(BrazeWire.MODAL_TRIGGER_ID)
+        assertThat(message.getString("header")).isEqualTo("Thanks for your order")
+        assertThat(message.getString("message")).isEqualTo("We are firing up the grill.")
+        assertThat(message.getJSONObject("clickAction").getString("type")).isEqualTo("none")
+        assertThat(message.getJSONObject("extras").getString("campaign")).isEqualTo("post_purchase")
+
+        // Each button carries its own click action — what a consumer rendering
+        // its own UI needs, and what a message-level serializer would flatten.
+        val buttons = message.getJSONArray("buttons")
+        assertThat(buttons.length()).isEqualTo(2)
+        val track = buttons.getJSONObject(0)
+        assertThat(track.getInt("id")).isEqualTo(0)
+        assertThat(track.getString("text")).isEqualTo("Track it")
+        assertThat(track.getJSONObject("clickAction").getString("type")).isEqualTo("url")
+        assertThat(track.getJSONObject("clickAction").getString("uri")).isEqualTo("https://example.com/track")
+        assertThat(track.getJSONObject("clickAction").getBoolean("useWebView")).isFalse()
+        val dismiss = buttons.getJSONObject(1)
+        assertThat(dismiss.getString("text")).isEqualTo("Not now")
+        assertThat(dismiss.getJSONObject("clickAction").getString("type")).isEqualTo("none")
     }
 
     // -------------------------------------------------------------------------
@@ -422,6 +523,13 @@ class BrazePluginWireIntegrationTest {
         // quiet window below would then see real traffic and fail for the wrong
         // reason. Wait for the SDK's own state to flip first.
         IntegrationSupport.awaitSdkState("disabled") { Braze.isDisabled }
+        // Then let traffic that was already in flight land. The config on the
+        // first data response makes the SDK fire a Feature Flags and a Content
+        // Cards sync of its own; either can be on the socket at the moment
+        // `disableSdk` takes effect and reach the server a beat later, which
+        // the quiet window would count against the opt-out. Seen in roughly
+        // one run in three under load before this drain was added.
+        wire.awaitNoTrafficFor(500)
         wire.clearRequests()
         wire.plugin.logCustomEvent(wire.call(JSObject().put("name", "wire_while_disabled")))
         wire.flush()

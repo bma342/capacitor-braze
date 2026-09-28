@@ -100,7 +100,7 @@ Snapshot at `0.3.0`, verified 2026-09-22 (see `package.json` for the live versio
 | All GitHub Actions pinned to commit SHAs; per-job least-privilege permissions | ✅ |
 | Demo + example apps build in CI | ✅ |
 | Privacy manifest (`PrivacyInfo.xcprivacy` via podspec) | ✅ |
-| `inAppMessageReceived` + `sdkAuthError` listener events | ✅ all 3 platforms. Both now covered **end-to-end on web** — the mock server returns real triggers, the Web SDK's own trigger engine builds the message, and the tests assert the DTO a consumer's listener receives. The **DTO** is covered by serializer tests on all three; the native **delivery paths** are still only covered by those serializer tests |
+| `inAppMessageReceived` + `sdkAuthError` listener events | ✅ all 3 platforms, **delivered end to end on all 3** — a scripted Braze response, the real SDK's own parse (and trigger engine, for in-app messages), and the DTO a consumer's listener receives; `featureFlagsUpdated` / `contentCardsUpdated` likewise. Two caveats, both in the README's Known gaps: Android never emits `inAppMessageReceived` with `enableInAppMessageUI: false` (bridge bug, reported), and iOS `sdkAuthError` is driven by BrazeKit's `optional_auth_error` envelope because it does not surface the `auth_error` one |
 | `deepLinkReceived` listener + `initialize({ deepLinkHandling })` | ✅ all 3 platforms. Per-channel coverage (and the two channels it cannot cover) is in [`SECURITY.md` §7](./SECURITY.md#7-deep-link-security) |
 | iOS in-app message presenter wired (`BrazeInAppMessageUI`), opt-out via `enableInAppMessageUI` | ✅ |
 | Android IAM lifecycle wired (`BrazeInAppMessageManager`) + session handling | ✅ |
@@ -116,7 +116,7 @@ Snapshot at `0.3.0`, verified 2026-09-22 (see `package.json` for the live versio
 | `0.1.0` to npm | ✅ [npmjs.com/package/capacitor-braze](https://www.npmjs.com/package/capacitor-braze) — published **by hand**, no provenance attestation |
 | `0.2.0` to npm | ⏳ will be the first workflow-published release |
 | `0.3.0` to npm | ⏳ this branch |
-| C11 native test harnesses — integration tier (MockWebServer on Android, loopback `NWListener` server on iOS) | ✅ 15 tests per platform, in CI since 0.3.0 |
+| C11 native test harnesses — integration tier (MockWebServer on Android, loopback `NWListener` server on iOS) | ✅ 17 tests per platform, none skipped, in CI since 0.3.0 |
 | **Layer 4 real-Braze smoke** | ⏳ **never run.** Templates only in `docs/smoke-tests/`; no release is validated against a live Braze backend |
 | Private vulnerability reporting, `enforce_admins`, `v*` tag ruleset, npm Trusted Publishing | ⏳ maintainer actions — commands in `CONTRIBUTING.md` |
 | Capacitor 8 support (peer `^8`, podspec `< 9.0`, demo + example on 8.5.2) | ✅ 0.3.0 |

@@ -364,6 +364,17 @@ final class WireHarness {
         server = try LocalHTTPServer()
         try server.start()
         plugin = BrazePlugin()
+        // The two registries Capacitor's own `load(on:)` creates, and without
+        // which every listener in this suite is silently inert. A bare
+        // `BrazePlugin()` goes through `NSObject.init`, not
+        // `initWithBridge:pluginId:pluginName:`, so `eventListeners` is nil —
+        // and `addEventListener` is Objective-C messaging a nil dictionary,
+        // which stores nothing and raises nothing. `notifyListeners` then
+        // finds no listener and returns. That, not BrazeKit, is why the
+        // integration tier's Feature Flag, Content Card and `sdkAuthError`
+        // listener assertions never saw a payload until 0.3.0.
+        plugin.eventListeners = [:]
+        plugin.retainedEventArguments = [:]
     }
 
     /// Drops the server. Deliberately does **not** touch the SDK.
@@ -637,6 +648,35 @@ final class WireHarness {
         try await poll(label) { listener.payloads.first(where: predicate) }
     }
 
+    /// ``awaitEvent(_:_:_:)``, but re-running `action` about twice a second.
+    ///
+    /// For events whose cause can lose a race with the response that arms
+    /// it: a `custom_event` in-app message trigger only matches once the
+    /// trigger set from the data response has been stored, and an
+    /// SDK-Authentication error only comes back on a data POST sent *after*
+    /// the responder was swapped. Nothing on the wire says when either is
+    /// ready, so the action is repeated until the listener has what it needs.
+    func awaitEventRetrying(
+        _ listener: RecordedCall,
+        _ label: String,
+        action: () async -> Void,
+        _ predicate: @escaping ([String: Any]) -> Bool
+    ) async throws -> [String: Any] {
+        let deadline = Date().addingTimeInterval(WireHarness.timeout)
+        while Date() < deadline {
+            await action()
+            let innerDeadline = Date().addingTimeInterval(0.5)
+            while Date() < innerDeadline {
+                if let match = listener.payloads.first(where: predicate) { return match }
+                try? await Task.sleep(nanoseconds: 25_000_000)
+            }
+        }
+        throw WireTimeout(
+            "Timed out after \(Int(WireHarness.timeout))s waiting for \(label).\n"
+                + "Payloads delivered: \(listener.payloads)\n\(dump())"
+        )
+    }
+
     /// Watches for ``quietWindow`` and throws if anything new reached the
     /// server. Callers bracket this with positive controls so it cannot pass
     /// because the harness was broken.
@@ -692,18 +732,16 @@ enum BrazeWire {
             return .init(#"{"message":"success","feature_flags":[]}"#)
         }
         if request.path.contains("content_cards/sync") {
-            // BrazeKit logs an "HTTP decoding error" for this endpoint whatever
-            // we answer with — the Android-shaped `{cards, full_sync}` envelope
-            // and a bare `{"message":"success"}` are both rejected, and the
-            // bare ack is rejected *more* often. The iOS Content Cards sync
-            // response shape is the open half of that story; see the note above
-            // the Content Cards test. This is the quieter of the two.
+            // An empty but *decodable* sync — see ``contentCardsSync(cards:)``
+            // for the two watermark members BrazeKit will not do without. An
+            // envelope it cannot decode is retried with backoff, which is both
+            // log noise and a drain on the request budget.
             return .init(contentCardsSync(cards: ""))
         }
         return .init(serverConfig())
     }
 
-    /// Monotonic source for the config's `time`. See ``serverConfig()``.
+    /// Monotonic source for the config's `time`. See ``serverConfig(triggers:)``.
     private static let configTime = ConfigTimeCounter()
 
     /// The server-config envelope, which rides on a `/api/v3/data/` response
@@ -732,9 +770,29 @@ enum BrazeWire {
     /// `ephemeral_events`, `content_cards`, `feature_flags`, `banners`,
     /// `global_request_rate_limit`, `request_backoff`, `sdk_debugger`. The
     /// shape below is the smallest one verified to decode; adding the remaining
-    /// members with guessed sub-shapes breaks it again, so leave them out.
-    static func serverConfig() -> String {
-        """
+    /// members with guessed sub-shapes breaks it again, so leave them out —
+    /// with the one exception below, whose shape is *verified* rather than
+    /// guessed.
+    ///
+    /// **`global_request_rate_limit` is what keeps the suite off BrazeKit's
+    /// token bucket.** The SDK ships with a 30-token bucket and a slow
+    /// refill, and the bucket's state lives in the app container, so it
+    /// survives `wipeData`, new `Braze` instances and even suite runs. A test
+    /// that retries a refresh can drain it, and once it is empty BrazeKit
+    /// schedules the next request up to an hour out ("Failed to send API
+    /// request (rate-limited)" / `rate-limited until: shared rate limit`) —
+    /// every later test on that simulator then times out, and only
+    /// `simctl erase` recovers it. `refill_rate` is **seconds per token**
+    /// (verified: `10000` pushed the next allowed request ~10 000 s out), so
+    /// `0.01` refills ~100 tokens a second. BrazeKit echoes the applied
+    /// shape back in its "Applying remote configuration" log line, which is
+    /// how this was confirmed to decode.
+    ///
+    /// `triggers`, when given, is the body of the top-level `triggers` array
+    /// — what an in-app message campaign rides on. See ``trigger(id:condition:message:)``.
+    static func serverConfig(triggers: String? = nil) -> String {
+        let triggersMember = triggers.map { #","triggers":[\#($0)]"# } ?? ""
+        return """
         {"message":"success",
          "config":{"time":\(configTime.next()),
            "events_blacklist":[],
@@ -742,7 +800,8 @@ enum BrazeWire {
            "purchases_blacklist":[],
            "messaging_session_timeout":1800,
            "feature_flags":{"enabled":true,"refresh_rate_limit":0},
-           "content_cards":{"enabled":true,"refresh_rate_limit":0}}}
+           "content_cards":{"enabled":true,"refresh_rate_limit":0},
+           "global_request_rate_limit":{"enabled":true,"capacity":1000,"refill_rate":0.01}}\(triggersMember)}
         """
     }
 
@@ -753,22 +812,137 @@ enum BrazeWire {
         """
     }
 
-    /// A `/api/v3/content_cards/sync` response. Top-level `cards` + `full_sync`;
-    /// per-card keys are Braze's wire names, with `tp` selecting the variant.
+    /// A `/api/v3/content_cards/sync` response.
+    ///
+    /// **`last_full_sync_at` and `last_card_updated_at` are required.**
+    /// BrazeKit decodes this body as a strict `ContentCardsResponse`, and
+    /// without the two watermarks it logs "Unable to decode either 'Error' or
+    /// 'ContentCardsResponse'" and drops the sync — no card is stored and
+    /// `contentCards.subscribeToUpdates` never fires. The Android SDK ignores
+    /// both, so the Android tier's fixture carries them too and the two
+    /// platforms assert against one envelope.
     static func contentCardsSync(cards: String) -> String {
-        #"{"message":"success","full_sync":true,"cards":[\#(cards)]}"#
+        #"{"message":"success","full_sync":true,"last_full_sync_at":1700000000,"#
+            + #""last_card_updated_at":1700000000,"cards":[\#(cards)]}"#
     }
+
+    /// A Braze *composite* card id — base64 of
+    /// `5f5b9a4f8a5d6e0012345678_$_cc=2da60738-adc2-64c5-b5c9-74dbb127ad81&mv=5f5b9a4f8a5d6e0012345679&pi=cmp`,
+    /// the `<campaign>_$_cc=<uuid>&mv=<variation>&pi=cmp` form the real
+    /// backend issues.
+    ///
+    /// Not decoration. BrazeKit parses the id while turning the wire card
+    /// (`Braze.ContentCardRaw`) into a `Braze.ContentCard` and throws "The
+    /// string is not a valid composite identifier" for anything else — which
+    /// fails the *whole* sync, so a plain `"card-1"` id means no cards and no
+    /// listener event, with nothing but that decoding error in the log.
+    /// Android accepts any string, so the Android tier uses the same id.
+    static let cardId =
+        "NWY1YjlhNGY4YTVkNmUwMDEyMzQ1Njc4XyRfY2M9MmRhNjA3MzgtYWRjMi02NGM1LWI1YzktNzRkYmIxMjdhZDgxJm12PTVmNWI5YTRmOGE1ZDZlMDAxMjM0NTY3OSZwaT1jbXA="
 
     /// A `short_news` (classic-with-image) card.
+    ///
+    /// Every key here is required by BrazeKit's `Braze.ContentCardRaw`
+    /// decoder — recovered by decoding with `JSONDecoder` directly, which
+    /// names the first missing key (`keyNotFound … "uw"`), then dropping keys
+    /// one at a time from a shape that decodes: `id`, `tp`, `ca` created,
+    /// `ea` expires (`-1` = never), `tt` title, `ds` description, `u` url,
+    /// `uw` open-in-webview, `v` viewed, `cl` clicked, `p` pinned, `r`
+    /// removed, `db` dismissible, `t` test, `e` extras — plus `i` image,
+    /// which is what makes `short_news` a *classic-with-image* card.
     static func shortNewsCard(id: String, title: String, description: String) -> String {
         """
-        {"id":"\(id)","tp":"short_news","ca":1700000000,"tt":"\(title)","ds":"\(description)",
-         "u":"https://example.test/click","i":"https://example.test/image.png"}
+        {"id":"\(id)","tp":"short_news","ca":1700000000,"ea":-1,"tt":"\(title)","ds":"\(description)",
+         "u":"https://example.test/click","uw":true,"i":"https://example.test/image.png",
+         "v":false,"cl":false,"p":false,"r":false,"db":true,"t":false,"e":{}}
         """
     }
 
-    /// The SDK-Authentication failure envelope, delivered inside an otherwise
-    /// successful `/api/v3/data/` response.
+    /// Composite trigger id for the slide-up campaign: base64 of
+    /// `5f5b9a4f8a5d6e0012345678_$_mv=5f5b9a4f8a5d6e0012345679&pi=cmp`. Same
+    /// rule as ``cardId`` — BrazeKit rejects a trigger whose id is not a
+    /// composite identifier, and the message never fires.
+    static let slideupTriggerId =
+        "NWY1YjlhNGY4YTVkNmUwMDEyMzQ1Njc4XyRfbXY9NWY1YjlhNGY4YTVkNmUwMDEyMzQ1Njc5JnBpPWNtcA=="
+
+    /// Composite trigger id for the modal campaign
+    /// (`5f5b9a4f8a5d6e00123456aa_$_mv=5f5b9a4f8a5d6e00123456ab&pi=cmp`).
+    static let modalTriggerId =
+        "NWY1YjlhNGY4YTVkNmUwMDEyMzQ1NmFhXyRfbXY9NWY1YjlhNGY4YTVkNmUwMDEyMzQ1NmFiJnBpPWNtcA=="
+
+    /// One entry of the data response's top-level `triggers` array — an
+    /// in-app message campaign. The same JSON the web tier's `mockTrigger`
+    /// serves (`test/web/src/test-utils.ts`) and the Android tier's
+    /// `BrazeWire.trigger`. `min_seconds_since_last_trigger: 0` lifts the
+    /// per-campaign throttle so back-to-back tests can fire.
+    ///
+    /// `condition` is one `trigger_condition` entry: `{"type":"open"}`
+    /// (session start) or `{"type":"custom_event","data":{"event_name":"…"}}`.
+    static func trigger(id: String, condition: String, message: String) -> String {
+        """
+        {"id":"\(id)","type":"inapp","trigger_condition":[\(condition)],"start_time":null,
+         "end_time":null,"priority":0,"delay":0,"re_eligibility":-1,"timeout":600000,
+         "min_seconds_since_last_trigger":0,"data":\(message)}
+        """
+    }
+
+    /// A slide-up message payload.
+    ///
+    /// `message_close`, `orientation` and `use_webview` look like rendering
+    /// detail, but BrazeKit's `Braze.InAppMessageRaw` decoder requires all
+    /// three (together with `type`, `message` and `click_action`); the web
+    /// fixture's shape, which omits them, is silently discarded. Recovered
+    /// the same way as the card keys: `JSONDecoder` on the raw type, then
+    /// key-by-key removal from `Braze.InAppMessage.json()` output.
+    static func slideupMessage(triggerId: String, message: String, uri: String) -> String {
+        """
+        {"type":"SLIDEUP","trigger_id":"\(triggerId)","message":"\(message)","slide_from":"TOP",
+         "click_action":"URI","uri":"\(uri)","use_webview":true,"message_close":"SWIPE",
+         "orientation":"ANY","extras":{"orderId":"42","channel":"pickup"}}
+        """
+    }
+
+    /// A modal with a header and two buttons: one opening `buttonUri`, one
+    /// that only closes. A modal additionally requires `header`.
+    static func modalMessage(triggerId: String, header: String, message: String, buttonUri: String) -> String {
+        """
+        {"type":"MODAL","trigger_id":"\(triggerId)","header":"\(header)","message":"\(message)",
+         "click_action":"NONE","use_webview":false,"message_close":"SWIPE","orientation":"ANY",
+         "extras":{"campaign":"post_purchase"},
+         "btns":[{"id":0,"text":"Track it","click_action":"URI","uri":"\(buttonUri)","use_webview":false},
+                 {"id":1,"text":"Not now","click_action":"NONE","use_webview":false}]}
+        """
+    }
+
+    /// The SDK-Authentication failure envelope BrazeKit 18.2.1 **does**
+    /// surface to `sdkAuthDelegate`: an `optional_auth_error` member on an
+    /// otherwise successful `/api/v3/data/` response.
+    ///
+    /// This is not the envelope the Android and web tiers use, and the
+    /// difference is the SDK's, not the fixture's. Their `auth_error` member
+    /// (``authError(userId:signature:code:reason:)``) is decoded by BrazeKit
+    /// but never reaches the delegate — tried at 200, and with and without
+    /// an `error` sibling at 400, 401 and 403, every non-2xx answer being
+    /// rejected on its status line ("HTTP invalid status code error") before
+    /// the body is read. `optional_auth_error` is the key BrazeKit decodes
+    /// into `Braze.SDKAuthenticationError` with `optional == true` (the
+    /// "optional" SDK-Authentication enforcement mode, where Braze accepts
+    /// the request but reports the bad signature), and it is the one path
+    /// from a response body to the delegate a mock can reach. The bridge
+    /// code under test — delegate → `sdkAuthError` payload → `notifyListeners`
+    /// — is the same whichever mode produced the error.
+    static func optionalAuthError(userId: String, signature: String, code: Int = 21,
+                                  reason: String = "bad signature") -> String {
+        """
+        {"message":"success",
+         "optional_auth_error":{"error_code":\(code),"reason":"\(reason)","signature":"\(signature)",
+           "user_id":"\(userId)","request_time":\(Int(Date().timeIntervalSince1970 * 1000))}}
+        """
+    }
+
+    /// The `auth_error` envelope the Android and web tiers deliver — kept
+    /// here, unused by any passing test, as the record of what BrazeKit
+    /// 18.2.1 does *not* surface. See ``optionalAuthError(userId:signature:code:reason:)``.
     static func authError(userId: String, signature: String, code: Int = 401,
                           reason: String = "bad signature") -> String {
         """
