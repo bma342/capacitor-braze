@@ -21,7 +21,7 @@ other method follows:
 5. `android/src/main/java/com/bma342/braze/BrazePlugin.kt` — Kotlin bridge.
 6. `test/web/src/<area>.test.ts` — vitest behavioral test asserting the **wire output**, plus the validation rejections.
 7. `android/src/test/java/com/bma342/braze/BrazePluginContractTest.kt` — Robolectric test asserting every validation branch byte-exact against `src/web.ts`.
-8. `ios/Tests/BrazePluginTests/BrazePluginContractTests.swift` — the XCTest equivalent. Re-run `ruby scripts/ios-add-test-target.rb` and commit the regenerated Xcode project if you added a *file*.
+8. `ios/Tests/BrazePluginTests/BrazePluginBridgeContractTests.swift` — the XCTest equivalent. Re-run `ruby scripts/ios-add-test-target.rb` and commit the regenerated Xcode project if you added a *file*.
 9. `example/index.html` + `example/src/main.ts` — UI row + button under the matching category card, and the handler in the `runMethods` map.
 10. `CHANGELOG.md` — entry under `[Unreleased]`. If the method is new to the roadmap, also update `SDK_SURFACE.md`.
 

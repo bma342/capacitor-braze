@@ -741,9 +741,10 @@ public class BrazePlugin: CAPPlugin, CAPBridgedPlugin {
     // MARK: - Demographics
 
     /// Constructs a `Date` from `(year, month, day)` using a Gregorian
-    /// calendar pinned to UTC. Pinning to UTC keeps the stored DOB stable
-    /// regardless of device timezone, matching how the Android `Month` enum
-    /// and the Web SDK's three-int signature behave. `month` is 1-indexed
+    /// Gregorian calendar in the device's current time zone — the zone
+    /// BrazeKit formats the calendar day in — so the stored DOB is the day
+    /// the consumer passed, matching the Android `Month` enum and the Web
+    /// SDK's three-int signature. `month` is 1-indexed
     /// on the wire (C03).
     @objc func setDateOfBirth(_ call: CAPPluginCall) {
         Self.onMain {
@@ -764,8 +765,13 @@ public class BrazePlugin: CAPPlugin, CAPBridgedPlugin {
                 return
             }
 
+            // Build the date in the device's current time zone: BrazeKit
+            // formats the *calendar day* in the local zone, so a UTC-midnight
+            // Date lands on the previous day for every user west of UTC
+            // (found by the iOS wire tests, which run in the host's zone;
+            // GitHub's macOS runners are UTC and never saw it).
             var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+            calendar.timeZone = .current
             var components = DateComponents()
             components.year = year
             components.month = month

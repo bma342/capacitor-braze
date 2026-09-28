@@ -9,7 +9,7 @@
 
 **Audited:** 2026-09-22 (`0.2.0`); native coverage measured 2026-09-28 (`0.3.0`).
 **Web test count:** **206 tests across 18 files, ~3.5s** (`npm test`).
-**Native:** 108 Robolectric/JUnit (`android/src/test/`) + 82 XCTest (`ios/Tests/BrazePluginTests/`, none
+**Native:** 109 Robolectric/JUnit (`android/src/test/`) + 82 XCTest (`ios/Tests/BrazePluginTests/`, none
 skipped), both in CI. Of those, **17 on Android and 27 on iOS are C11's integration tier** — the real
 Braze SDKs driven against a local HTTP server, asserting the wire and, for every listener event, the
 `notifyListeners` payload the SDK's own parse produced. Both natives enter all 35 bridge methods
@@ -285,7 +285,7 @@ asymmetry this table used to list is gone — the plugin now tracks that state i
 C11's **integration tier** is no longer design-only. 17 tests on Android and 27 on iOS drive the plugin's own
 bridge code into the real Braze SDK and assert the bytes that reached a real local HTTP server:
 MockWebServer under Robolectric on Android, an in-process `NWListener` on loopback on iOS. Counts are
-now **108 Android** and **82 iOS**, none skipped.
+now **109 Android** and **82 iOS**, none skipped.
 
 Every listener event is now delivered end to end on **both** natives — server envelope → the SDK's
 own parser (and, for in-app messages, its trigger engine) → the plugin's subscriber → the payload a
@@ -329,7 +329,6 @@ now raises the bucket through `global_request_rate_limit`.
 
 | Surface | What's untested today | Plan |
 |---|---|---|
-| **iOS `setDateOfBirth` shifts the day west of UTC** (bug, not a coverage gap) | The bridge builds the date at *UTC* midnight; BrazeKit formats the calendar day in the device's *local* zone. In `America/Los_Angeles`, `setDateOfBirth(1990, 7, 4)` puts `1990-07-03T00:00:00Z` on the wire — every user west of UTC gets a birthday one day early. Android and web send the 4th in every zone. `BrazePluginMethodWireTests` pins it with a strict `XCTExpectFailure`, time zone forced both ways so the result does not follow the machine | Fix in `ios/Sources/BrazePlugin/BrazePlugin.swift` (build the `Date` in the calendar BrazeKit formats with), then delete the `XCTExpectFailure` wrapper — the strict expectation fails the test the moment the bridge is fixed |
 | **iOS** `sdkAuthError` from a *required*-mode (`auth_error`) response | The delivery path is covered via `optional_auth_error`, the envelope BrazeKit 18.2.1 demonstrably reports. What a real backend sends in *required* mode, and whether BrazeKit reports it through the same delegate, is not reproducible from a mock | A Layer 4 smoke capture with SDK Authentication set to *required* |
 
 ## Is this enough to ship?
@@ -353,8 +352,7 @@ or `0.2.0`. That is stated in the README, the CHANGELOG, C08's bump protocol and
    Nothing in this repo has ever been run against a live Braze backend. It is also what would
    settle the one iOS envelope still inferred rather than captured — a *required*-mode SDK
    Authentication failure: capture the real response, replay it in the harness.
-2. **Fix iOS `setDateOfBirth` west of UTC** (see "Remaining gaps"). The test that pins the bug is
-   already in place and flips red when the fix lands.
+
 
 ~~Drive the 20 un-entered iOS bridge methods from XCTest~~ — **done**: every one of the 35 is entered
 through a real `CAPPluginCall`, and the iOS floors rose from 58 / 51 to 95 / 90.

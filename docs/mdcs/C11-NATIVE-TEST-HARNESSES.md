@@ -8,7 +8,7 @@
 > **integration tier** is live too — **17 tests on Android, 27 on iOS** — driving the real Braze SDKs
 > against a real local HTTP server, asserting the bytes on the wire and — for all four SDK-driven
 > listener events — the payload the SDK's own parse delivered to `notifyListeners`. Totals:
-> **108 Android**, **82 iOS**, none skipped; both enter all 35 bridge methods.
+> **109 Android**, **82 iOS**, none skipped; both enter all 35 bridge methods.
 > Everything runs in CI on every PR inside the existing `:capacitor-braze:testDebugUnitTest` and
 > `xcodebuild test` invocations — no workflow change was needed. Since `0.3.0` both tiers are also
 > **coverage-measured and ratcheted** — JaCoCo on Android (89.82% lines / 76.37% branches), `xccov`
@@ -361,7 +361,7 @@ here still inferred rather than captured; a Layer 4 smoke run with SDK Authentic
 
 **Both tiers are implemented on both platforms and run in CI**, inside the existing test invocations — no workflow change was required.
 
-### Android — 108 Robolectric/JUnit tests, in CI
+### Android — 109 Robolectric/JUnit tests, in CI
 
 Run with `cd demo/android && ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon` (JDK 21 +
 `ANDROID_HOME`). CI runs it in `verify-android`, followed by the JaCoCo ratchet (see "Coverage") and `:capacitor-braze:lintDebug`.
@@ -458,11 +458,7 @@ muddle consumer-facing reference code with plugin tests — is preserved.
 - **iOS `sdkAuthError` from a *required*-mode response.** Delivery is covered through
   `optional_auth_error`; the real backend's *required*-mode envelope is not reproducible from a
   mock (footnote ²). A Layer 4 smoke capture closes it.
-- **iOS `setDateOfBirth` shifts the day west of UTC** — a bridge bug the method sweep found, not a
-  harness gap. The bridge builds a UTC-midnight `Date`; BrazeKit formats it in the local zone, so in
-  `America/Los_Angeles` 4 July goes out as `1990-07-03T00:00:00Z`. Pinned by a strict
-  `XCTExpectFailure` in `BrazePluginMethodWireTests`; the fix belongs in `ios/Sources`, after which
-  that wrapper must go.
+
 - **Per-class JVM forking on Android.** Robolectric shares one sandbox across test classes in a JVM,
   so the process-global Braze singleton carries state between them. The harnesses handle this
   explicitly (reset on the way in, hand over a usable SDK on the way out), and the suite is stable —

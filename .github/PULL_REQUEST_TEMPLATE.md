@@ -30,7 +30,7 @@ checklist is the control.
 - [ ] `android/src/main/java/com/bma342/braze/BrazePlugin.kt` — Android bridge
 - [ ] `test/web/src/<area>.test.ts` — asserts the **wire output** and the validation rejections, not just that the call resolved
 - [ ] `android/src/test/.../BrazePluginContractTest.kt` — validation branches byte-exact against `src/web.ts`
-- [ ] `ios/Tests/BrazePluginTests/BrazePluginContractTests.swift` — the XCTest equivalent (re-run `ruby scripts/ios-add-test-target.rb` and commit the project if you added a *file*)
+- [ ] `ios/Tests/BrazePluginTests/BrazePluginBridgeContractTests.swift` — the XCTest equivalent (re-run `ruby scripts/ios-add-test-target.rb` and commit the project if you added a *file*)
 - [ ] `example/index.html` + `example/src/main.ts` — UI and handler dispatch
 - [ ] `SDK_SURFACE.md` — shipped list + coverage matrix updated
 - [ ] `CHANGELOG.md` — entry under `[Unreleased]`

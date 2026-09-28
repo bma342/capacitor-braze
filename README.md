@@ -29,7 +29,7 @@ Snapshot at **0.3.0** (2026-09-22). This table drifts — `package.json`, `git l
 |---|---|
 | **TypeScript API** | 35 methods + `addListener` / `removeAllListeners` for **5 events** (`featureFlagsUpdated`, `contentCardsUpdated`, `inAppMessageReceived`, `sdkAuthError`, `deepLinkReceived`) |
 | **iOS bridge** (`BrazeKit` / `BrazeUI` 18.2.1) | Compiles and runs **82 XCTests** on every PR via the `verify-ios` CI job — every one of the 35 bridge methods driven through a real `CAPPluginCall` — with **measured** `xccov` coverage of the Swift bridge (95.49% lines, 90.32% functions) ratcheted in CI. The job builds **both** install paths — `demo/ios` through CocoaPods and `example/ios` through SPM. `PrivacyInfo.xcprivacy` ships on both. **Requires Xcode 26+** |
-| **Android bridge** (`com.braze:android-sdk-ui` 43.2.0) | Compiles, runs **108 Robolectric/JUnit tests** and Android Lint on every PR via the `verify-android` CI job, with **measured** JaCoCo coverage of `BrazePlugin.kt` (89.82% lines, 76.37% branches) ratcheted in CI |
+| **Android bridge** (`com.braze:android-sdk-ui` 43.2.0) | Compiles, runs **109 Robolectric/JUnit tests** and Android Lint on every PR via the `verify-android` CI job, with **measured** JaCoCo coverage of `BrazePlugin.kt` (89.82% lines, 76.37% branches) ratcheted in CI |
 | **Web bridge** (`@braze/web-sdk` peer `^6.13.0`) | **206 vitest tests across 18 files in ~3.4s** against an in-process Fastify mock Braze server; 35/35 methods and every validation branch covered, with **measured** V8 coverage of `src/web.ts` at 97.45% statements/lines and 90.80% branches, ratcheted in CI — see [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md). One method (`registerPushToken`) is platform-divergent and throws on web by design (per [C03](./docs/mdcs/C03-CROSS-PLATFORM-TRANSLATION.md)) |
 | **Developer testbed** (`example/`) | Every plugin method has a button; clicking invokes + logs |
 | **Reference app** (`demo/`) | React 19 + Tailwind 4 + TanStack Router; restaurant ordering + e-commerce flows; iOS + Android Capacitor projects committed |
@@ -50,9 +50,8 @@ Stated plainly so a reviewer does not have to find them:
 - **No release has been validated against a live Braze backend.** Everything is verified against the in-tree mock server and the real SDKs' compile/runtime surface.
 - **A value the Braze SDK rejects resolves rather than throwing.** `setEmail('nonsense')` resolves on every platform. Web and Android now log one non-PII warning — `Braze.<method>: the Braze SDK rejected the value (see SDK logs)`, byte-identical on both — and iOS reports nothing because BrazeKit 18.2.1's setters return `Void`. Turning a rejection into a thrown error is a cross-platform contract change still deferred, since iOS has no signal to reject on.
 - **`deepLinkReceived` cannot intercept HTML in-app message iframes on web.** Their renderer never consults the SDK's click-action path. iOS and Android cover that channel; the full per-channel matrix is in [`SECURITY.md` §7](./SECURITY.md#7-deep-link-security). Capacitor's `server.allowNavigation` is the backstop and you should keep it set.
-- **iOS `setDateOfBirth` records the previous day for users west of UTC.** The iOS bridge builds the date at UTC midnight and BrazeKit formats it in the device's local time zone, so in the Americas `setDateOfBirth({ year: 1990, month: 7, day: 4 })` reaches Braze as 3 July. Android and web are correct in every zone. Found by the iOS bridge-method sweep, which now enters all 35 methods on iOS as it already did on Android, and pinned by a test that flips red when the bridge is fixed — see [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md).
 - **iOS `sdkAuthError` is exercised through Braze's *optional*-enforcement response.** BrazeKit 18.2.1 reports an `optional_auth_error` from a mock server but not the `auth_error` envelope Android and web receive, so what a *required*-mode rejection from the real backend looks like on iOS is the one listener path still inferred rather than captured.
-- **The Capacitor 6/7 compat jobs build a scratch app, not the demo.** `verify-capacitor-compat-{ios,android}` scaffold a throwaway copy of `example/` against the latest 6.x and 7.x, so the *bridge* is compiled and linked on every install path — but `demo/`'s richer flows and the 50 iOS / 106 Android tests still only run against Capacitor 8. They also resolve the latest release of each major at run time, so a newly published 6.x/7.x can turn CI red without a commit; that is intended.
+- **The Capacitor 6/7 compat jobs build a scratch app, not the demo.** `verify-capacitor-compat-{ios,android}` scaffold a throwaway copy of `example/` against the latest 6.x and 7.x, so the *bridge* is compiled and linked on every install path — but `demo/`'s richer flows and the 82 iOS / 109 Android tests still only run against Capacitor 8. They also resolve the latest release of each major at run time, so a newly published 6.x/7.x can turn CI red without a commit; that is intended.
 
 ## Quick start
 
@@ -1987,7 +1986,7 @@ The vitest suite is the highest-signal local check. It boots a Fastify mock Braz
 ### Native test tiers
 
 ```bash
-# Android — 106 Robolectric/JUnit tests. Needs a JDK 21 and ANDROID_HOME.
+# Android — 109 Robolectric/JUnit tests. Needs a JDK 21 and ANDROID_HOME.
 cd demo/android && ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon
 # ...plus the JaCoCo report (android/build/reports/jacoco/) and coverage ratchet
 ./gradlew :capacitor-braze:jacocoTestReport :capacitor-braze:jacocoCoverageVerification --no-daemon

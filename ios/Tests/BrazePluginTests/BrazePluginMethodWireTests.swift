@@ -174,22 +174,12 @@ final class BrazePluginMethodWireTests: XCTestCase {
         XCTAssertEqual(dob, "1990-07-04T00:00:00Z")
     }
 
-    /// **Known iOS bug, pinned rather than hidden.** The bridge builds the date
-    /// at *UTC* midnight (`BrazePlugin.setDateOfBirth`, a Gregorian calendar
-    /// pinned to UTC), but BrazeKit reads the calendar day back out in the
-    /// device's *local* time zone. West of UTC, UTC midnight on 4 July is still
-    /// 3 July locally, so every user in the Americas gets a birthday one day
-    /// early — `1990-07-03T00:00:00Z` on the wire. Android and web send
-    /// `1990-07-04` in every zone.
-    ///
-    /// The fix belongs in `ios/Sources` (build the date in the calendar
-    /// BrazeKit formats with), not here. The expectation is **strict**: when
-    /// the bridge is fixed this assertion starts passing, `XCTExpectFailure`
-    /// then fails the test, and the wrapper should be deleted.
+    /// Regression: the bridge used to build the DOB at UTC midnight while
+    /// BrazeKit formats the calendar day in the device's zone, so users west
+    /// of UTC got the previous day. Runs with the process zone forced to
+    /// America/Los_Angeles and asserts the day the consumer passed.
     func testSetDateOfBirthKeepsTheCalendarDayWestOfUTC() async throws {
         let dob = try await wireDateOfBirth(inTimeZone: "America/Los_Angeles", user: "wire-dob-west")
-        XCTExpectFailure("iOS setDateOfBirth shifts the day west of UTC: the bridge builds a UTC-midnight Date "
-            + "and BrazeKit formats it in the local zone")
         XCTAssertEqual(dob, "1990-07-04T00:00:00Z")
     }
 
