@@ -392,6 +392,35 @@ class BrazePluginWireIntegrationTest {
     }
 
     @Test
+    fun `enableInAppMessageUI false still delivers the event (the manager stays registered, the listener discards)`() {
+        // Regression: 0.2.0 skipped `registerInAppMessageManager` when the
+        // option was false, and a manager that is never registered never
+        // invokes the custom listener — so the event the option's contract
+        // promises ("still fires, nothing renders") never fired at all.
+        wire.responder = {
+            BrazeWire.serverConfig(
+                triggers = BrazeWire.trigger(
+                    id = BrazeWire.SLIDEUP_TRIGGER_ID,
+                    condition = """{"type":"open"}""",
+                    message = BrazeWire.slideupMessage(
+                        BrazeWire.SLIDEUP_TRIGGER_ID,
+                        "Observed, not rendered",
+                        "https://example.com/orders/43",
+                    ),
+                ),
+            )
+        }
+        val listener = wire.listen("inAppMessageReceived")
+        wire.initialize { put("enableInAppMessageUI", false) }
+
+        val payload = wire.awaitEvent(listener, "inAppMessageReceived with the plugin UI disabled") { true }
+        val message = payload.getJSONObject("message")
+        assertThat(message.getString("type")).isEqualTo("slideup")
+        assertThat(message.getString("id")).isEqualTo(BrazeWire.SLIDEUP_TRIGGER_ID)
+        assertThat(message.getString("message")).isEqualTo("Observed, not rendered")
+    }
+
+    @Test
     fun `a custom-event trigger delivers a modal with its buttons to the listener`() {
         wire.responder = {
             BrazeWire.serverConfig(

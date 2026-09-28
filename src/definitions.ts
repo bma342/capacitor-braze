@@ -77,8 +77,12 @@ export interface BrazeInitializeOptions {
    *     `initialize` resolves; that replaces the plugin's observer, and
    *     `inAppMessageReceived` stops firing (your `present(message:)` is the
    *     equivalent hook).
-   *   - **Android:** skips `BrazeInAppMessageManager` registration, so a
-   *     host app owns registration for its own Activities.
+   *   - **Android:** the plugin still registers `BrazeInAppMessageManager`
+   *     (that registration is what delivers the event) but its listener
+   *     returns `DISCARD`, so nothing renders. To render yourself from
+   *     native code, install your own `IInAppMessageManagerListener` after
+   *     `initialize` resolves; that replaces the plugin's, and
+   *     `inAppMessageReceived` stops firing.
    *   - **Web:** the plugin subscribes but does not call the SDK's
    *     `showInAppMessage`.
    *

@@ -107,6 +107,7 @@ Unchanged from 0.2.0 — no Braze SDK moved in this release:
 
 ### Fixed
 
+- **Android: `enableInAppMessageUI: false` no longer silences `inAppMessageReceived`.** The bridge skipped `registerInAppMessageManager` when the option was off, and an unregistered manager never invokes the custom listener — so the event the option promises never fired. The manager is now always registered and the listener returns `DISCARD` instead of `DISPLAY_NOW` when rendering is off, mirroring iOS's non-rendering observer presenter. Found by the new native integration tier; covered by a UI-off delivery test.
 - **iOS: a post-`initialize` `wipeData()` no longer leaves the SDK disabled on the next app launch.** BrazeKit's `wipeData()` is the rename of `wipeDataAndDisableForAppRun()` and still flips the persisted `enabled` flag off, so a consumer using `wipeData()` for logout got "Braze SDK disabled: Cannot schedule work" after relaunching. The bridge now restores the pre-wipe `enabled` value (an explicit `disableSDK()` before the wipe is still honoured), matching web and Android, which never disable on wipe. Found by the new iOS integration tier.
 - **Android test flakes** (pre-existing): `initializedPlugin()` now waits for the SDK's `currentUser` (`Braze.configure` does not populate it synchronously), and the custom-event assertion helper matches the named event rather than the first `ce` entry in a batched request.
 

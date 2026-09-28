@@ -323,14 +323,12 @@ means the assertion is on the HTTP body or headers; `listener` means it also ass
 | `wipeData` discards queued analytics, new device id | wire | wire |
 
 ¹ The trigger rides on the `/api/v3/data/` response and the SDK's own trigger engine fires it, so
-this is the real delivery path, not a hand-built message. The two platforms render differently
-under test: iOS initializes with `enableInAppMessageUI: false`, which exercises the non-rendering
-`BrazeObservingInAppMessagePresenter`; Android keeps the default, because with the UI off the
-Android bridge **never emits the event at all** — `registerInAppMessageManager` is what subscribes
-`BrazeInAppMessageManager` to in-app message events and gives it an Activity, and
-`beforeInAppMessageDisplayed` is only called from a registered manager. That contradicts the
-`enableInAppMessageUI` JSDoc ("the listener still fires") and is reported as a bridge bug rather
-than tested around.
+this is the real delivery path, not a hand-built message. Both platforms are exercised with the
+plugin's rendering **on and off**: iOS's non-rendering `BrazeObservingInAppMessagePresenter`, and
+Android's listener answering `DISCARD` instead of `DISPLAY_NOW`. The Android UI-off case is a
+regression test — 0.2.0 skipped `registerInAppMessageManager` when the option was `false`, and an
+unregistered manager never calls `beforeInAppMessageDisplayed`, so the event the option promises
+never fired (fixed in 0.3.0).
 
 ² Different envelopes, same bridge path. BrazeKit 18.2.1 reports `optional_auth_error` to
 `sdkAuthDelegate` and does not report the `auth_error` member Android and web use — see trap 7

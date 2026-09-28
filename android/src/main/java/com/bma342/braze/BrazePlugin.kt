@@ -142,10 +142,10 @@ class BrazePlugin : Plugin() {
 
     /**
      * Whether `initialize` was called with `enableInAppMessageUI: true`
-     * (the default). When false the plugin still emits
-     * `inAppMessageReceived`, but it never calls
-     * `registerInAppMessageManager` — the host app owns registration and
-     * rendering. See the `enableInAppMessageUI` JSDoc in
+     * (the default). The manager is registered either way — registration
+     * is what makes the SDK invoke the plugin's listener at all — and this
+     * flag only decides whether that listener answers `DISPLAY_NOW` or
+     * `DISCARD`. See the `enableInAppMessageUI` JSDoc in
      * `src/definitions.ts`.
      */
     private var inAppMessageUIEnabled: Boolean = true
@@ -357,16 +357,21 @@ class BrazePlugin : Plugin() {
     }
 
     /**
-     * Wires the plugin's observational IAM listener and — unless the
-     * consumer passed `enableInAppMessageUI: false` — registers the
+     * Wires the plugin's IAM listener and registers the
      * [BrazeInAppMessageManager] against the current Activity.
      *
-     * The custom listener is set in both cases: it always returns
-     * [InAppMessageOperation.DISPLAY_NOW], so it changes nothing about
-     * display, and it is the only way the plugin can emit
-     * `inAppMessageReceived`. It is re-set on every resume because the
-     * manager is a process-wide singleton whose listener slot is cleared
-     * by process death.
+     * Registration happens regardless of `enableInAppMessageUI`: a
+     * registered manager is the only thing that subscribes to the SDK's
+     * in-app message events and invokes the custom listener, so skipping it
+     * (as 0.2.0 did when the option was `false`) silently killed
+     * `inAppMessageReceived` — the exact opposite of what the option's
+     * contract promises. The option instead decides what the listener
+     * returns: [InAppMessageOperation.DISPLAY_NOW] (render) or
+     * [InAppMessageOperation.DISCARD] (emit the event, draw nothing) —
+     * the Android counterpart of iOS's non-rendering observer presenter.
+     * The listener is re-set on every resume because the manager is a
+     * process-wide singleton whose listener slot is cleared by process
+     * death.
      */
     private fun wireInAppMessages() {
         val manager = BrazeInAppMessageManager.getInstance()
@@ -378,7 +383,6 @@ class BrazePlugin : Plugin() {
         // messages have isControl=true on the IInAppMessage; the
         // serializer maps them to the 'control' type discriminator.
         manager.setCustomControlInAppMessageManagerListener(listener)
-        if (!inAppMessageUIEnabled) return
         val activity = bridge?.activity ?: return
         manager.registerInAppMessageManager(activity)
         inAppMessageManagerRegistered = true
@@ -503,9 +507,12 @@ class BrazePlugin : Plugin() {
     /**
      * Custom listener wired to [BrazeInAppMessageManager] so consumer JS
      * receives an `inAppMessageReceived` event for every IAM trigger.
-     * Always returns [InAppMessageOperation.DISPLAY_NOW] to preserve
-     * out-of-the-box display behavior; listener implementations on the
-     * JS side cannot block display (Phase 3b scope), but they can react.
+     * Returns [InAppMessageOperation.DISPLAY_NOW] when the plugin renders
+     * (`enableInAppMessageUI: true`, the default) and
+     * [InAppMessageOperation.DISCARD] when the consumer opted out of the
+     * plugin's rendering — the event is emitted either way. JS listeners
+     * cannot block display (they are observational); the init-time option
+     * is the switch.
      */
     private val inAppMessageListener: IInAppMessageManagerListener by lazy {
         object : IInAppMessageManagerListener {
@@ -513,7 +520,11 @@ class BrazePlugin : Plugin() {
                 val payload = JSObject()
                 payload.put("message", serializeInAppMessage(inAppMessage))
                 notifyOnMain("inAppMessageReceived", payload)
-                return InAppMessageOperation.DISPLAY_NOW
+                return if (inAppMessageUIEnabled) {
+                    InAppMessageOperation.DISPLAY_NOW
+                } else {
+                    InAppMessageOperation.DISCARD
+                }
             }
         }
     }
