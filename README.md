@@ -69,7 +69,7 @@ Capacitor 8 Android template already exceeds every floor Braze imposes. You need
 **JDK 21**, both of which Capacitor 8 requires anyway.
 
 **On Capacitor 6 or 7, or on any Capacitor version with a CocoaPods iOS project**, apply the
-[platform setup](#platform-setup) below first — [iOS/CocoaPods](#ios--install-path-b-cocoapods)
+[platform setup](#platform-setup) below first — [iOS/CocoaPods](#ios--install-path-b-cocoapods--iosapppodfile)
 needs two Podfile lines on every major, iOS/SPM on 6/7 needs the App target raised to 15.0, and
 [Android on Capacitor 6](#android--gradle-config) needs three Gradle bumps (Capacitor 7's Android
 template needs none). None of it is optional; all of it is what the pinned Braze SDKs force. Full
