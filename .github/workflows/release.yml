@@ -30,9 +30,12 @@ name: Release
 # `id-token: write` OIDC token this job already holds, provenance becomes
 # mandatory rather than a flag, and there is no long-lived secret to steal.
 #
-# Once that is configured on npmjs.com, delete the `NODE_AUTH_TOKEN` line from
-# the publish step and revoke `NPM_TOKEN` in repo secrets. Do NOT delete it
-# before the trusted publisher exists — the publish would fail with E401.
+# The "Configure npm auth" step below supports both modes: it writes the
+# automation token to ~/.npmrc when the `NPM_TOKEN` secret exists and
+# otherwise leaves npm to the OIDC exchange. Once the trusted publisher is
+# registered on npmjs.com, revoke `NPM_TOKEN` in repo secrets (if it was ever
+# added) and nothing else needs to change. Do NOT remove the token before the
+# trusted publisher exists — the publish would fail with E401.
 #
 # ---------------------------------------------------------------------------
 # `environment: npm-publish`
@@ -92,10 +95,41 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
+      # No `registry-url` on setup-node: that writes an `.npmrc` whose
+      # `_authToken=${NODE_AUTH_TOKEN}` makes npm abort when the variable is
+      # unset — which it is on the Trusted Publishing (OIDC) path. Auth is
+      # configured explicitly two steps down instead.
 
       - name: Install dependencies
         run: npm ci
+
+      # npm >= 11.5.1 is what performs the OIDC exchange for Trusted
+      # Publishing; the npm bundled with Node 22 predates it.
+      - name: Upgrade npm (Trusted Publishing needs >= 11.5.1)
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      # Two supported auth modes, decided by whether NPM_TOKEN exists:
+      #   - token present  → classic automation token (bypasses 2FA by design;
+      #                      see SECURITY.md §13)
+      #   - token absent   → npm Trusted Publishing: npm exchanges this job's
+      #                      OIDC identity (id-token: write) for a short-lived
+      #                      publish credential. Requires the repo + workflow +
+      #                      environment to be registered as a trusted
+      #                      publisher on npmjs.com (CONTRIBUTING.md, pre-tag
+      #                      checklist item 7).
+      - name: Configure npm auth
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NPM_TOKEN}" ]; then
+            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$HOME/.npmrc"
+            echo "npm auth: automation token"
+          else
+            echo "npm auth: none configured — relying on npm Trusted Publishing (OIDC)"
+          fi
 
       - name: Build
         run: npm run build
@@ -144,15 +178,9 @@ jobs:
       # OIDC round trip with nothing to verify in a dry run.
       - name: Publish dry run
         run: npm publish --dry-run --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish to npm with provenance
         run: npm publish --provenance --access public
-        env:
-          # Delete this line once npm Trusted Publishing is configured (see
-          # the header). Keep it until then or the publish 401s.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Verify the attestation landed
         run: |

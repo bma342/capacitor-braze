@@ -277,7 +277,7 @@ actions — but treat Trusted Publishing as the control that matters here.
    checks the attestation landed, and creates the GitHub Release.
 8. Verify the published package by installing it into a fresh project.
 
-## Maintainer pre-tag checklist for `0.2.0`
+## Maintainer pre-tag checklist for `0.3.0`
 
 **None of these is done.** They are GitHub and npm account settings, so no code change can perform
 them, and the docs that depend on them (`SECURITY.md` §13 and §14, `REVIEW_READINESS.md` §7) say so

@@ -44,6 +44,6 @@ Each report opens with a **Resolution status** table mapping every finding ID to
 `0.2.0`, partly fixed (with what remains), deliberately not changed (with the reason), or
 *maintainer action — not done* for the GitHub and npm account settings that no code change can
 perform. The last category is real and is not glossed: see
-[CONTRIBUTING's pre-tag checklist](../../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020).
+[CONTRIBUTING's pre-tag checklist](../../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030).
 
 Where a report's body contradicts the current code, the code wins.

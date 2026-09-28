@@ -23,7 +23,7 @@ See [`PLAN.md`](./PLAN.md) for the full strategic case, including [why not the C
 
 ## Status
 
-Snapshot at **0.3.0** (2026-09-22). This table drifts — `package.json`, `git log` and [`CHANGELOG.md`](./CHANGELOG.md) are the source of truth.
+Snapshot at **0.3.0** (2026-09-28). This table drifts — `package.json`, `git log` and [`CHANGELOG.md`](./CHANGELOG.md) are the source of truth.
 
 | Surface | State |
 |---|---|
@@ -35,8 +35,8 @@ Snapshot at **0.3.0** (2026-09-22). This table drifts — `package.json`, `git l
 | **Reference app** (`demo/`) | React 19 + Tailwind 4 + TanStack Router; restaurant ordering + e-commerce flows; iOS + Android Capacitor projects committed |
 | **MDC design contracts** | [C01–C11](./docs/mdcs/) codify the patterns; CI gates enforce them |
 | **CI** | 11 jobs in [`test.yml`](./.github/workflows/test.yml) plus 4 CodeQL analyses — `javascript-typescript` and `actions` in [`codeql.yml`](./.github/workflows/codeql.yml), `java-kotlin` and `swift` (traced builds of the native bridges) in [`codeql-native.yml`](./.github/workflows/codeql-native.yml); all GitHub Actions pinned to commit SHAs; release publishing gated on the full suite. Two of the 11 are matrix jobs over Capacitor 6 and 7, so the range the peer dep advertises is the range CI builds. `build-plugin` enforces a gzipped-ESM bundle budget of 20,480 B (measured 17,472 B at 0.2.0; 0.3.0 changed no TypeScript) |
-| **Branch protection** | `main` requires the CI checks (strict), signed commits, no force pushes, no deletions. Admin enforcement, a release-tag ruleset and private vulnerability reporting are **maintainer steps not yet performed** — see [CONTRIBUTING → Maintainer pre-tag checklist](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
-| **Published to npm** | ✅ [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) — `0.1.0` published 2026-05-22 (by hand, no provenance attestation). `0.2.0` was the first release published by the workflow with `--provenance` |
+| **Branch protection** | `main` requires the CI checks (strict), signed commits, no force pushes, no deletions. Admin enforcement, a release-tag ruleset and private vulnerability reporting are **maintainer steps not yet performed** — see [CONTRIBUTING → Maintainer pre-tag checklist](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030) |
+| **Published to npm** | ✅ [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze). `0.1.0` (2026-05-22) was published by hand with no provenance attestation. `0.2.0` was never tagged — it shipped inside `0.3.0`. `0.3.0` is published from the `v0.3.0` tag by [`release.yml`](./.github/workflows/release.yml): full CI gate first, then `npm publish --provenance`, the first release with a provenance attestation |
 | **Smoke-tested against real Braze** | ❌ **Not yet.** The Layer 4 playbook and capture templates are staged in [`docs/smoke-tests/`](./docs/smoke-tests/) but have never been run — no claim in this repo is backed by a live Braze backend |
 | **Capacitor 8 + SPM** | ✅ New in 0.3.0. Peer dep `^6.0.0 \|\| ^7.0.0 \|\| ^8.0.0`, podspec `>= 6.0, < 9.0`, and a root [`Package.swift`](./Package.swift) so the plugin installs into the SPM project Capacitor 8's CLI now generates by default. `demo/` (Pods + Android) and `example/` (SPM) both build in CI on Capacitor 8.5.2 |
 | **Capacitor 6 / 7 still supported** | ✅ New in 0.3.0, and now *tested* rather than merely allowed. `verify-capacitor-compat-{ios,android}` build a scratch app against the latest 6.x and 7.x on CocoaPods, SPM and Android every PR, applying only the consumer edits [C10's matrix](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md#the-support-matrix-030) documents |
@@ -69,7 +69,7 @@ Capacitor 8 Android template already exceeds every floor Braze imposes. You need
 **JDK 21**, both of which Capacitor 8 requires anyway.
 
 **On Capacitor 6 or 7, or on any Capacitor version with a CocoaPods iOS project**, apply the
-[platform setup](#platform-setup) below first — [iOS/CocoaPods](#ios--install-path-b-cocoapods)
+[platform setup](#platform-setup) below first — [iOS/CocoaPods](#ios--install-path-b-cocoapods--iosapppodfile)
 needs two Podfile lines on every major, iOS/SPM on 6/7 needs the App target raised to 15.0, and
 [Android on Capacitor 6](#android--gradle-config) needs three Gradle bumps (Capacitor 7's Android
 template needs none). None of it is optional; all of it is what the pinned Braze SDKs force. Full
@@ -2072,9 +2072,7 @@ These build the plugin, then drive the demo app against a real Braze workspace. 
 
 | Surface | Why | When |
 |---|---|---|
-| Native **integration** behavior (real HTTP wire format from iOS/Android) | The native tiers are unit/contract tests against the SDK's own model objects; the URLProtocol / MockWebServer intercept tier designed in [C11](./docs/mdcs/C11-NATIVE-TEST-HARNESSES.md) is not built | Tracked follow-up |
-| Real Braze backend acceptance | Requires a Braze trial account; playbook in [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) | Gate for the first *validated* release claim; 0.1.0, 0.2.0 and 0.3.0 ship on mock-verified wire format only |
-| `inAppMessageReceived` delivery path **on iOS / Android** | The web delivery path is covered end to end — the mock server returns real trigger envelopes and the Web SDK's own trigger engine builds the message. Reproducing that on the native tiers needs the C11 HTTP-intercept tier; the DTO itself is covered by serializer tests on all three platforms | Tracked follow-up |
+| Real Braze backend acceptance | Requires a Braze trial account; playbook in [`docs/SMOKE-TEST-PLAYBOOK.md`](./docs/SMOKE-TEST-PLAYBOOK.md) | Gate for the first *validated* release claim; every release so far ships on the mock-verified wire format — which, as of 0.3.0, the real iOS and Android SDKs are driven against in the native integration tiers |
 
 ## Documentation
 
@@ -2324,7 +2322,7 @@ npm install capacitor-braze @braze/web-sdk
 | iOS: `initialize` appears to do nothing after a `wipeData()` | A pre-`initialize` `wipeData()` on iOS disables the SDK for the rest of the app run | Relaunch the app |
 | Push campaigns show sends but no opens on iOS | Only token registration was wired | Pass `enablePushAutomation: true` to `initialize` |
 | Android push: two `FirebaseMessagingService`s fighting for the intent filter | Only one service can win `com.google.firebase.MESSAGING_EVENT` | Use the forwarding recipe in [C10 → Android push](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md#android-push-setup-only-if-consumers-use-push) |
-| `setEmail('nonsense')` resolves | Known gap: the Web SDK's rejection boolean is discarded (A1-10); iOS/Android log a warning | Validate before calling; see [Known gaps](#known-gaps-in-020) |
+| `setEmail('nonsense')` resolves | Known gap: the Web SDK's rejection boolean is discarded (A1-10); iOS/Android log a warning | Validate before calling; see [Known gaps](#known-gaps-in-030) |
 
 ## Contributing
 

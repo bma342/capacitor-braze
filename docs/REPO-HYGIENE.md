@@ -1,6 +1,6 @@
 # Repo hygiene — one-time setup
 
-The personal-account / local-machine settings the maintainer must configure once. Sister to [`REVIEW_READINESS.md` §7](../REVIEW_READINESS.md#7-remaining-work) and the [maintainer pre-tag checklist](../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020), which carries the exact `gh api` commands for what is still outstanding. Everything that could be automated via `gh` CLI has already been applied to the `bma342/capacitor-braze` repo (see "Already applied" below). What remains lives on your account or machine.
+The personal-account / local-machine settings the maintainer must configure once. Sister to [`REVIEW_READINESS.md` §7](../REVIEW_READINESS.md#7-remaining-work) and the [maintainer pre-tag checklist](../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030), which carries the exact `gh api` commands for what is still outstanding. Everything that could be automated via `gh` CLI has already been applied to the `bma342/capacitor-braze` repo (see "Already applied" below). What remains lives on your account or machine.
 
 ---
 
@@ -22,12 +22,12 @@ Branch protection on `main`:
 - `allow_deletions`: false
 - `required_conversation_resolution`: true
 - `required_signatures`: true
-- `enforce_admins`: **false** — so the required checks above do **not** currently bind the admin. This is worth turning on; the command is in [CONTRIBUTING](../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020), and `SECURITY.md` §13 states the gap rather than glossing it.
+- `enforce_admins`: **false** — so the required checks above do **not** currently bind the admin. This is worth turning on; the command is in [CONTRIBUTING](../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030), and `SECURITY.md` §13 states the gap rather than glossing it.
 - `required_pull_request_reviews`: **null** — deliberate. On a single-maintainer repo a review requirement with a standing self-bypass is not a control. Revisit when a second maintainer joins.
 
 ### Not yet applied
 
-Tracked in the [maintainer pre-tag checklist](../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) with commands: `enforce_admins`, linear history, a `v*` tag ruleset, private vulnerability reporting, Dependabot *security* updates, the `npm-publish` environment, and npm Trusted Publishing.
+Tracked in the [maintainer pre-tag checklist](../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030) with commands: `enforce_admins`, linear history, a `v*` tag ruleset, private vulnerability reporting, Dependabot *security* updates, the `npm-publish` environment, and npm Trusted Publishing.
 
 To audit / change later:
 

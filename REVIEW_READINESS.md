@@ -26,7 +26,7 @@ standard to aim at; this block is what is true.
 | **Perf / bundle budgets in CI** | **one, enforced**: gzipped ESM bundle ≤ 20,480 B (measured 17,472 B). The other budgets in §2 were unmeasured guesses and are gone |
 | **SAST / CodeQL** | **CodeQL on `javascript-typescript` + `actions`** (`codeql.yml`) **and on `java-kotlin` + `swift`** (`codeql-native.yml`, traced builds scoped to the bridges' own sources; PRs run each native language only when its files change) — push, PR, weekly — plus `npm audit`, gitleaks and secret scanning. Snyk removed: its token was never provisioned |
 | **Provenance** | `0.1.0` published by hand, **no attestation**. `0.2.0` will be the first workflow-published release |
-| **Repo settings still to do** | private vulnerability reporting, `enforce_admins`, `v*` tag ruleset, npm Trusted Publishing — see [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
+| **Repo settings still to do** | private vulnerability reporting, `enforce_admins`, `v*` tag ruleset, npm Trusted Publishing — see [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030) |
 
 Two self-audits sit behind this: [`docs/audits/2026-05/`](./docs/audits/2026-05/) (at `0.0.12`) and
 [`docs/audits/2026-09/`](./docs/audits/2026-09/) (at `0.1.0`), each archived with a per-finding
@@ -400,7 +400,7 @@ Items marked **[manual]** are yours. §6 grades the current state of each.
 - **[CI]** Version is not already on the registry; `npm publish --dry-run` first; `--provenance`; attestation verified afterwards
 - **[manual]** Git tag created (`v0.x.y`), signed
 - **[CI]** GitHub Release created from the tag
-- **[manual]** Repo settings verified — see the [maintainer pre-tag checklist](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020). **Several of these are not yet done**
+- **[manual]** Repo settings verified — see the [maintainer pre-tag checklist](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030). **Several of these are not yet done**
 - ~~npm 2FA verified~~ — the publish uses an **automation token, which bypasses 2FA by design**. The fix is npm Trusted Publishing, not a 2FA checkbox; see `SECURITY.md` §13
 
 ### Post-release
@@ -531,7 +531,7 @@ Everything §7 previously listed as a `0.1.0` blocker, plus what `0.2.0` closed:
 ### Before tagging `0.2.0`
 
 Maintainer actions, none of which a code change can perform. Exact `gh api` commands are in
-[CONTRIBUTING → Maintainer pre-tag checklist](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020).
+[CONTRIBUTING → Maintainer pre-tag checklist](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030).
 
 Numbered to match CONTRIBUTING's checklist, so the two documents can be read side by side.
 

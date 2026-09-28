@@ -85,7 +85,7 @@ a pointer to where it is now tracked.
 | L5-04 | Low | **0.1.0 → really 0.2.0 on iOS** | The `sdkAuthError` listener shipped in 0.1.0, but on iOS it was attached to `BrazeDelegate`, which does not declare the callback — it never fired until 0.2.0 moved it to `braze.sdkAuthDelegate`. |
 | L5-05 | Low | **partly 0.1.0, completed 0.2.0** | gitleaks + Snyk steps and signed commits landed in 0.1.0. The Snyk step could never execute; in 0.2.0 it was first repaired and then **removed** (its token was never provisioned), with CodeQL added in its place. SHA-pinning of Actions landed in 0.2.0. |
 | L5-06 | Low | **0.1.0 → corrected 0.2.0** | Dependabot gained `/demo` and `/test/mock-server` in 0.1.0, but the mock-server entry declared `gradle` for an npm project and was inert; fixed in 0.2.0, which also added `/test/web`. |
-| L5-07 | Trivial | **0.1.0** | Disclosure placeholder replaced with the GitHub private-advisory pointer. Note that **private vulnerability reporting still has to be switched on by the maintainer** — see [CONTRIBUTING → Maintainer pre-tag checklist](../../../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020). |
+| L5-07 | Trivial | **0.1.0** | Disclosure placeholder replaced with the GitHub private-advisory pointer. Note that **private vulnerability reporting still has to be switched on by the maintainer** — see [CONTRIBUTING → Maintainer pre-tag checklist](../../../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030). |
 | L5-08 | Trivial | **0.1.0** | See L4-K04. |
 | L5-09 | Trivial | **0.2.0** | SECURITY.md §3 now states the actual (stronger) posture — the bridge emits no PII-bearing logs at all — instead of describing a masking scheme that was never implemented. |
 

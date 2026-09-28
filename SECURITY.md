@@ -515,7 +515,7 @@ await Braze.wipeData();
 | **Dependabot version updates** | `.github/dependabot.yml` | **Enabled**, six ecosystems (`/`, `/example`, `/demo`, `/test/web`, `/test/mock-server`, `github-actions`) |
 | **Tarball manifest gate** | `pack-check` job, `.github/scripts/assert-pack.mjs` | **Runs.** Asserts every consumer-required artifact is published and no repo-internal tree leaks into the package |
 | **Bundle-size budget** | `build-plugin` job, `.github/scripts/assert-size.mjs` | **Runs, and fails the build** above 20,480 B gzipped for the ESM tree. Mostly a supply-chain canary: a dependency inlined into the bundle shows up as a size jump |
-| **Dependabot security updates** | Repository setting | **Not enabled** — a maintainer action, see [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
+| **Dependabot security updates** | Repository setting | **Not enabled** — a maintainer action, see [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030) |
 
 Snyk was wired into the `audit` job in 0.2.0 behind `if: env.SNYK_TOKEN != ''` and **has been
 removed**. Provisioning the token was never done, a step that always skips is worse than no step
@@ -579,7 +579,7 @@ Honestly **not** in force, and deliberately so or pending:
   with a standing self-bypass is theatre, not a control. If a second maintainer joins, enable it.
 - **`enforce_admins`** — not enabled, so the required checks do not currently bind the admin.
   This one *is* worth turning on, and the command is in
-  [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020).
+  [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030).
 - **A ruleset restricting who may create `v*` tags** — not created yet; same checklist.
 
 ### Supply-chain hardening
@@ -612,7 +612,7 @@ Honestly **not** in force, and deliberately so or pending:
 
 > ⚠️ **Status check before you rely on this.** GitHub's private vulnerability reporting must be
 > switched on per repository, and **as of this writing it has not been** — the enabling command is
-> in [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) and is on the pre-tag
+> in [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030) and is on the pre-tag
 > checklist for `0.2.0`. Until that lands, the advisory form above will not accept a report from a
 > non-collaborator. If it refuses you, email the maintainer address in `package.json` with
 > `[SECURITY]` in the subject and **do not** open a public issue. This paragraph is removed once

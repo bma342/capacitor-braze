@@ -2,7 +2,7 @@
 
 **Project:** Open-source Capacitor 6/7/8 plugin wrapping the Braze native SDKs (Android Kotlin, iOS Swift, Web JS). iOS installs under **CocoaPods or Swift Package Manager**.
 **Owner:** Bryce Aspinwall (`bma342`), MIT-licensed, personal portfolio + Aromo lighthouse.
-**npm package:** [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) — published; `0.1.0` is on the registry, `0.2.0` shipped, `0.3.0` (Capacitor 8 + SPM) is this branch.
+**npm package:** [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) — published; `0.1.0` is on the registry, `0.2.0` and `0.3.0` (Capacitor 8 + SPM) are on `main`; `0.3.0` is the release to tag.
 **Current state:** 35 methods + 5 listener events; 206 web + 109 Android + 82 iOS tests, all in CI; BrazeKit/BrazeUI 18.2.1 (Xcode 26+), `com.braze:android-sdk-ui` 43.2.0, `@braze/web-sdk` peer `^6.13.0`.
 
 **Source-of-truth docs — read these before any non-trivial work:**
@@ -114,8 +114,8 @@ Snapshot at `0.3.0`, verified 2026-09-22 (see `package.json` for the live versio
 | Smoke wrappers (`npm run smoke:web/ios/android`) | ✅ scripts exist |
 | Audit cleanup — `docs/audits/2026-05` (17 phases) + `docs/audits/2026-09` (this wave) | ✅ |
 | `0.1.0` to npm | ✅ [npmjs.com/package/capacitor-braze](https://www.npmjs.com/package/capacitor-braze) — published **by hand**, no provenance attestation |
-| `0.2.0` to npm | ⏳ will be the first workflow-published release |
-| `0.3.0` to npm | ⏳ this branch |
+| `0.2.0` to npm | — never tagged; merged to `main` with `0.3.0` (#28) and shipped inside it |
+| `0.3.0` to npm | ⏳ on `main` (#28); tag `v0.3.0` publishes it through `release.yml` — the first workflow-published, provenance-attested release |
 | C11 native test harnesses — integration tier (MockWebServer on Android, loopback `NWListener` server on iOS) | ✅ 17 tests on Android, 27 on iOS, none skipped, in CI since 0.3.0 |
 | **Layer 4 real-Braze smoke** | ⏳ **never run.** Templates only in `docs/smoke-tests/`; no release is validated against a live Braze backend |
 | Private vulnerability reporting, `enforce_admins`, `v*` tag ruleset, npm Trusted Publishing | ⏳ maintainer actions — commands in `CONTRIBUTING.md` |
@@ -405,7 +405,7 @@ Short, sharp, codebase-specific patterns that pay off repeatedly:
 | What the iOS SDK exposes | Download `BrazeKit.zip` from `braze-inc/braze-swift-sdk` releases; read `BrazeKit.framework/Modules/BrazeKit.swiftmodule/arm64-apple-ios.swiftinterface` |
 | What the Android SDK exposes | `gh api repos/braze-inc/braze-android-sdk/contents/<path>` against the public source; the actual `Card` model classes are closed-source but `com.braze.models.cards.{CaptionedImageCard, ImageOnlyCard, ShortNewsCard, TextAnnouncementCard}` field access is visible in the open `android-sdk-ui` module |
 | What was already audited, and what came of it | [`docs/audits/`](./docs/audits/) — 2026-05 and 2026-09 self-audits, each with a per-finding resolution table. **Archives, not open punch lists** |
-| What is knowingly still broken | the README's [Known gaps](./README.md#known-gaps-in-020) section |
+| What is knowingly still broken | the README's [Known gaps](./README.md#known-gaps-in-030) section |
 | Whether a behavior is intended | git log → commit messages have rationale; `CHANGELOG.md` has the user-facing version |
 | What the test fixtures look like | [`test/web/src/test-utils.ts`](./test/web/src/test-utils.ts) for the `freshPluginWithConfig()` helper |
 

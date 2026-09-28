@@ -6,7 +6,7 @@
 >
 > **Several items here are GitHub / npm account settings, which code changes cannot close.** Those
 > are marked *maintainer action* and the exact commands live in
-> [CONTRIBUTING → Maintainer pre-tag checklist](../../../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020).
+> [CONTRIBUTING → Maintainer pre-tag checklist](../../../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030).
 > They are **not** done. Do not read this table as claiming otherwise.
 
 ## Resolution status
