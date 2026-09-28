@@ -502,3 +502,52 @@ final class BrazeContentCardUseWebViewTests: XCTestCase {
         XCTAssertNil(dto["useWebView"])
     }
 }
+
+/// The two content-card variants the integration tier's served card
+/// (`short_news`, BrazeKit's `classicImage`) does not reach: text-only
+/// `classic` and `imageOnly`. C02 declares `aspectRatio: number | null` on
+/// every non-control card, so the variant BrazeKit gives no ratio must still
+/// carry the key.
+@MainActor
+final class BrazeContentCardVariantTests: XCTestCase {
+
+    func testAClassicCardSerializesWithANullAspectRatio() throws {
+        let card = Braze.ContentCard.classic(
+            .init(
+                data: .init(id: "classic-1", createdAt: 1_700_000_000),
+                language: "en",
+                title: "Title",
+                description: "Description",
+                domain: "example.com"
+            )
+        )
+        let dto = try XCTUnwrap(BrazePlugin.serializeContentCard(card))
+        XCTAssertEqual(dto["type"] as? String, "classic")
+        XCTAssertEqual(dto["title"] as? String, "Title")
+        XCTAssertEqual(dto["description"] as? String, "Description")
+        XCTAssertEqual(dto["linkText"] as? String, "example.com")
+        XCTAssertEqual(dto["language"] as? String, "en")
+        XCTAssertNil(dto["imageUrl"], "a text-only classic card has no image")
+        XCTAssertTrue(dto["aspectRatio"] is NSNull)
+        XCTAssertEqual((dto["updated"] as? NSNumber)?.int64Value, 1_700_000_000_000)
+    }
+
+    func testAnImageOnlyCardCarriesItsImageAndAspectRatio() throws {
+        let card = Braze.ContentCard.imageOnly(
+            .init(
+                data: .init(id: "image-1"),
+                image: try XCTUnwrap(URL(string: "https://cdn.example/banner.png")),
+                imageAltText: "banner",
+                imageAspectRatio: 2.5
+            )
+        )
+        let dto = try XCTUnwrap(BrazePlugin.serializeContentCard(card))
+        XCTAssertEqual(dto["type"] as? String, "imageOnly")
+        XCTAssertEqual(dto["imageUrl"] as? String, "https://cdn.example/banner.png")
+        XCTAssertEqual(dto["altImageText"] as? String, "banner")
+        XCTAssertEqual((dto["aspectRatio"] as? NSNumber)?.doubleValue, 2.5)
+        XCTAssertNil(dto["title"], "an image-only card has no title")
+        // C03: `createdAt` defaults to 0, the SDK's "no value" sentinel.
+        XCTAssertTrue(dto["updated"] is NSNull)
+    }
+}

@@ -37,15 +37,17 @@ import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Measured 2026-09-28 at 0.3.0 (50 XCTests, 1 skipped), Xcode 26.6, iPhone 17
-// simulator: lines 908/1551 = 58.54%, functions 80/155 = 51.61%
-// (BrazePlugin.swift 760/1338 lines, BrazeIAMDelegate.swift 148/213). See
+// Measured 2026-09-28 at 0.3.0 (82 XCTests, none skipped — every one of the
+// 35 @objc bridge methods entered through a real CAPPluginCall), Xcode 26.6,
+// iPhone 17 simulator: lines 1481/1551 = 95.49%, functions 140/155 = 90.32%
+// (BrazePlugin.swift 1308/1338 lines, BrazeIAMDelegate.swift 173/213). The
+// first measurement, at 50 XCTests, was 58.54% / 51.61%. See
 // docs/TEST-COVERAGE-AUDIT.md. Floors are the measured value rounded down to
 // the whole percent. They are a RATCHET: raise
 // them when coverage improves, and never lower them to turn a red build green —
 // add the test instead.
-const MIN_LINE_PERCENT = 58;
-const MIN_FUNCTION_PERCENT = 51;
+const MIN_LINE_PERCENT = 95;
+const MIN_FUNCTION_PERCENT = 90;
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCES_DIR = join(REPO_ROOT, 'ios', 'Sources', 'BrazePlugin');

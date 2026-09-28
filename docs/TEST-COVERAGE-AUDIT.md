@@ -9,10 +9,11 @@
 
 **Audited:** 2026-09-22 (`0.2.0`); native coverage measured 2026-09-28 (`0.3.0`).
 **Web test count:** **206 tests across 18 files, ~3.5s** (`npm test`).
-**Native:** 108 Robolectric/JUnit (`android/src/test/`) + 52 XCTest (`ios/Tests/BrazePluginTests/`, none
-skipped), both in CI. Of those, **17 per platform are C11's integration tier** — the real Braze SDKs
-driven against a local HTTP server, asserting the wire and, for every listener event, the
-`notifyListeners` payload the SDK's own parse produced.
+**Native:** 108 Robolectric/JUnit (`android/src/test/`) + 82 XCTest (`ios/Tests/BrazePluginTests/`, none
+skipped), both in CI. Of those, **17 on Android and 27 on iOS are C11's integration tier** — the real
+Braze SDKs driven against a local HTTP server, asserting the wire and, for every listener event, the
+`notifyListeners` payload the SDK's own parse produced. Both natives enter all 35 bridge methods
+through a real `PluginCall` / `CAPPluginCall`.
 **Methods on the surface:** 35, plus `addListener` (4 event overloads) and `removeAllListeners`.
 **Directly covered:** **35 of 35**, plus dedicated rejection coverage for every input-validation
 branch in `src/web.ts` ([`validation.test.ts`](../test/web/src/validation.test.ts)).
@@ -176,18 +177,19 @@ deterministic rather than timing-dependent.
 ## Measured coverage of the native bridges
 
 Measured **2026-09-28** at `0.3.0`: JDK 21 + Robolectric for Android, Xcode 26.6 on the iPhone 17
-simulator for iOS. Two consecutive iOS runs (one with `-enableCodeCoverage YES`, one relying on the
-scheme's own setting) produced identical numbers.
+simulator for iOS. The iOS rows were re-measured the same day after the bridge-method sweep (82
+XCTests; the first measurement, at 50, was 58.54% lines / 51.61% functions), and three consecutive
+runs produced identical numbers.
 
 | Bridge | Scope | Metric | Covered / total | % | Ratchet floor | Enforced by |
 |---|---|---|---|---|---|---|
 | Android | `BrazePlugin.kt` (all its classes; `R` / `BuildConfig` / `Manifest` excluded) | Lines | 600 / 668 | **89.82** | 89 | `:capacitor-braze:jacocoCoverageVerification` in `verify-android` |
 | Android | same | Branches | 433 / 567 | **76.37** | 76 | same |
 | Android | same | Methods (info) | 84 / 88 | 95.45 | — | — |
-| iOS | `ios/Sources/BrazePlugin/*.swift` | Lines | 908 / 1551 | **58.54** | 58 | `node scripts/ios-coverage-gate.mjs` in `verify-ios` |
-| iOS | same | Functions | 80 / 155 | **51.61** | 51 | same |
-| iOS | `BrazePlugin.swift` (info) | Lines | 760 / 1338 | 56.80 | — | — |
-| iOS | `BrazeIAMDelegate.swift` (info) | Lines | 148 / 213 | 69.48 | — | — |
+| iOS | `ios/Sources/BrazePlugin/*.swift` | Lines | 1481 / 1551 | **95.49** | 95 | `node scripts/ios-coverage-gate.mjs` in `verify-ios` |
+| iOS | same | Functions | 140 / 155 | **90.32** | 90 | same |
+| iOS | `BrazePlugin.swift` (info) | Lines | 1308 / 1338 | 97.76 | — | — |
+| iOS | `BrazeIAMDelegate.swift` (info) | Lines | 173 / 213 | 81.22 | — | — |
 
 The floors are the measured values rounded down to the whole percent — the same ratchet rule as
 the web thresholds: raise them when coverage improves, never lower them to make a run pass. They
@@ -238,33 +240,52 @@ writes its summary to the job's step summary.
 in-app-message display callback that needs a live trigger (the `inAppMessageReceived` gap below),
 part of `warnIfNotBrazeCluster`, and the lambda the `deepLinkHandling: 'app'` handler hands the SDK.
 
-**iOS** has a much larger, and more actionable, gap: **20 of the 35 `@objc` bridge methods are never
-entered by any XCTest** — `echo`, `getUserId`, `setSdkAuthenticationSignature`, `setPhoneNumber`,
-`setFirstName`, `setLastName`, `setLanguage`, `setCountry`, `setDateOfBirth`, `setGender`,
-`setHomeCity`, `addAlias`, `getDeviceId`, `getFeatureFlag`, `getAllFeatureFlags`,
+**iOS** now enters every one of the 35 `@objc` methods too. The first measurement (58.54% lines)
+found twenty never entered by any XCTest — `echo`, `getUserId`, `setSdkAuthenticationSignature`,
+`setPhoneNumber`, `setFirstName`, `setLastName`, `setLanguage`, `setCountry`, `setDateOfBirth`,
+`setGender`, `setHomeCity`, `addAlias`, `getDeviceId`, `getFeatureFlag`, `getAllFeatureFlags`,
 `logFeatureFlagImpression`, `getContentCards`, `logContentCardClick`, `logContentCardImpression`,
-`isDisabled`. The iOS unit tier tests the *helpers* those methods call (`classifyAttributeValue`,
-the C04 error strings, the serializers) rather than driving each `CAPPluginCall` through the method
-the way Android's contract sweep does. Nothing about this needs new infrastructure: the integration
-harness already initializes a real plugin, so each is an ordinary XCTest. Until then, those methods'
-validation branches are pinned byte-exact on web and Android only.
+`isDisabled` — because the unit tier tested the *helpers* those methods call rather than driving a
+`CAPPluginCall` through each. Two files close that, both on the existing integration harness:
+
+- `BrazePluginBridgeContractTests.swift` (18) — the iOS twin of Android's contract sweep: every
+  rejection branch of every method asserted byte-for-byte against `src/web.ts`, a table-driven
+  init-guard sweep over all 29 guarded methods (cross-checked against `pluginMethods`, so a new method
+  cannot slip past it), and the C07 quartet before `initialize` — including a pre-init `disableSDK`
+  landing on the instance `initialize` then creates.
+- `BrazePluginMethodWireTests.swift` (10) — the wire and the SDK state behind each of the twenty:
+  `first_name` / `last_name` / `phone` / `country` / `language` / `home_city`, `dob`, all six
+  `gender` codes, the `uae` alias event, `getUserId` null → id across `changeUser`, `getDeviceId`
+  stable and equal to the wire's `device_id`, a rotated SDK-Authentication signature on later
+  requests, `getAllFeatureFlags` / `getFeatureFlag` (all six property tags) / the `ffi` impression,
+  and `getContentCards` / the `cci` impression / the `ccc` click against a served sync. `isDisabled`
+  is read on both sides of each toggle in the existing `disableSDK` wire test.
+
+What is left uncovered on iOS is unreachable or out of scope: `enablePushAutomation`'s wiring (it
+asks the simulator for notification authorization), the "invalid date components" branch
+(`Calendar` rolls any in-range day over rather than failing), the unknown-feature-flag-property and
+`@unknown default` card branches (no such value exists at the pinned BrazeKit), and in
+`BrazeIAMDelegate.swift` the *rendering* presenter's delivery path and some serializer variants.
+
+The sweep also found a **real iOS bug** — see `setDateOfBirth` under "Remaining gaps" below.
 
 ### Native coverage — what the unit tiers cover
 
 [C11](./mdcs/C11-NATIVE-TEST-HARNESSES.md)'s unit tiers landed in `0.2.0` and run in CI. On Android,
-106 Robolectric tests cover every `@PluginMethod` validation branch byte-exact against `src/web.ts`,
+91 Robolectric tests cover every `@PluginMethod` validation branch byte-exact against `src/web.ts`,
 an init-guard sweep over all 29 guarded methods, and every serializer against real Braze model
-objects parsed from Braze's own wire JSON. On iOS, 50 XCTests cover the attribute-value classifier
+objects parsed from Braze's own wire JSON. On iOS, 37 XCTests cover the attribute-value classifier
 (including the `0`/`1`-as-boolean regression), `dataFromHex` for `registerPushToken`, the C04 error
-strings, extras stringification, and the `sdkAuthError` payload. The iOS `enableSDK` / `isDisabled`
+strings, extras stringification, the `sdkAuthError` payload, and every content-card variant; the 18
+bridge-contract tests above add the per-method rejection and init-guard sweep. The iOS `enableSDK` / `isDisabled`
 asymmetry this table used to list is gone — the plugin now tracks that state itself.
 
 ### Native coverage — what the integration tier adds
 
-C11's **integration tier** is no longer design-only. 17 tests per platform drive the plugin's own
+C11's **integration tier** is no longer design-only. 17 tests on Android and 27 on iOS drive the plugin's own
 bridge code into the real Braze SDK and assert the bytes that reached a real local HTTP server:
 MockWebServer under Robolectric on Android, an in-process `NWListener` on loopback on iOS. Counts are
-now **108 Android** and **52 iOS**, none skipped.
+now **108 Android** and **82 iOS**, none skipped.
 
 Every listener event is now delivered end to end on **both** natives — server envelope → the SDK's
 own parser (and, for in-app messages, its trigger engine) → the plugin's subscriber → the payload a
@@ -308,7 +329,7 @@ now raises the bucket through `global_request_rate_limit`.
 
 | Surface | What's untested today | Plan |
 |---|---|---|
-| **iOS** bridge methods never entered by a test | 20 of 35 `@objc` methods (listed under "What the numbers say" above); iOS line coverage is 58.54% against Android's 89.82% | XCTests that drive each method through a `CAPPluginCall`, mirroring Android's contract sweep; raise the floors in `scripts/ios-coverage-gate.mjs` as they land |
+| **iOS `setDateOfBirth` shifts the day west of UTC** (bug, not a coverage gap) | The bridge builds the date at *UTC* midnight; BrazeKit formats the calendar day in the device's *local* zone. In `America/Los_Angeles`, `setDateOfBirth(1990, 7, 4)` puts `1990-07-03T00:00:00Z` on the wire — every user west of UTC gets a birthday one day early. Android and web send the 4th in every zone. `BrazePluginMethodWireTests` pins it with a strict `XCTExpectFailure`, time zone forced both ways so the result does not follow the machine | Fix in `ios/Sources/BrazePlugin/BrazePlugin.swift` (build the `Date` in the calendar BrazeKit formats with), then delete the `XCTExpectFailure` wrapper — the strict expectation fails the test the moment the bridge is fixed |
 | **iOS** `sdkAuthError` from a *required*-mode (`auth_error`) response | The delivery path is covered via `optional_auth_error`, the envelope BrazeKit 18.2.1 demonstrably reports. What a real backend sends in *required* mode, and whether BrazeKit reports it through the same delegate, is not reproducible from a mock | A Layer 4 smoke capture with SDK Authentication set to *required* |
 
 ## Is this enough to ship?
@@ -332,9 +353,11 @@ or `0.2.0`. That is stated in the README, the CHANGELOG, C08's bump protocol and
    Nothing in this repo has ever been run against a live Braze backend. It is also what would
    settle the one iOS envelope still inferred rather than captured — a *required*-mode SDK
    Authentication failure: capture the real response, replay it in the harness.
-2. **Drive the 20 un-entered iOS bridge methods from XCTest.** Coverage on both native bridges is
-   measured and ratcheted as of `0.3.0`; the iOS measurement shows where the tier is thin. Raise the
-   floors in `scripts/ios-coverage-gate.mjs` in the same commit as the tests.
+2. **Fix iOS `setDateOfBirth` west of UTC** (see "Remaining gaps"). The test that pins the bug is
+   already in place and flips red when the fix lands.
+
+~~Drive the 20 un-entered iOS bridge methods from XCTest~~ — **done**: every one of the 35 is entered
+through a real `CAPPluginCall`, and the iOS floors rose from 58 / 51 to 95 / 90.
 
 With (1), the plugin reaches "every method has at least one end-to-end behavioral test on the
 platform it runs on." That is the bar this doc tracks against, and the integration tier closes most

@@ -565,7 +565,13 @@ final class BrazePluginWireIntegrationTests: XCTestCase {
             Self.hasCustomEvent($0, "wire_before_disable")
         }
 
+        // `isDisabled` reads the live instance post-init (C07), so it is
+        // asserted on both sides of each toggle, around the traffic proof.
+        let enabledBefore = try await isDisabled()
+        XCTAssertEqual(enabledBefore, false)
         try await wire.invoke("disableSDK") { wire.plugin.disableSDK($0) }
+        let disabled = try await isDisabled()
+        XCTAssertEqual(disabled, true)
         wire.server.clearRequests()
         try await wire.invoke("logCustomEvent", ["name": "wire_while_disabled"]) {
             wire.plugin.logCustomEvent($0)
@@ -580,6 +586,8 @@ final class BrazePluginWireIntegrationTests: XCTestCase {
         try await wire.assertNoFurtherRequests("while the SDK is disabled")
 
         try await wire.invoke("enableSDK") { wire.plugin.enableSDK($0) }
+        let reEnabled = try await isDisabled()
+        XCTAssertEqual(reEnabled, false)
         try await wire.invoke("logCustomEvent", ["name": "wire_after_enable"]) {
             wire.plugin.logCustomEvent($0)
         }
@@ -621,6 +629,11 @@ final class BrazePluginWireIntegrationTests: XCTestCase {
 
         XCTAssertNotEqual(after.json["device_id"] as? String, deviceIdBefore)
         XCTAssertFalse(wire.server.requests.contains { $0.text.contains("wire_wiped_event") })
+    }
+
+    /// `isDisabled`'s `disabled` flag, read through the bridge.
+    private func isDisabled() async throws -> Bool? {
+        try await wire.invoke("isDisabled") { wire.plugin.isDisabled($0) }.resolved?["disabled"] as? Bool
     }
 
     /// Whether `request` carries the custom event called `name`.

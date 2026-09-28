@@ -3,7 +3,7 @@
 **Project:** Open-source Capacitor 6/7/8 plugin wrapping the Braze native SDKs (Android Kotlin, iOS Swift, Web JS). iOS installs under **CocoaPods or Swift Package Manager**.
 **Owner:** Bryce Aspinwall (`bma342`), MIT-licensed, personal portfolio + Aromo lighthouse.
 **npm package:** [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) — published; `0.1.0` is on the registry, `0.2.0` shipped, `0.3.0` (Capacitor 8 + SPM) is this branch.
-**Current state:** 35 methods + 5 listener events; 206 web + 106 Android + 50 iOS tests, all in CI; BrazeKit/BrazeUI 18.2.1 (Xcode 26+), `com.braze:android-sdk-ui` 43.2.0, `@braze/web-sdk` peer `^6.13.0`.
+**Current state:** 35 methods + 5 listener events; 206 web + 108 Android + 82 iOS tests, all in CI; BrazeKit/BrazeUI 18.2.1 (Xcode 26+), `com.braze:android-sdk-ui` 43.2.0, `@braze/web-sdk` peer `^6.13.0`.
 
 **Source-of-truth docs — read these before any non-trivial work:**
 - [`PLAN.md`](./PLAN.md) — the **original 2026-05 plan**, kept as history. Where it disagrees with the code, the code wins; read `CHANGELOG.md` + `SDK_SURFACE.md` §2 for the live roadmap.
@@ -22,7 +22,7 @@
   - [C08](./docs/mdcs/C08-NATIVE-SDK-PINNING.md) — exact pin policy, bump protocol
   - [C09](./docs/mdcs/C09-TOOLING-QUALITY-GATES.md) — Capacitor's official toolchain (eslint/prettier/swiftlint/docgen), locked-in
   - [C10](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md) — consumer-side config the SDK pins force (Podfile, Gradle, peer dep)
-  - [C11](./docs/mdcs/C11-NATIVE-TEST-HARNESSES.md) — iOS XCTest + Android Robolectric harnesses (**both tiers implemented**: 106 Android + 50 iOS, both in CI, including 15 wire-level integration tests per platform against a local HTTP server; JaCoCo + xccov coverage ratchets on both bridges)
+  - [C11](./docs/mdcs/C11-NATIVE-TEST-HARNESSES.md) — iOS XCTest + Android Robolectric harnesses (**both tiers implemented**: 108 Android + 82 iOS, both in CI, both entering all 35 bridge methods, including 17 Android / 27 iOS wire-level integration tests against a local HTTP server; JaCoCo + xccov coverage ratchets on both bridges)
 
 ### MDC glossary — when to consult which doc
 
@@ -73,7 +73,7 @@ If you find yourself writing more than ~20 lines for a single method, you're pro
 | **iOS bridge** | Swift 5.9+, Capacitor iOS, **Xcode 26+** (BrazeKit ≥ 15 requires it; Capacitor 8 does too). Sources at `ios/Sources/BrazePlugin/`; registration is `CAPBridgedPlugin` conformance in Swift — **there is no `.m`** | `BrazeKit` + `BrazeUI` **18.2.1** (exact pin, in *both* the podspec and `Package.swift`) |
 | **Web bridge** | TypeScript | `@braze/web-sdk` **`^6.13.0`** peer dep — a security floor, see SECURITY.md §6 |
 | **Build** | Rollup (Capacitor standard) → ESM + CJS only; the IIFE/`unpkg` bundle was removed in 0.2.0 | — |
-| **Tests** | **vitest** (web, 206 across 18 files, with a `@vitest/coverage-v8` ratchet on `src/web.ts`), **Robolectric/JUnit** (Android, 106, with a JaCoCo ratchet), **XCTest** (iOS, 50, with an `xccov` ratchet), **Fastify** mock Braze server (TypeScript, in-process, ephemeral port). No Jest, no Ktor, no Maestro anywhere in this repo | — |
+| **Tests** | **vitest** (web, 206 across 18 files, with a `@vitest/coverage-v8` ratchet on `src/web.ts`), **Robolectric/JUnit** (Android, 108, with a JaCoCo ratchet), **XCTest** (iOS, 82, with an `xccov` ratchet), **Fastify** mock Braze server (TypeScript, in-process, ephemeral port). No Jest, no Ktor, no Maestro anywhere in this repo | — |
 | **Lint** | **ESLint 10** flat config (`eslint.config.cjs`) on `@ionic/eslint-config` 0.5.0 — the preset's flat rewrite, which peer-requires ESLint 10 — plus Prettier 3.9 (`@ionic/prettier-config`, 120-char width) and SwiftLint. `npm run eslint` runs `--max-warnings=0` | see `package.json` |
 | **CI** | GitHub Actions, all actions SHA-pinned: **11 jobs in `test.yml`** (`lint`, `build-plugin`, `pack-check`, `build-example`, `build-demo`, `test-web`, `audit`, `verify-ios`, `verify-android`, `verify-capacitor-compat-android`, `verify-capacitor-compat-ios` — the last two a matrix over Capacitor 6 and 7) **+ 4 CodeQL analyses** — `javascript-typescript` + `actions` in `codeql.yml`, `java-kotlin` + `swift` (traced native builds) in `codeql-native.yml` | ubuntu + macOS |
 
@@ -91,9 +91,9 @@ Snapshot at `0.3.0`, verified 2026-09-22 (see `package.json` for the live versio
 | Mock Braze server (**Fastify + TypeScript**, in `test/mock-server`) | ✅ |
 | Web behavioral tests (vitest + mock) — 206 across 18 files | ✅ |
 | Web coverage ratchet — `src/web.ts` 97.45% statements/lines, 90.80% branches, 100% functions; thresholds enforced in the `test-web` job | ✅ |
-| Android native tests (Robolectric/JUnit) — 106, run in CI | ✅ |
-| iOS native tests (XCTest) — 50, run in CI via a generated target | ✅ |
-| Native coverage ratchets — Android (JaCoCo) `BrazePlugin.kt` 89.82% lines / 76.37% branches, floors 89 / 76, `jacocoCoverageVerification` in `verify-android`; iOS (`xccov`) `ios/Sources/BrazePlugin/` 58.54% lines / 51.61% functions, floors 58 / 51, `scripts/ios-coverage-gate.mjs` in `verify-ios`. Reports uploaded as CI artifacts | ✅ 0.3.0 |
+| Android native tests (Robolectric/JUnit) — 108, run in CI | ✅ |
+| iOS native tests (XCTest) — 82, run in CI via a generated target; all 35 bridge methods driven through a real `CAPPluginCall` | ✅ |
+| Native coverage ratchets — Android (JaCoCo) `BrazePlugin.kt` 89.82% lines / 76.37% branches, floors 89 / 76, `jacocoCoverageVerification` in `verify-android`; iOS (`xccov`) `ios/Sources/BrazePlugin/` 95.49% lines / 90.32% functions, floors 95 / 90, `scripts/ios-coverage-gate.mjs` in `verify-ios`. Reports uploaded as CI artifacts | ✅ 0.3.0 |
 | CI: `verify-ios` runs `xcodebuild test` + the `xccov` coverage gate; `verify-android` runs build + tests + JaCoCo coverage gate + Lint on JDK 21 | ✅ |
 | Tarball manifest gate (`pack-check` job / `npm run pack:check`) | ✅ |
 | Release publishing gated on the full CI suite, with `--provenance` | ✅ |
@@ -116,7 +116,7 @@ Snapshot at `0.3.0`, verified 2026-09-22 (see `package.json` for the live versio
 | `0.1.0` to npm | ✅ [npmjs.com/package/capacitor-braze](https://www.npmjs.com/package/capacitor-braze) — published **by hand**, no provenance attestation |
 | `0.2.0` to npm | ⏳ will be the first workflow-published release |
 | `0.3.0` to npm | ⏳ this branch |
-| C11 native test harnesses — integration tier (MockWebServer on Android, loopback `NWListener` server on iOS) | ✅ 17 tests per platform, none skipped, in CI since 0.3.0 |
+| C11 native test harnesses — integration tier (MockWebServer on Android, loopback `NWListener` server on iOS) | ✅ 17 tests on Android, 27 on iOS, none skipped, in CI since 0.3.0 |
 | **Layer 4 real-Braze smoke** | ⏳ **never run.** Templates only in `docs/smoke-tests/`; no release is validated against a live Braze backend |
 | Private vulnerability reporting, `enforce_admins`, `v*` tag ruleset, npm Trusted Publishing | ⏳ maintainer actions — commands in `CONTRIBUTING.md` |
 | Capacitor 8 support (peer `^8`, podspec `< 9.0`, demo + example on 8.5.2) | ✅ 0.3.0 |
@@ -162,8 +162,8 @@ capacitor-braze/
 │   ├── build.gradle                                       # com.braze:android-sdk-ui:43.2.0
 │   ├── consumer-rules.pro                                 # R8/ProGuard rules consumer apps inherit
 │   └── src/main/java/com/bma342/braze/BrazePlugin.kt      # @CapacitorPlugin bridge
-│   └── src/test/java/com/bma342/braze/                    # 106 Robolectric/JUnit tests
-├── ios/Tests/BrazePluginTests/                            # 50 XCTests (target generated by scripts/)
+│   └── src/test/java/com/bma342/braze/                    # 108 Robolectric/JUnit tests
+├── ios/Tests/BrazePluginTests/                            # 82 XCTests (target generated by scripts/)
 ├── scripts/
 │   ├── ios-add-test-target.rb                             # generates the demo's CapacitorBrazeTests target + shared scheme
 │   ├── ios-coverage-gate.mjs                              # xccov line/function ratchet for the Swift bridge
@@ -286,14 +286,14 @@ cd test/web && npm run test:coverage
 # (an ephemeral port, not 8080). Point initialize({ endpoint, allowInsecureEndpoint: true }) at it.
 cd test/mock-server && npm run standalone
 
-# Android: 106 Robolectric/JUnit tests. Needs JDK 21 + ANDROID_HOME.
+# Android: 108 Robolectric/JUnit tests. Needs JDK 21 + ANDROID_HOME.
 cd demo/android && ./gradlew :capacitor-braze:testDebugUnitTest --no-daemon
 
 # Android coverage: JaCoCo XML + HTML (android/build/reports/jacoco/jacocoTestReport/)
 # and the LINE/BRANCH ratchet in android/build.gradle. CI runs both in verify-android.
 cd demo/android && ./gradlew :capacitor-braze:jacocoTestReport :capacitor-braze:jacocoCoverageVerification --no-daemon
 
-# iOS: 50 XCTests. Needs Xcode 26+ and CocoaPods. The test target is generated
+# iOS: 82 XCTests. Needs Xcode 26+ and CocoaPods. The test target is generated
 # into the demo's Xcode project and the result is committed; the script is idempotent.
 ruby scripts/ios-add-test-target.rb
 cd demo/ios/App && pod install

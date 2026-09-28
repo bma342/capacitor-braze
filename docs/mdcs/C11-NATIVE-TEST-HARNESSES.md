@@ -3,14 +3,16 @@
 **iOS and Android bridges need behavioral coverage equivalent to what `test/web` gives the JS bridge. This MDC documents the shape both platforms follow, so coverage grows rather than being reinvented per phase.**
 
 > **Status: both tiers implemented.** The **unit / contract tier** is live on both platforms —
-> **91** Robolectric/JUnit tests on Android, **35** XCTests on iOS. The **integration tier** is live
-> too, **17 tests per platform**, driving the real Braze SDKs against a real local HTTP server,
-> asserting the bytes on the wire and — for all four SDK-driven listener events — the payload the
-> SDK's own parse delivered to `notifyListeners`. Totals: **108 Android**, **52 iOS**, none skipped.
+> **91** Robolectric/JUnit tests on Android, **55** XCTests on iOS, each sweeping every bridge
+> method's rejections and init guard through a real `PluginCall` / `CAPPluginCall`. The
+> **integration tier** is live too — **17 tests on Android, 27 on iOS** — driving the real Braze SDKs
+> against a real local HTTP server, asserting the bytes on the wire and — for all four SDK-driven
+> listener events — the payload the SDK's own parse delivered to `notifyListeners`. Totals:
+> **108 Android**, **82 iOS**, none skipped; both enter all 35 bridge methods.
 > Everything runs in CI on every PR inside the existing `:capacitor-braze:testDebugUnitTest` and
 > `xcodebuild test` invocations — no workflow change was needed. Since `0.3.0` both tiers are also
 > **coverage-measured and ratcheted** — JaCoCo on Android (89.82% lines / 76.37% branches), `xccov`
-> on iOS (58.54% lines / 51.61% functions); see "Coverage" below. See "Status" at the end for the
+> on iOS (95.49% lines / 90.32% functions); see "Coverage" below. See "Status" at the end for the
 > per-file breakdown and what is still out of reach.
 
 The web bridge runs against a Fastify mock under jsdom (206 vitest tests across 18 files, ~3.5s,
@@ -72,9 +74,11 @@ Both tiers live in `ios/Tests/BrazePluginTests/`, in the same generated `Capacit
 
 ```
 ios/Tests/BrazePluginTests/
-├── BrazePluginContractTests.swift        # unit tier — 35 tests
+├── BrazePluginContractTests.swift        # unit tier, helpers + serializers — 37 tests
+├── BrazePluginBridgeContractTests.swift  # unit tier, every method's rejections + init guard — 18 tests
 ├── BrazeWireHarness.swift                # integration harness (no tests of its own)
-└── BrazePluginWireIntegrationTests.swift # integration tier — 17 tests
+├── BrazePluginWireIntegrationTests.swift # integration tier, scenario matrix — 17 tests
+└── BrazePluginMethodWireTests.swift      # integration tier, per-method wire + accessors — 10 tests
 ```
 
 `BrazeWireHarness.swift` holds three things:
@@ -388,7 +392,7 @@ everything else is a real object from real JSON. The serializers were widened `p
 **To add a test:** write it in the matching file. Nothing else — the Gradle module is already wired
 through the demo's `settings.gradle`.
 
-### iOS — 52 XCTests, in CI
+### iOS — 82 XCTests, in CI
 
 ```bash
 ruby scripts/ios-add-test-target.rb      # idempotent; regenerates the target from the directory
@@ -410,17 +414,35 @@ Implementation notes worth keeping:
 - `PRODUCT_NAME = $(TARGET_NAME)` is not optional: without it the generated target links to `PlugIns/.xctest` (no stem) and the build dies with *"Multiple commands produce …/PlugIns/.xctest"*.
 - `demo/ios/App/Podfile` nests `target 'CapacitorBrazeTests' do inherit! :search_paths end` under `App`, which is what makes `@testable import CapacitorBraze` resolve. `ENABLE_TESTABILITY = YES` is already set for Debug in the generated Pods project, so no post-install hook is needed.
 
-Unit tier (35, in `BrazePluginContractTests.swift`): the 5 pre-existing serializer tests, plus
-`classifyAttributeValue` bool/int/double dispatch including the `0`/`1` regression (5),
+Unit tier, helpers (37, in `BrazePluginContractTests.swift`): the 5 pre-existing serializer tests,
+plus `classifyAttributeValue` bool/int/double dispatch including the `0`/`1` regression (5),
 `dataFromHex` including `"<>"` / `"   "` / over-length (4), `propertiesError` + `integerValue` C04
 strings (4), `BrazeExtras.stringify` (3), the `sdkAuthError` payload including `userId: null` and
-the `BrazeSDKAuthDelegate`-not-`BrazeDelegate` type assertion (4), the slide-up icon (1), and the
-`deepLinkHandling` validation + `Braze.Channel` → `source` mapping + content-card `useWebView` (9).
+the `BrazeSDKAuthDelegate`-not-`BrazeDelegate` type assertion (4), the slide-up icon (1), the
+`deepLinkHandling` validation + `Braze.Channel` → `source` mapping + content-card `useWebView` (9),
+and the text-only `classic` + `imageOnly` card variants (2).
 
-Integration tier (17, in `BrazePluginWireIntegrationTests.swift` on `BrazeWireHarness.swift`): the
-scenario matrix above, none skipped. The five listener-delivery tests (Feature Flags, Content Cards,
-two in-app messages, `sdkAuthError`) were each confirmed red against a bridge with its
-`notifyListeners` call removed.
+Unit tier, bridge contract (18, in `BrazePluginBridgeContractTests.swift`): Android's contract sweep
+on iOS. Every `@objc` method entered with a real `CAPPluginCall`, every rejection asserted
+byte-for-byte against `src/web.ts`, a table-driven init-guard sweep over the 29 guarded methods
+(cross-checked against `pluginMethods`), and the C07 quartet before `initialize`. These run on the
+integration harness, because validation sits behind the init guard and so needs a live instance;
+the rejections themselves never reach BrazeKit. `ensureUninitialized()` reaches the pre-init state
+through `wipeData` on an existing instance only — with none, `wipeData` takes BrazeKit's
+`wipeDataAndDisableForAppRun()` path.
+
+Integration tier (27): the scenario matrix above in `BrazePluginWireIntegrationTests.swift` (17),
+plus `BrazePluginMethodWireTests.swift` (10), which pins the wire key or SDK state behind each
+method the matrix did not reach — the standard attributes, `dob`, all six `gender` codes, the `uae`
+alias event, `getUserId` / `getDeviceId`, signature rotation, the feature-flag accessors + `ffi`, and
+the content-card accessor + `cci` / `ccc`. All on `BrazeWireHarness.swift`, none skipped. The five
+listener-delivery tests (Feature Flags, Content Cards, two in-app messages, `sdkAuthError`) were
+each confirmed red against a bridge with its `notifyListeners` call removed.
+
+Two BrazeKit wire facts the method tests had to learn, both recorded on the tests: an alias is not
+an attribute but an `events[]` entry named `uae` with `data.{a,l}`; and `dob` goes out as an ISO
+midnight, `YYYY-MM-DDT00:00:00Z`, formatted in the process's *local* time zone — which is what makes
+the `setDateOfBirth` bug below visible, and why the test pins `NSTimeZone.default` both ways.
 
 **To add a test:** add the file to `ios/Tests/BrazePluginTests/`, then re-run `ruby scripts/ios-add-test-target.rb`
 and commit the regenerated project. Adding a test *method* to an existing file needs neither.
@@ -436,10 +458,11 @@ muddle consumer-facing reference code with plugin tests — is preserved.
 - **iOS `sdkAuthError` from a *required*-mode response.** Delivery is covered through
   `optional_auth_error`; the real backend's *required*-mode envelope is not reproducible from a
   mock (footnote ²). A Layer 4 smoke capture closes it.
-- **20 of the 35 iOS `@objc` bridge methods are never entered by an XCTest** — the first thing the
-  coverage measurement below surfaced. The iOS unit tier tests the helpers those methods call; it
-  does not drive each `CAPPluginCall` through the method the way Android's contract sweep does. The
-  list is in `docs/TEST-COVERAGE-AUDIT.md`; each is an ordinary XCTest on the existing harness.
+- **iOS `setDateOfBirth` shifts the day west of UTC** — a bridge bug the method sweep found, not a
+  harness gap. The bridge builds a UTC-midnight `Date`; BrazeKit formats it in the local zone, so in
+  `America/Los_Angeles` 4 July goes out as `1990-07-03T00:00:00Z`. Pinned by a strict
+  `XCTExpectFailure` in `BrazePluginMethodWireTests`; the fix belongs in `ios/Sources`, after which
+  that wrapper must go.
 - **Per-class JVM forking on Android.** Robolectric shares one sandbox across test classes in a JVM,
   so the process-global Braze singleton carries state between them. The harnesses handle this
   explicitly (reset on the way in, hand over a usable SDK on the way out), and the suite is stable —
@@ -455,7 +478,7 @@ up** — when a change lowers coverage, add the test; do not lower the floor.
 | Platform | Tool | Measured (2026-09-28, `0.3.0`) | Floor | Where the floor lives | CI step |
 |---|---|---|---|---|---|
 | Android | JaCoCo 0.8.15 (Gradle `jacoco` plugin) | lines 600/668 = **89.82%**, branches 433/567 = **76.37%** | 89 / 76 | `jacocoCoverageVerification` in `android/build.gradle` | `verify-android`, after the unit tests |
-| iOS | `xcrun xccov` | lines 908/1551 = **58.54%**, functions 80/155 = **51.61%** | 58 / 51 | top of `scripts/ios-coverage-gate.mjs` | `verify-ios`, after `xcodebuild test` |
+| iOS | `xcrun xccov` | lines 1481/1551 = **95.49%**, functions 140/155 = **90.32%** (first measured at 58.54% / 51.61%, before the bridge-method sweep) | 95 / 90 | top of `scripts/ios-coverage-gate.mjs` | `verify-ios`, after `xcodebuild test` |
 
 ```bash
 # Android (from demo/android)
