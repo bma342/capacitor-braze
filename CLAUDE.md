@@ -405,7 +405,7 @@ Short, sharp, codebase-specific patterns that pay off repeatedly:
 | What the iOS SDK exposes | Download `BrazeKit.zip` from `braze-inc/braze-swift-sdk` releases; read `BrazeKit.framework/Modules/BrazeKit.swiftmodule/arm64-apple-ios.swiftinterface` |
 | What the Android SDK exposes | `gh api repos/braze-inc/braze-android-sdk/contents/<path>` against the public source; the actual `Card` model classes are closed-source but `com.braze.models.cards.{CaptionedImageCard, ImageOnlyCard, ShortNewsCard, TextAnnouncementCard}` field access is visible in the open `android-sdk-ui` module |
 | What was already audited, and what came of it | [`docs/audits/`](./docs/audits/) — 2026-05 and 2026-09 self-audits, each with a per-finding resolution table. **Archives, not open punch lists** |
-| What is knowingly still broken | the README's [Known gaps](./README.md#known-gaps-in-020) section |
+| What is knowingly still broken | the README's [Known gaps](./README.md#known-gaps-in-030) section |
 | Whether a behavior is intended | git log → commit messages have rationale; `CHANGELOG.md` has the user-facing version |
 | What the test fixtures look like | [`test/web/src/test-utils.ts`](./test/web/src/test-utils.ts) for the `freshPluginWithConfig()` helper |
 
