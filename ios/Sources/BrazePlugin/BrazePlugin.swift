@@ -765,13 +765,16 @@ public class BrazePlugin: CAPPlugin, CAPBridgedPlugin {
                 return
             }
 
-            // Build the date in the device's current time zone: BrazeKit
-            // formats the *calendar day* in the local zone, so a UTC-midnight
-            // Date lands on the previous day for every user west of UTC
-            // (found by the iOS wire tests, which run in the host's zone;
-            // GitHub's macOS runners are UTC and never saw it).
+            // Build the date in the process's *default* time zone
+            // (`NSTimeZone.default`, which is the system zone unless the app
+            // overrides it) — the zone BrazeKit's date formatter uses. A
+            // UTC-midnight Date lands on the previous day for every user
+            // west of UTC (found by the iOS wire tests; GitHub's UTC runners
+            // never saw it). `TimeZone.current` is deliberately not used: it
+            // is the system zone and ignores an app-level override, which is
+            // exactly the divergence the regression test forces.
             var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = .current
+            calendar.timeZone = NSTimeZone.default
             var components = DateComponents()
             components.year = year
             components.month = month

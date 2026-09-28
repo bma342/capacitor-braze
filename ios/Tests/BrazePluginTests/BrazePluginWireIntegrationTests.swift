@@ -364,7 +364,14 @@ final class BrazePluginWireIntegrationTests: XCTestCase {
         // `ca` is seconds; `ea: -1` ("never expires") is null, not -1000.
         XCTAssertEqual((card["updated"] as? NSNumber)?.int64Value, 1_700_000_000_000)
         XCTAssertTrue(card["expiresAt"] is NSNull)
-        XCTAssertNotNil(payload["lastUpdated"] as? NSNumber)
+        // `lastUpdated` mirrors BrazeKit's `contentCards.lastUpdate`, which
+        // the SDK writes on its own queue relative to the subscriber
+        // callback: on a loaded runner it can still be `nil` (→ JSON null)
+        // when this first publish is delivered. The contract types it as
+        // `number | null`, so assert the key is present and well-typed
+        // rather than racing the SDK for a value.
+        let lastUpdated = try XCTUnwrap(payload["lastUpdated"])
+        XCTAssertTrue(lastUpdated is NSNumber || lastUpdated is NSNull, "lastUpdated must be a number or null")
 
         let read = try await wire.invoke("getContentCards") { wire.plugin.getContentCards($0) }
         let cached = try XCTUnwrap(read.resolved?["cards"] as? [[String: Any]])
