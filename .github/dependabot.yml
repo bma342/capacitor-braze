@@ -3,15 +3,20 @@
 # Strategy:
 # - Plugin npm deps + example npm deps: weekly grouped updates so we get one
 #   PR per week per ecosystem instead of a flood.
-# - GitHub Actions: weekly, pinned by SHA where possible (supply-chain hygiene).
+# - GitHub Actions: weekly. Every `uses:` in .github/workflows is pinned to a
+#   full commit SHA with a trailing `# vX.Y.Z` comment; Dependabot updates SHA
+#   pins natively and rewrites the comment along with them.
 # - The plugin's *Braze SDK* version pins are NOT auto-bumped — those follow
 #   the policy in SDK_SURFACE.md §4 (manual per Braze SDK release notes).
-# - `@capacitor/*` major bumps are ignored across all ecosystems. The plugin
-#   supports Capacitor 6 + 7 per its peer dep range; bumping the example/demo
-#   apps to Capacitor 8 would force a JDK 21 baseline (Capacitor 8 raised the
-#   AGP/JDK minimum) and break the plugin's own podspec range. Capacitor
-#   majors land via a deliberate maintainer-driven migration, not via
-#   Dependabot.
+# - `@capacitor/*` majors are NO LONGER ignored. Until 0.3.0 they were, because
+#   the plugin capped at Capacitor 7 and a Cap 8 bump in demo/ or example/
+#   would have broken against the podspec's `< 8.0` range. The plugin now
+#   tracks current Capacitor (peer `^6 || ^7 || ^8`, podspec `< 9.0`), and both
+#   apps are on 8.x, so the ignore rule only hid drift. Majors are still
+#   maintainer-verified rather than auto-merged: a Capacitor 9 PR has to get
+#   past `verify-ios` (CocoaPods + SPM) and `verify-android`, and it is not
+#   mergeable until the peer range, the podspec range and the
+#   `capacitor-swift-pm` range in Package.swift are widened by hand.
 
 version: 2
 updates:
@@ -22,9 +27,6 @@ updates:
       interval: 'weekly'
       day: 'monday'
     open-pull-requests-limit: 5
-    ignore:
-      - dependency-name: '@capacitor/*'
-        update-types: ['version-update:semver-major']
     groups:
       dev-deps:
         applies-to: version-updates
@@ -38,9 +40,6 @@ updates:
       interval: 'weekly'
       day: 'monday'
     open-pull-requests-limit: 5
-    ignore:
-      - dependency-name: '@capacitor/*'
-        update-types: ['version-update:semver-major']
     groups:
       example-deps:
         applies-to: version-updates
@@ -54,24 +53,45 @@ updates:
       interval: 'weekly'
       day: 'monday'
     open-pull-requests-limit: 5
-    ignore:
-      - dependency-name: '@capacitor/*'
-        update-types: ['version-update:semver-major']
     groups:
       demo-deps:
         applies-to: version-updates
         patterns:
           - '*'
 
-  # Mock-server Gradle deps (Ktor, JUnit)
-  - package-ecosystem: 'gradle'
+  # Mock-server deps (Fastify, tsx, TypeScript).
+  # A4-16 / A5-08: this was declared as `gradle` — a leftover from the
+  # never-built Ktor plan — so Dependabot failed every weekly run with
+  # "No files found in /test/mock-server" and the actual npm deps went
+  # unmonitored.
+  - package-ecosystem: 'npm'
     directory: '/test/mock-server'
     schedule:
       interval: 'weekly'
       day: 'monday'
     open-pull-requests-limit: 5
+    groups:
+      mock-server-deps:
+        applies-to: version-updates
+        patterns:
+          - '*'
 
-  # GitHub Actions versions (per SECURITY.md §13: SHA-pinned via Dependabot)
+  # Web-test deps (vitest, jsdom, @braze/web-sdk, TypeScript).
+  # A5-08 secondary / L7-05: previously under no Dependabot coverage at all.
+  - package-ecosystem: 'npm'
+    directory: '/test/web'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5
+    groups:
+      web-test-deps:
+        applies-to: version-updates
+        patterns:
+          - '*'
+
+  # GitHub Actions versions. Workflows pin full commit SHAs; Dependabot
+  # bumps the SHA and the trailing `# vX.Y.Z` comment together.
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:

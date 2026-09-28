@@ -16,10 +16,10 @@
     "cap:open:android": "cap open android"
   },
   "dependencies": {
-    "@capacitor/android": "^6.0.0",
-    "@capacitor/core": "^6.0.0",
-    "@capacitor/ios": "^6.0.0",
-    "@braze/web-sdk": "^6.0.0",
+    "@braze/web-sdk": "^6.13.0",
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/ios": "^8.5.2",
     "@tanstack/react-router": "^1.95.0",
     "capacitor-braze": "file:..",
     "react": "^19.0.0",
@@ -27,7 +27,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@capacitor/cli": "^6.0.0",
+    "@capacitor/cli": "^8.5.2",
     "@tailwindcss/vite": "^4.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

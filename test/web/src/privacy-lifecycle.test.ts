@@ -51,9 +51,26 @@ describe('privacy + init-guard', () => {
     await expect(plugin.getContentCards()).rejects.toThrow(/Braze\.initialize\(\) must be called before/);
   });
 
+  /**
+   * A1-06: the promise resolving is the whole contract here, and it is a
+   * weaker guarantee than C07's GDPR framing implies. The Braze Web SDK's
+   * `wipeData()` needs a storage manager, which only exists after
+   * `initialize`, so a pre-init call logs an SDK warning and wipes nothing.
+   * The plugin resolves anyway (rejecting would break the consent flow on
+   * iOS and Android, where the call does work), and the divergence is
+   * documented on `wipeData`'s JSDoc rather than hidden here.
+   */
   it('wipeData() can be called before initialize without throwing (C07 init-independent)', async () => {
     const plugin = new BrazeWeb();
     await expect(plugin.wipeData()).resolves.toBeUndefined();
+  });
+
+  it('wipeData() before initialize leaves the plugin uninitialized (it is not an implicit init)', async () => {
+    const plugin = new BrazeWeb();
+    await plugin.wipeData();
+    await expect(plugin.logCustomEvent({ name: 'after_preinit_wipe' })).rejects.toThrow(
+      'Braze.initialize() must be called before any other Braze method.',
+    );
   });
 
   it('wipeData() resets initialized state — post-wipe method calls hit the init guard', async () => {

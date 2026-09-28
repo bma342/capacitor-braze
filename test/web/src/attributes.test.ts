@@ -3,26 +3,28 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { BrazeWeb } from '../../../src/web';
 
-import { freshMockServer, waitForCaptured } from './test-utils';
+import { freshMockServer, teardownPlugin, waitForCaptured } from './test-utils';
 
 /**
  * Behavioral tests for the user-attribute setters on the web bridge.
  *
- * Strategy: set an attribute with a UUID-like value, flush, look for
- * that value in the captured wire body. We don't assert Braze's exact
- * payload field names (those are SDK-internal and could change without
- * affecting consumers); we assert that the value the consumer passed
- * actually made it onto the wire.
+ * Strategy: set an attribute with a unique sentinel value, flush, then
+ * assert the captured wire body contains the sentinel **under Braze's own
+ * field name** (`"first_name":"<sentinel>"`, `"home_city":"<sentinel>"`, …).
+ *
+ * The field-name half is load-bearing (A5-04): an earlier version of this
+ * file matched the sentinel anywhere in the body, so re-pointing
+ * `setLastName` at `setFirstName` — the classic copy-paste bridge bug the
+ * C01 8-file lockstep exists to catch — kept every test green. The wire
+ * keys asserted here were captured from a real `@braze/web-sdk` → mock run.
  *
  * Each test gets a unique value so a stale capture from a sibling
  * test can't false-positive a match.
  *
- * Lifecycle note: the Braze Web SDK is a module-level singleton.
- * Calling `initialize` twice in one process retains the first endpoint
- * (subsequent inits are no-ops on the underlying SDK state). So we
- * boot the mock and initialize once per file in beforeAll, then
- * `clearCaptured` between tests for isolation. Vitest forks across
- * files, so each file gets a fresh process and a fresh singleton.
+ * Lifecycle note: the Braze Web SDK is a module-level singleton, so we boot
+ * the mock and initialize once per file in beforeAll, then `clearCaptured`
+ * between tests for isolation. Vitest forks across files, so each file gets
+ * a fresh process and a fresh singleton.
  */
 describe('user attributes (web bridge → @braze/web-sdk → mock)', () => {
   let mock: MockServer;
@@ -43,18 +45,15 @@ describe('user attributes (web bridge → @braze/web-sdk → mock)', () => {
   });
 
   afterAll(async () => {
-    try {
-      await plugin.wipeData();
-    } catch {}
-    await mock.stop();
+    await teardownPlugin(plugin, mock);
   });
 
   it('setEmail puts the email value on the wire', async () => {
     const email = 'attr-test-email-7af3c@example.dev';
     await plugin.setEmail({ email });
     await plugin.requestImmediateDataFlush();
-    const req = await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(email), {
-      label: `body containing email "${email}"`,
+    const req = await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(`"email":"${email}"`), {
+      label: `body containing "email":"${email}"`,
     });
     expect(req.method).toBe('POST');
   });
@@ -66,8 +65,8 @@ describe('user attributes (web bridge → @braze/web-sdk → mock)', () => {
     const phoneNumber = '15555550199';
     await plugin.setPhoneNumber({ phoneNumber });
     await plugin.requestImmediateDataFlush();
-    const req = await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(phoneNumber), {
-      label: `body containing phone "${phoneNumber}"`,
+    const req = await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(`"phone":"${phoneNumber}"`), {
+      label: `body containing "phone":"${phoneNumber}"`,
     });
     expect(req.method).toBe('POST');
   });
@@ -76,14 +75,18 @@ describe('user attributes (web bridge → @braze/web-sdk → mock)', () => {
     const firstName = 'PluginTestFirstNameD9F1';
     await plugin.setFirstName({ firstName });
     await plugin.requestImmediateDataFlush();
-    await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(firstName));
+    await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(`"first_name":"${firstName}"`), {
+      label: `body containing "first_name":"${firstName}"`,
+    });
   });
 
   it('setLastName puts the last name on the wire', async () => {
     const lastName = 'PluginTestLastName3B82';
     await plugin.setLastName({ lastName });
     await plugin.requestImmediateDataFlush();
-    await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(lastName));
+    await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(`"last_name":"${lastName}"`), {
+      label: `body containing "last_name":"${lastName}"`,
+    });
   });
 
   it('setLanguage puts the ISO code on the wire', async () => {
@@ -93,7 +96,9 @@ describe('user attributes (web bridge → @braze/web-sdk → mock)', () => {
     const language = 'zz-test-language-token-A91D';
     await plugin.setLanguage({ language });
     await plugin.requestImmediateDataFlush();
-    await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(language));
+    await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(`"language":"${language}"`), {
+      label: `body containing "language":"${language}"`,
+    });
   });
 
   it('setCountry puts the country code on the wire', async () => {
@@ -101,7 +106,9 @@ describe('user attributes (web bridge → @braze/web-sdk → mock)', () => {
     const country = 'zz-test-country-token-7C4F';
     await plugin.setCountry({ country });
     await plugin.requestImmediateDataFlush();
-    await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(country));
+    await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(`"country":"${country}"`), {
+      label: `body containing "country":"${country}"`,
+    });
   });
 
   it('setCustomUserAttribute puts the key and value on the wire', async () => {
@@ -109,21 +116,18 @@ describe('user attributes (web bridge → @braze/web-sdk → mock)', () => {
     const value = 'plugin_test_attr_value_E62A';
     await plugin.setCustomUserAttribute({ key, value });
     await plugin.requestImmediateDataFlush();
-    await waitForCaptured(
-      mock,
-      (r) => {
-        const body = JSON.stringify(r.body ?? '');
-        return body.includes(key) && body.includes(value);
-      },
-      { label: `body containing both attr key "${key}" and value "${value}"` },
-    );
+    await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(`"${key}":"${value}"`), {
+      label: `body containing "${key}":"${value}"`,
+    });
   });
 
   it('setHomeCity puts the city on the wire', async () => {
     const homeCity = 'PluginTestCity6A1B';
     await plugin.setHomeCity({ homeCity });
     await plugin.requestImmediateDataFlush();
-    await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(homeCity));
+    await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(`"home_city":"${homeCity}"`), {
+      label: `body containing "home_city":"${homeCity}"`,
+    });
   });
 
   it('setDateOfBirth puts the DOB onto the wire', async () => {
@@ -139,21 +143,37 @@ describe('user attributes (web bridge → @braze/web-sdk → mock)', () => {
     });
   });
 
-  it('setGender accepts each value in the BrazeGender union without throwing', async () => {
-    // The plugin maps the union to Braze's single-letter codes via
-    // WEB_GENDER_MAP. Confirm none of the six inputs throw at the
-    // bridge. We don't assert HTTP traffic here — gender alone may not
-    // flush in isolation; the bridge-level promise resolving is the
-    // contract under test.
-    const inputs = ['male', 'female', 'other', 'unknown', 'not_applicable', 'prefer_not_to_say'] as const;
-    for (const gender of inputs) {
-      await expect(plugin.setGender({ gender })).resolves.not.toThrow();
-    }
+  // A5-06: the six-way single-letter mapping in WEB_GENDER_MAP is exactly
+  // the kind of per-platform translation C03 governs, and it has to match
+  // the iOS / Android maps byte-for-byte. Asserting the code on the wire is
+  // what makes transposing 'm' and 'f' a test failure instead of a silent
+  // data-quality bug in the consumer's Braze dashboard.
+  it.each([
+    ['male', 'm'],
+    ['female', 'f'],
+    ['other', 'o'],
+    ['unknown', 'u'],
+    ['not_applicable', 'n'],
+    ['prefer_not_to_say', 'p'],
+  ] as const)('setGender(%s) puts "gender":"%s" on the wire', async (gender, code) => {
+    mock.clearCaptured();
+    await plugin.setGender({ gender });
+    // Pair with an event so the SDK definitely flushes the attribute block.
+    await plugin.logCustomEvent({ name: `gender_test_event_${code}` });
+    await plugin.requestImmediateDataFlush();
+    await waitForCaptured(mock, (r) => JSON.stringify(r.body ?? '').includes(`"gender":"${code}"`), {
+      label: `attributes containing "gender":"${code}"`,
+    });
   });
 
   it('setGender rejects an unknown value', async () => {
     // @ts-expect-error — testing runtime rejection for invalid input
     await expect(plugin.setGender({ gender: 'nonexistent' })).rejects.toThrow(/unknown gender/);
+  });
+
+  it('setGender rejects a missing value with the C01 required-field message', async () => {
+    // @ts-expect-error — testing runtime rejection for invalid input
+    await expect(plugin.setGender({})).rejects.toThrow('Braze.setGender: `gender` is required (string).');
   });
 
   // L2-04 / L2-06: the web bridge must reject the same set of value types

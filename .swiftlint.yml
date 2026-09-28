@@ -1,8 +1,68 @@
+# SwiftLint configuration for the iOS bridge.
+#
+# This file previously pointed `parent_config` at
+# `node_modules/@ionic/swiftlint-config/.swiftlint.yml`, which does not exist:
+# `@ionic/swiftlint-config` ships its ruleset as a **JS module** consumed by
+# `node-swiftlint` through cosmiconfig, not as YAML. SwiftLint could not read
+# the parent, fell back to its built-in defaults, and none of the Ionic opt-in
+# rules were ever enforced. The Ionic ruleset is inlined below instead, so what
+# runs is what is written here.
+#
+# CI must install SwiftLint explicitly (`brew install swiftlint`) — the
+# `node-swiftlint` wrapper prints a warning and **exits 0** when the binary is
+# missing, which turns `--strict` into a silent no-op.
+
 included:
-  - ios/Plugin
+  - ios/Sources/BrazePlugin
+  # The XCTest bundle is linted too: it is real source that ships in the repo
+  # and is built by `xcodebuild test` (see scripts/ios-add-test-target.rb).
+  - ios/Tests/BrazePluginTests
 
 excluded:
-  - ios/Plugin/build
+  - ios/Sources/BrazePlugin/build
 
-# Inherit Ionic / Capacitor team defaults
-parent_config: node_modules/@ionic/swiftlint-config/.swiftlint.yml
+# Inlined from @ionic/swiftlint-config@2.0.0 (index.js).
+opt_in_rules:
+  - implicitly_unwrapped_optional
+  - file_name_no_space
+  - force_unwrapping
+  - function_default_parameter_at_end
+  - lower_acl_than_parent
+  - modifier_order
+  - overridden_super_call
+  - unowned_variable_capture
+
+line_length:
+  warning: 150
+  error: 200
+  ignores_function_declarations: true
+  ignores_comments: true
+  ignores_interpolated_strings: true
+  ignores_urls: true
+
+# The bridge is one class with ~36 `@objc` entry points, each a thin,
+# self-similar validate-hop-forward block. Splitting it across files or types
+# to satisfy a line budget would make the C01 8-file lockstep harder to audit,
+# not easier. The budgets below are raised deliberately, not disabled: they
+# still catch a file or type that doubles in size.
+file_length:
+  warning: 1400
+  error: 1600
+
+type_body_length:
+  warning: 1200
+  error: 1400
+
+function_body_length:
+  warning: 80
+  error: 120
+
+cyclomatic_complexity:
+  warning: 15
+  error: 20
+
+identifier_name:
+  # `c`, `m` are the conventional bindings in the SDK enum pattern matches.
+  min_length:
+    warning: 1
+    error: 1

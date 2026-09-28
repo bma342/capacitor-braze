@@ -56,18 +56,31 @@ After init, exercise the other methods. Each call logs to the on-page panel
 and (in the case of `logCustomEvent` etc.) should appear in the Braze
 dashboard within ~30 seconds.
 
-## Add native platforms
+## Native platforms
 
-The example ships with the web layer ready. The native platform projects are
-generated locally — they're not committed because they're large and
-machine-specific:
+**`ios/` is committed.** It is a Capacitor 8 **Swift Package Manager** project
+(`npx cap add ios --packagemanager SPM`), and it is the plugin's SPM
+verification leg — CI's `verify-ios` job builds it on every PR, alongside
+`demo/ios`'s CocoaPods build. Capacitor's own `ios/.gitignore` keeps the
+machine-specific parts (`App/build`, `DerivedData`, `xcuserdata`,
+`App/App/public`) out of the repo, so a fresh clone needs only:
 
 ```bash
 # From example/:
 npm run build
-npx cap add ios       # creates ios/
+npx cap sync ios   # copies the plugin + web bundle in, regenerates CapApp-SPM/Package.swift
+```
+
+The first `xcodebuild` after that is slow: `BrazeKit` is an SPM binary target,
+so SwiftPM mirror-clones `braze-swift-sdk` (~180 MB) and downloads
+`BrazeKit.zip`. The result is cached in `~/Library/Caches/org.swift.swiftpm`.
+
+**`android/` is not committed** — `demo/android` is the Android verification
+leg. Generate one locally if you want it:
+
+```bash
 npx cap add android   # creates android/
-npx cap sync          # copies plugin + web bundle into both
+npx cap sync
 ```
 
 ## Run on iOS

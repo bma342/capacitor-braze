@@ -38,6 +38,16 @@
           <label><input id="enableSdkAuthentication" type="checkbox" /> enableSdkAuthentication</label>
           <label><input id="allowInsecureEndpoint" type="checkbox" /> allowInsecureEndpoint</label>
         </div>
+        <div class="row checks">
+          <label><input id="enableInAppMessageUI" type="checkbox" checked /> enableInAppMessageUI (default on)</label>
+          <label><input id="enablePushAutomation" type="checkbox" /> enablePushAutomation (iOS only)</label>
+        </div>
+        <div class="row checks">
+          <label
+            ><input id="allowUserSuppliedJavascript" type="checkbox" /> allowUserSuppliedJavascript (web only)</label
+          >
+          <label><input id="deepLinkHandlingApp" type="checkbox" /> deepLinkHandling: 'app'</label>
+        </div>
         <div class="row">
           <label
             >sessionTimeoutInSeconds (optional)
@@ -231,6 +241,30 @@
         </div>
         <div class="row">
           <button data-method="subscribeContentCardsUpdated">addListener('contentCardsUpdated')</button>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- In-app messages + SDK Authentication events                    -->
+      <!-- ============================================================ -->
+      <section class="card">
+        <h2>Event listeners</h2>
+        <p class="hint">
+          Subscribe, then trigger a campaign from the Braze dashboard. In-app message listeners are observational — they
+          cannot block display. Initialize with <code>enableInAppMessageUI</code> unchecked to present messages
+          yourself.
+        </p>
+        <div class="row">
+          <button data-method="subscribeInAppMessageReceived">addListener('inAppMessageReceived')</button>
+          <button data-method="subscribeSdkAuthError">addListener('sdkAuthError')</button>
+        </div>
+        <p class="hint">
+          <code>deepLinkReceived</code> only fires when you initialized with <code>deepLinkHandling: 'app'</code>
+          checked above. In that mode the SDK is told not to open the URL, so this testbed logs it instead of navigating
+          — which is exactly where a consumer's allow-list check goes.
+        </p>
+        <div class="row">
+          <button data-method="subscribeDeepLinkReceived">addListener('deepLinkReceived')</button>
         </div>
       </section>
 

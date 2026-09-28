@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { BrazeWeb } from '../../../src/web';
 
-import { freshMockServer, waitForCaptured } from './test-utils';
+import { freshMockServer, teardownPlugin, waitForCaptured } from './test-utils';
 
 /**
  * Identity surface tests: changeUser, getUserId, addAlias,
@@ -29,10 +29,7 @@ describe('identity (web bridge → @braze/web-sdk → mock)', () => {
   });
 
   afterAll(async () => {
-    try {
-      await plugin.wipeData();
-    } catch {}
-    await mock.stop();
+    await teardownPlugin(plugin, mock);
   });
 
   it('changeUser puts the userId on the wire on next event', async () => {

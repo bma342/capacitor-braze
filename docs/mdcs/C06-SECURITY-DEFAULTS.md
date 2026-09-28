@@ -32,17 +32,52 @@ When you add a method, run this checklist:
 
 If your method takes a boolean option that changes security or observability behavior, the default MUST be the safer value:
 
-| Toggle | Default | Worked example |
-|---|---|---|
-| `enableLogging` | `false` | [`src/web.ts:98`](../../src/web.ts), [`ios/Plugin/BrazePlugin.swift:93`](../../ios/Plugin/BrazePlugin.swift), [`android/.../BrazePlugin.kt:124`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt) |
-| `allowInsecureEndpoint` | `false` | [`src/web.ts:543`](../../src/web.ts), [`ios/Plugin/BrazePlugin.swift:86`](../../ios/Plugin/BrazePlugin.swift), [`android/.../BrazePlugin.kt:115`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt) |
-| `enableSdkAuthentication` | `false` | (not currently security-defaulted; opt-in by consumer) |
+References are by **symbol name**, not line number — every line number in this MDC set was wrong by
+the time anyone checked (2026-09 audit, A6-54).
 
-`enableSdkAuthentication` is the deliberate exception: it defaults to false because turning it on without a backend signing key would break `changeUser`. But the **README and JSDoc** call it out as strongly recommended for production. See `SECURITY.md §2`.
+| Toggle | Default | What the default actually does | Where |
+|---|---|---|---|
+| `enableLogging` | `false` | **SDK errors only.** Web: Web SDK logging off. iOS: BrazeKit log level `.error`. Android: `BrazeLogger.logLevel = Log.ERROR`. `true` gives iOS `.debug` / Android `BrazeLogger.VERBOSE`. | `initialize` in [`src/web.ts`](../../src/web.ts), [`BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift), [`BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt) |
+| `allowInsecureEndpoint` | `false` | An `http://` endpoint is **rejected** unless this is strictly `true`. | `validateInitializeOptions` in [`src/web.ts`](../../src/web.ts); the equivalent guard at the top of `initialize` on both natives |
+| `enableInAppMessageUI` | `true` | The plugin renders in-app messages out of the box. `false` is an **opt-out**, not a security toggle — it does not suppress messages, it hands rendering to the host app. | `initialize` on all three bridges |
+| `enablePushAutomation` | `false` | **iOS only.** The plugin does not touch `UNUserNotificationCenter` and BrazeKit does not take over notification opens or deep links unless the consumer opts in. | `performInitialize` in [`BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift) |
+| `allowUserSuppliedJavascript` | `false` | **Web only.** Braze dashboard authors cannot run JavaScript in your page's origin, and HTML in-app messages do not render on web. The plugin writes the `false` **explicitly** rather than omitting the key, so a future flip of the SDK's own default cannot silently enable it. iOS and Android ignore the option because neither SDK has a counterpart — see the note below. | `initialize` in [`src/web.ts`](../../src/web.ts) |
+| `deepLinkHandling` | `'sdk'` | The Braze SDK opens campaign URLs itself, which is the pre-0.2.0 behaviour and the Braze default. `'app'` is an **opt-in** that suppresses the SDK's opening and routes every URL through the `deepLinkReceived` listener. | `initialize` on all three bridges; coverage matrix in [`SECURITY.md` §7](../../SECURITY.md#7-deep-link-security) |
+| `enableSdkAuthentication` | `false` | (not security-defaulted; opt-in by consumer) | — |
+
+**`deepLinkHandling`'s default is the *less* locked-down value, deliberately.** That looks like it
+contradicts this section, and the reasoning is worth writing down so nobody "fixes" it: `'app'`
+mode does not make the plugin safer on its own — it moves the decision to the consumer, and a
+consumer who opts in without writing a listener gets an app where **no** Braze deep link works.
+Silently breaking every campaign CTA on a minor upgrade is a worse failure than the status quo,
+and the status quo already has a real control (Capacitor's `server.allowNavigation`). The safer
+default for a *toggle the plugin implements end to end* is the safer value; the safer default for a
+*toggle that delegates the work to the consumer* is the one that does not silently delegate. On
+iOS there is a second cost: `'app'` mode claims `braze.delegate`, which the plugin otherwise leaves
+free for the host app (2026-09 audit, A2-08).
+
+**`allowUserSuppliedJavascript` being ignored on two platforms is an SDK fact, not a drop.** C03
+forbids silently discarding a consumer-supplied option, so the asymmetry is stated in the option's
+JSDoc, in [`SECURITY.md` §6](../../SECURITY.md#6-in-app-message-xss-risk) and in
+[`SDK_SURFACE.md`](../../SDK_SURFACE.md)'s divergence table: `Braze.Configuration` (BrazeKit 18.2.1)
+and `BrazeConfig.Builder` (`com.braze:android-sdk-ui` 43.2.0) have no such property, because their
+HTML campaigns render in a WebView the Braze SDK owns rather than in the app's Capacitor WebView.
+There is nothing there to gate.
+
+**The `enableLogging` row is the one this project got wrong twice**, so it is worth stating what
+"safer value" means concretely: the option defaulting to `false` is necessary but not sufficient —
+the `false` *branch* has to actually set a level. iOS set `.info` (the second-most-verbose) and
+Android set nothing at all, leaving the SDK at its INFO default. A boolean that defaults safe and
+then does nothing is not a security default.
+
+`enableSdkAuthentication` is the deliberate exception: it defaults to `false` because turning it on
+without a backend signing key would break `changeUser`. The
+[README](../../README.md#should-i-enable-sdk-authentication) and the JSDoc call it out as strongly
+recommended for production. See [`SECURITY.md` §2](../../SECURITY.md#2-sdk-authentication-signed-jwt).
 
 ### 2. Insecure transport is loud, not silent
 
-If the endpoint starts with `http://` and `allowInsecureEndpoint` is not explicitly true, reject the call. Worked example ([`src/web.ts:542`](../../src/web.ts)):
+If the endpoint starts with `http://` and `allowInsecureEndpoint` is not explicitly true, reject the call. Worked example (`validateInitializeOptions` in [`src/web.ts`](../../src/web.ts)):
 
 ```ts
 const isInsecure = options.endpoint.startsWith('http://');
@@ -60,13 +95,25 @@ Two design points worth noting:
 - The check is `options.allowInsecureEndpoint === true`, not `!!options.allowInsecureEndpoint`. Strict equality means truthy-but-not-true values (a stray `1`, `'true'`, `'yes'`) don't disable the safety check.
 - The error message points at `SECURITY.md §4` so a developer who hits it learns *why* HTTPS is required, not just *that* it's required.
 
-iOS and Android duplicate the same check ([C04](./C04-VALIDATION.md)). All three messages reference `SECURITY.md §4`.
+iOS and Android duplicate the same check ([C04](./C04-VALIDATION.md)), byte-for-byte. Both natives
+lost the second sentence at some point and were silently divergent until 0.2.0 — which is the
+argument for the C04 byte-identical rule existing at all.
+
+Separately, all three platforms **warn** (never reject) when the endpoint host does not match
+`sdk.<region>-NN.braze.com|eu`, exempting `localhost` / `127.0.0.1` / `*.test` / `*.local`. The
+warning **must not interpolate the endpoint** — it logs the expected pattern only. Matching is on
+the parsed hostname, so an explicit `:443` does not misfire.
 
 ### 3. The PII non-logging rule
 
 **The bridge never writes PII to any log stream at any level — including debug, including when `enableLogging` is true.**
 
-`enableLogging` toggles Braze's *SDK* logger, which the consumer's developer can scrub or pipe to a controlled sink. The plugin's *bridge code* never independently logs.
+`enableLogging` toggles Braze's *SDK* logger. The plugin's *bridge code* logs only a small fixed set
+of non-PII diagnostics: the endpoint cluster-shape warning, "dropped an unrecognized in-app message
+/ content card variant", a warning naming the *method* when the Braze SDK rejects an attribute
+value, and a warning that the Android SDK kept its first configuration on a second `initialize`.
+None of them carries a consumer-supplied value. Verify with a grep over `src/`, `ios/Sources/BrazePlugin/` and
+`android/src/main/` before adding a log line.
 
 What counts as PII in this plugin's surface (from `SECURITY.md §3`):
 
@@ -92,9 +139,37 @@ If you find yourself adding a log line that interpolates a value, stop and pick 
 
 ### 4. Error messages name fields, not values
 
-Per [C01](./C01-METHOD-ANATOMY.md#error-message-convention) the error format is `Braze.method: \`field\` is required (type).` — it names the field, never the value. This rule has a security purpose beyond UX consistency: error messages reach crash reporters, support tickets, and customer-facing surfaces. A message like `Braze.setEmail: invalid email "alice@example.com"` leaks PII into every error pipeline downstream.
+Per [C01](./C01-METHOD-ANATOMY.md#error-message-convention) the error format is
+`Braze.method: \`field\` is required (type).` — it names the field, never the value. This rule has a
+security purpose beyond UX consistency: error messages reach crash reporters, support tickets, and
+customer-facing surfaces. A message like `Braze.setEmail: invalid email "alice@example.com"` leaks
+PII into every error pipeline downstream.
 
-The C01 format prevents this by construction. Don't reformat error messages to include values for "easier debugging" — that's a security regression dressed as a developer experience improvement.
+The C01 format prevents this by construction. Don't reformat error messages to include values for
+"easier debugging" — that's a security regression dressed as a developer experience improvement.
+
+#### The closed-enum exemption
+
+One narrow, explicit exemption exists, because C01's own worked examples use it and the two MDCs
+otherwise contradict each other (2026-09 audit, A1-26):
+
+> **A value drawn from a closed, documented, non-secret enum may be echoed in the error message.**
+
+The only current instance is `setGender`:
+
+```
+Braze.setGender: unknown gender "<value>". Allowed: male, female, other, unknown, not_applicable, prefer_not_to_say.
+```
+
+The justification is that the value is not user data — it is one of six tokens the consumer copied
+out of this plugin's own type definition, and echoing it is the only way to tell them *which* of
+their call sites is wrong. It is also bounded: an attacker cannot smuggle PII through it, because
+anything unexpected is exactly what gets echoed, and the field carries no PII to begin with.
+
+**The exemption does not generalise.** It does not extend to `setEmail`, `setPhoneNumber`,
+`setCustomUserAttribute`, `logCustomEvent` properties, `addAlias`, or any other field carrying
+consumer-supplied content. If you want to add a second instance, the value must be constrained to a
+fixed set declared in `src/definitions.ts`, and you must note it here.
 
 ### 5. REST API keys vs. public SDK keys
 
@@ -102,7 +177,7 @@ Braze has two key types ([`SECURITY.md §1`](../../SECURITY.md)). Public SDK key
 
 - The TS option is named `apiKey` (not `restApiKey`).
 - The JSDoc on `apiKey` says "public" explicitly.
-- The README has a section dedicated to the distinction.
+- The [README's Security section](../../README.md#which-api-key-do-i-use) is dedicated to the distinction.
 - The plugin never makes an HTTP request that would *use* a REST API key (we have no such request shape).
 
 If you add a future method that needs a server-side credential (e.g. a backend-signed SDK Auth signature), document it as "this signature is produced by your backend; do not call this method with a REST API key" in the JSDoc. The plugin does not accept REST keys as a feature.

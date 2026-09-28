@@ -44,9 +44,9 @@ Hiding cross-SDK divergence from consumers is the single most valuable thing a C
 
 ### DOB month indexing — 1-based on the contract, 0-based on Android enum
 
-**Why 1-based:** the Web SDK accepts 1-12 (`braze.getUser().setDateOfBirth(year, month, day)` with `month: 1-12`, see [`@braze/web-sdk/index.d.ts:1322`](../../node_modules/@braze/web-sdk/index.d.ts)). Java's `Calendar.MONTH` is 0-11, which is the most common source of off-by-one bugs in Android code. Surfacing the Java quirk to JS consumers would be the worst of both worlds.
+**Why 1-based:** the Web SDK accepts 1-12 (`braze.getUser().setDateOfBirth(year, month, day)` with `month: 1-12`, see `setDateOfBirth` in `node_modules/@braze/web-sdk/index.d.ts`). Java's `Calendar.MONTH` is 0-11, which is the most common source of off-by-one bugs in Android code. Surfacing the Java quirk to JS consumers would be the worst of both worlds.
 
-**Android bridge** ([`android/.../BrazePlugin.kt:385`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)):
+**Android bridge** (`setDateOfBirth` in [`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)):
 
 ```kotlin
 val monthEnum = Month.values()[month - 1]
@@ -55,19 +55,19 @@ user.setDateOfBirth(year, monthEnum, day)
 
 The enum is ordered `JANUARY..DECEMBER`; `values()[month - 1]` is the unambiguous 1-indexed lookup.
 
-**iOS bridge** ([`ios/Plugin/BrazePlugin.swift:280`](../../ios/Plugin/BrazePlugin.swift)): same 1-indexed convention, fed into `DateComponents` which is itself 1-indexed.
+**iOS bridge** (`setDateOfBirth` in [`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift)): same 1-indexed convention, fed into `DateComponents` which is itself 1-indexed.
 
 ### DOB timezone pinning — UTC on iOS
 
 `Date` on Swift is timezone-sensitive; the same `(year, month, day)` triple constructed against the device's local calendar can become a different absolute Date than the same triple constructed against UTC. If a user in Tokyo enters their birthday and the SDK ships the local-time Date to Braze, the dashboard may store a date one day off.
 
-iOS pins the calendar to UTC ([`ios/Plugin/BrazePlugin.swift:280`](../../ios/Plugin/BrazePlugin.swift)) so the stored DOB matches what the Android and Web bridges send. The fallback to `.current` only triggers if iOS can't construct the `TimeZone` (effectively never).
+iOS pins the calendar to UTC (`setDateOfBirth` in [`ios/Sources/BrazePlugin/BrazePlugin.swift`](../../ios/Sources/BrazePlugin/BrazePlugin.swift)) so the stored DOB matches what the Android and Web bridges send. The fallback to `.current` only triggers if iOS can't construct the `TimeZone` (effectively never).
 
 ### Gender — string union on the contract, enum on each SDK
 
 **Why a string union, not an enum on the TS contract:** strings are stable wire-format identifiers, immune to TS enum-numbering changes; they're also self-documenting in JSON logs and dashboards. The string union enumerates the six SDK-supported values verbatim.
 
-**Web** ([`src/web.ts:40`](../../src/web.ts)): `WEB_GENDER_MAP` maps each public string to the Web SDK's single-letter constant (`'m' | 'f' | 'o' | 'u' | 'n' | 'p'`). Centralized so we change it once if Braze adds a value.
+**Web** (`WEB_GENDER_MAP` in [`src/web.ts`](../../src/web.ts)): `WEB_GENDER_MAP` maps each public string to the Web SDK's single-letter constant (`'m' | 'f' | 'o' | 'u' | 'n' | 'p'`). Centralized so we change it once if Braze adds a value.
 
 **iOS / Android**: per-case `switch` from public string to `Braze.User.Gender` / `com.braze.enums.Gender`. Both bridges reject unknown strings with the same error message format ([C01](./C01-METHOD-ANATOMY.md)).
 
@@ -77,7 +77,7 @@ iOS pins the calendar to UTC ([`ios/Plugin/BrazePlugin.swift:280`](../../ios/Plu
 
 `BigDecimal.valueOf(double)` routes through `Double.toString`, which uses the human-readable shortest-round-trip representation. `BigDecimal.valueOf(14.99)` yields exactly `"14.99"`.
 
-[`android/.../BrazePlugin.kt:488`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt):
+[`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt):
 
 ```kotlin
 val bigPrice = BigDecimal.valueOf(price)
@@ -87,7 +87,7 @@ iOS and Web take `Double` / `number` directly because their SDKs handle precisio
 
 ### Currency on purchase — required by the plugin even where the SDK allows optional
 
-Web SDK signature ([`@braze/web-sdk/index.d.ts:2392`](../../node_modules/@braze/web-sdk/index.d.ts)):
+Web SDK signature (`logPurchase` in `node_modules/@braze/web-sdk/index.d.ts`):
 
 ```ts
 export function logPurchase(productId, price, currencyCode?, quantity?, purchaseProperties?): boolean;
@@ -109,9 +109,33 @@ The plugin's contract is `string | null`. Each bridge coalesces:
 
 - Web: `?? null` ([`src/web.ts`](../../src/web.ts) `getUserId`).
 - iOS: `braze.user.id as Any` — `nil` becomes JSON `null` via Capacitor's bridging.
-- Android: empty-string check + `JSObject.NULL` ([`android/.../BrazePlugin.kt:191`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)).
+- Android: empty-string check + `JSObject.NULL` ([`android/.../BrazePlugin.kt`](../../android/src/main/java/com/bma342/braze/BrazePlugin.kt)).
 
-This is the canonical case for "SDK sentinel translation": the bridge handles three separate sentinels so consumers see one.
+This is the canonical case for "SDK sentinel translation": the bridge handles three separate
+sentinels so consumers see one.
+
+**Empty string is never a contract sentinel.** Two places had leaked one and both were fixed in
+0.2.0: `sdkAuthError.userId` emitted `''` for an anonymous user on web, iOS and Android (now `null`),
+and Android's in-app message `id` read back as `''` rather than `null` when a campaign has no
+trigger id (now normalised). If an SDK hands you `''` to mean "absent", coalesce it at the bridge.
+
+One deliberate exception: `BrazeContentCardBase.id` keeps `''` rather than becoming nullable, because
+a nullable id would break `logContentCardClick({ cardId: card.id })` for every consumer, and `''`
+trips the existing required-field guard — which is the right outcome for a card that cannot be
+logged. The rationale is in its JSDoc.
+
+### `getUserId` after `wipeData` — a divergence that closed
+
+iOS used to return the previous id after `wipeData`; as of BrazeKit 17.0 it returns `null`, matching
+Android and web. Nothing in the bridge changed — this row simply stopped being a divergence when the
+pin moved to 18.2.1, which is worth recording so nobody re-adds a workaround for it.
+
+### `language` on in-app messages — Android-only absence
+
+`BrazeInAppMessage` carries no `language` field, because Braze's Android in-app message models have
+no accessor for it at 43.2.0 while iOS and web do. Rather than emit a field that is always `null` on
+one platform, the contract omits it everywhere. This is the C03 rule working as intended: the
+contract is the intersection unless there is a reason to widen it.
 
 ---
 
@@ -145,7 +169,16 @@ The error message does three jobs:
 - Tells them *why* in one sentence (Web Push uses a different mechanism).
 - Tells them *what to do instead* (branch on `Capacitor.getPlatform()`).
 
-This is the template every future divergent method follows. Banners (v0.2; web-only), geofences (v0.5; native-only), and Push Stories (v1.0; iOS-only) will all use the same shape.
+This is the template every future divergent method follows. Banners (web-only), geofences
+(native-only) and Push Stories (iOS-only) would all use the same shape — none of them is shipped;
+see [`SDK_SURFACE.md`](../../SDK_SURFACE.md) for what is actually on the roadmap.
+
+**Note what the divergence is *not*.** It throws a plain `Error` with a prose message. There is no
+`UnsupportedOperationError`, no `BrazeUnsupportedError`, no error class and no `platform` field —
+several docs described one for months and a consumer who wrote `catch (e) { if (e instanceof
+BrazeUnsupportedError) … }` would have got a `ReferenceError`. Match on the message prefix, which
+the C01 format makes stable. If a typed error hierarchy is ever wanted, it is a contract change with
+a `SDK_SURFACE.md` entry, not something to assume exists.
 
 ## Rules for extending
 

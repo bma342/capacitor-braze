@@ -7,11 +7,12 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        // Bumped from Capacitor 6's stock 8.2.1 because Braze's
-        // transitive androidx deps (swiperefreshlayout 1.2.0) require
-        // AGP 8.6.0+. See plugin MDC C10.
-        classpath 'com.android.tools.build:gradle:8.6.0'
-        classpath 'com.google.gms:google-services:4.4.0'
+        // Capacitor 8 stock template values. AGP 8.13.0 is what
+        // @capacitor/android 8.5.2 builds :capacitor-android with, and it is
+        // comfortably above the 8.6.0 floor Braze's transitive
+        // androidx.swiperefreshlayout:1.2.0 imposes. See plugin MDC C10.
+        classpath 'com.android.tools.build:gradle:8.13.0'
+        classpath 'com.google.gms:google-services:4.4.4'
 
         // NOTE: Do not place your application dependencies here; they belong
         // in the individual module build.gradle files
