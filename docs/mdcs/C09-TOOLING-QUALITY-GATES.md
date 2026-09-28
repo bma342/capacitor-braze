@@ -181,7 +181,7 @@ The rules ARE the design contract. If a contributor wants to deviate, the deviat
 - **`.mjs` files.** The prettier glob is `**/*.{css,html,ts,js}`, so `rollup.config.mjs`, `.github/scripts/assert-pack.mjs` and `.github/scripts/assert-size.mjs` are unformatted by design, and ESLint names the JS extensions in `ignores` so flat config does not pick them up either (see "Scope: TypeScript only" above). Widening either is an MDC change (see "Rules for extending").
 - **Cross-file consistency** (e.g. "did you touch every artifact in the lockstep"). That is [C01](./C01-METHOD-ANATOMY.md) discipline and PR review, not lint. Worth being blunt: **nothing in CI fails when a method ships without a native implementation or without tests.**
 - **Behavior correctness.** Lint is shape-level. Behaviour is caught by the three test tiers (206 vitest / 106 Robolectric / 50 XCTest), the example app, and — in principle — Layer 4 smoke testing, which has not been run.
-- **Swift and Kotlin security analysis.** CodeQL covers `javascript-typescript` and `actions` only. Both native languages need a traced compile inside the CodeQL tracer, which would duplicate the `verify-ios` / `verify-android` setup and roughly double their 8–15-minute runtime; that is a deliberate deferral in the same class as ktlint, and the reasoning is in `codeql.yml`'s header. SwiftLint `--strict`, Android Lint and the 126 native contract tests are what stand in.
+- **Swift and Kotlin security analysis — in lint.** Neither SwiftLint nor Android Lint is a security analyser. That job belongs to CodeQL, which since `0.3.0` covers both bridges from its own workflow (`codeql-native.yml`, in the table below); lint and SAST stay separate tools with separate owners.
 
 **Kotlin static analysis is covered**, separately from formatting: Android Lint runs on the library
 module with `abortOnError true`, which is what catches e.g. a call above the `minSdkVersion` floor.
@@ -191,11 +191,14 @@ It is in the table below.
 
 The `.github/workflows/test.yml` workflow runs the following jobs on every push to `main` and every PR targeting `main`:
 
-**Nine jobs in `test.yml`, plus two CodeQL analyses in `codeql.yml`.** `test.yml` also runs on a
-`v*` tag push and is invoked by `release.yml` via `workflow_call`, which is what puts every one of
-its gates in front of `npm publish`. `codeql.yml` is a separate workflow because it needs
-`security-events: write` and a language matrix the other jobs have no use for; it is **not** in the
-publish path, and is a tracked pre-tag item to make a required check.
+**Nine jobs in `test.yml`, plus four CodeQL analyses across `codeql.yml` and `codeql-native.yml`.**
+`test.yml` also runs on a `v*` tag push and is invoked by `release.yml` via `workflow_call`, which is
+what puts every one of its gates in front of `npm publish`. The CodeQL workflows are separate because
+they need `security-events: write`, which no other job has any use for. `codeql.yml` holds the two
+build-free analyses; `codeql-native.yml` holds the two that need a traced native compile, so that the
+fast one stays fast and each native job can be skipped on a PR that cannot affect it (a `changes`
+job decides; push to `main` and the weekly run always analyse both). Neither is in the publish path;
+making all four required checks is a tracked pre-tag item.
 
 | Job | Runner | What it does |
 |---|---|---|
@@ -210,6 +213,8 @@ publish path, and is a tracked pre-tag item to make a required check.
 | `verify-android` | ubuntu-latest | JDK 21. `:app:assembleDebug` against `com.braze:android-sdk-ui` 43.2.0, then `:capacitor-braze:testDebugUnitTest` (**106** Robolectric tests), then `:capacitor-braze:jacocoTestReport :capacitor-braze:jacocoCoverageVerification` — the Kotlin coverage ratchet (LINE + BRANCH floors in `android/build.gradle`), then `:capacitor-braze:lintDebug` (Android Lint, `abortOnError true`). Uploads the `android-coverage` artifact (JaCoCo XML + HTML) |
 | `analyze (javascript-typescript)` | ubuntu-latest | CodeQL SAST, `build-mode: none`. Separate workflow (`codeql.yml`): push + PR to `main`, plus Mondays 05:27 UTC |
 | `analyze (actions)` | ubuntu-latest | CodeQL over the workflow files themselves — `run:`-block injection, over-broad permissions. Same workflow and triggers |
+| `analyze-kotlin` | ubuntu-latest | CodeQL `java-kotlin`, `build-mode: manual`. Separate workflow (`codeql-native.yml`). Prebuilds the demo's Gradle graph **untraced**, then recompiles only `:capacitor-braze:compileDebugKotlin --rerun` inside the tracer, so the database is the plugin's Kotlin and nothing of Capacitor's. `.github/codeql/codeql-config.yml` keeps the extractor's XML walk to the plugin's own manifest. PRs: only when `android/**`, `demo/android/**` or the demo lockfile change |
+| `analyze-swift` | macos-latest | CodeQL `swift`, `build-mode: manual`, same Xcode 26.x pin + fallback as `verify-ios`. Prebuilds the CocoaPods workspace **untraced**, touches `ios/Sources/BrazePlugin/*.swift`, rebuilds inside the tracer — only the `CapacitorBraze` target recompiles. PRs: only when `ios/**`, `Package.swift`, the podspec, `demo/ios/**` or the demo lockfile change |
 
 No job talks to a real Braze backend, and no Braze credential exists in CI. The whole suite is
 self-contained against the in-process Fastify mock.

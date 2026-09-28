@@ -213,6 +213,7 @@ needs a token, and `SNYK_TOKEN` is no longer referenced anywhere.
 | `npm audit --audit-level=high --omit=dev` | `audit` job | **Yes**, on a high/critical advisory in the runtime tree |
 | **gitleaks** (full history, `fetch-depth: 0`) | `audit` job | **Yes**, on a committed secret |
 | **CodeQL** — `javascript-typescript` + `actions` | `codeql.yml`: push + PR to `main`, and Mondays 05:27 UTC | Findings appear in the Security tab; wire it as a required check once you have seen a clean baseline |
+| **CodeQL** — `java-kotlin` + `swift` (traced builds of the native bridges) | `codeql-native.yml`: push to `main` and Mondays 05:27 UTC always; on a PR, each language only when the files it reads change | Same — Security tab, then a required check |
 | **Tarball manifest** (`npm run pack:check`) | `pack-check` job | **Yes** |
 | **Bundle-size budget** (`node .github/scripts/assert-size.mjs`) | `build-plugin` job | **Yes**, above 20,480 B gzipped ESM |
 | **Dependabot version updates** | six ecosystems, weekly | Opens PRs |
@@ -226,11 +227,14 @@ would in any case have been small on a repo whose entire runtime dependency
 tree is three Braze SDKs. If you ever do want it, re-add it as an unconditional
 step with the token provisioned — not as a conditional that silently no-ops.
 
-**Swift and Kotlin are not analysed by CodeQL.** Both require a full native
-compile inside the CodeQL tracer, which means duplicating the CocoaPods and
-Gradle setup from `verify-ios` / `verify-android` and roughly doubling their
-already 8–15-minute runtime. The reasoning and the shape of the follow-up are
-in the header of `.github/workflows/codeql.yml`.
+**Swift and Kotlin are analysed in their own workflow.** Both need a real
+compile inside the CodeQL tracer, so `codeql-native.yml` repeats the
+`verify-ios` / `verify-android` setup and builds in two passes — dependencies
+untraced, then only the plugin traced — so the databases hold the bridge's own
+sources and not Capacitor's or the demo's. Each job is skipped on a PR that
+touches nothing it reads, which keeps docs and TypeScript PRs off the macOS
+queue. The design, and what to do when the runner's Xcode outgrows the pinned
+CodeQL bundle, are in the header of `.github/workflows/codeql-native.yml`.
 
 **Raising the bundle-size budget.** `assert-size.mjs` fails above 20,480 B
 gzipped for `dist/esm/**/*.js`; the measured total at `0.2.0` is 17,472 B. If a
@@ -336,9 +340,11 @@ npmjs.com → `capacitor-braze` → Settings → Trusted publisher → GitHub Ac
 successful publish through it, delete the `NODE_AUTH_TOKEN` lines from `release.yml` and revoke
 `NPM_TOKEN`.
 
-**8. Add `Analyze (javascript-typescript)` and `Analyze (actions)` to the required status checks**
-once the first CodeQL run on `main` is green, so a new finding blocks a merge rather than only
-appearing in the Security tab. (Nothing to provision — CodeQL needs no token on a public repo, and
+**8. Add `Analyze (javascript-typescript)`, `Analyze (actions)`, `Analyze (java-kotlin)` and
+`Analyze (swift)` to the required status checks** once the first CodeQL runs on `main` are green,
+so a new finding blocks a merge rather than only appearing in the Security tab. The two native
+checks are safe to require even though PRs skip them when no native file changed: they are skipped
+by a job-level `if:`, and GitHub counts a skipped job as passing. (Nothing to provision — CodeQL needs no token on a public repo, and
 `SNYK_TOKEN` is no longer referenced by any workflow.)
 
 ### Dependabot PR triage before tagging

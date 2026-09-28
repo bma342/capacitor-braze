@@ -16,7 +16,7 @@ standard to aim at; this block is what is true.
 | **Web tests** | **206** vitest across **18 files**, ~3.4s, against an in-process Fastify mock |
 | **Android tests** | **91** Robolectric/JUnit — run in CI |
 | **iOS tests** | **35** XCTest — run in CI via a generated target (`scripts/ios-add-test-target.rb`) |
-| **CI jobs** | **11** in `test.yml` (two of them matrix jobs over Capacitor 6 and 7) + **2** CodeQL analyses in `codeql.yml`, all actions SHA-pinned, per-job least-privilege permissions |
+| **CI jobs** | **11** in `test.yml` (two of them matrix jobs over Capacitor 6 and 7) + **4** CodeQL analyses (`codeql.yml`: 2, `codeql-native.yml`: 2), all actions SHA-pinned, per-job least-privilege permissions |
 | **Lint** | **ESLint 10** flat config (`eslint.config.cjs`) on `@ionic/eslint-config` 0.5.0, run with `--max-warnings=0`; Prettier 3.9; SwiftLint `--strict`; Android Lint `abortOnError true`. `npm audit` including dev deps: **0 vulnerabilities** |
 | **Native pins** | BrazeKit/BrazeUI **18.2.1** (Xcode 26+), `com.braze:android-sdk-ui` **43.2.0**, `@braze/web-sdk` peer **`^6.13.0`** (security floor) |
 | **Capacitor** | `^6.0.0 \|\| ^7.0.0 \|\| ^8.0.0` (podspec `>= 6.0, < 9.0`). iOS installs under **CocoaPods or SPM**; `demo/` + `example/` both on 8.5.2. **Every major in the range is built by CI**: `verify-capacitor-compat-{ios,android}` build a scratch app against the latest 6.x and 7.x on CocoaPods, SPM and Android |
@@ -24,7 +24,7 @@ standard to aim at; this block is what is true.
 | **Layer 4 (real Braze)** | **never run.** No release is validated against a live Braze backend |
 | **e2e runner (Maestro/Detox)** | **none, and none planned** — decided against; see `PLAN.md` §14 |
 | **Perf / bundle budgets in CI** | **one, enforced**: gzipped ESM bundle ≤ 20,480 B (measured 17,472 B). The other budgets in §2 were unmeasured guesses and are gone |
-| **SAST / CodeQL** | **CodeQL on `javascript-typescript` + `actions`** (push, PR, weekly), plus `npm audit`, gitleaks and secret scanning. Swift/Kotlin need a traced native build — deferred, see `codeql.yml`. Snyk removed: its token was never provisioned |
+| **SAST / CodeQL** | **CodeQL on `javascript-typescript` + `actions`** (`codeql.yml`) **and on `java-kotlin` + `swift`** (`codeql-native.yml`, traced builds scoped to the bridges' own sources; PRs run each native language only when its files change) — push, PR, weekly — plus `npm audit`, gitleaks and secret scanning. Snyk removed: its token was never provisioned |
 | **Provenance** | `0.1.0` published by hand, **no attestation**. `0.2.0` will be the first workflow-published release |
 | **Repo settings still to do** | private vulnerability reporting, `enforce_admins`, `v*` tag ruleset, npm Trusted Publishing — see [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
 
@@ -542,7 +542,7 @@ Numbered to match CONTRIBUTING's checklist, so the two documents can be read sid
 5. ☐ **Create a `v*` tag ruleset** (deletion + non-fast-forward + required signatures).
 6. ☐ **Create the `npm-publish` GitHub environment** with a required reviewer and a `v*` tag deployment-branch policy — `release.yml` already references it.
 7. ☐ **Configure npm Trusted Publishing** (web UI only), then delete `NODE_AUTH_TOKEN` from `release.yml` and revoke `NPM_TOKEN`. Until then the publish uses a 2FA-bypassing automation token, and `SECURITY.md` §13 says so.
-8. ☐ **Make CodeQL a required status check** (`Analyze (javascript-typescript)`, `Analyze (actions)`) once the first run on `main` is green. Nothing to provision — CodeQL needs no token on a public repo, and `SNYK_TOKEN` is no longer referenced by any workflow.
+8. ☐ **Make CodeQL a required status check** (`Analyze (javascript-typescript)`, `Analyze (actions)`, `Analyze (java-kotlin)`, `Analyze (swift)`) once the first runs on `main` are green. The two native checks are skipped by a job-level `if:` on PRs that touch no native file, which GitHub counts as passing, so requiring them does not block docs-only PRs. Nothing to provision — CodeQL needs no token on a public repo, and `SNYK_TOKEN` is no longer referenced by any workflow.
 
 Plus, before tagging: ☐ **triage the six open Dependabot PRs** — the per-PR verdicts are in [CONTRIBUTING → Dependabot PR triage](./CONTRIBUTING.md#dependabot-pr-triage-before-tagging). Note **#22 is now a close**, not a rebase: six of its seven dev-dependency bumps were absorbed by the ESLint 10 flat-config migration on this branch.
 
@@ -561,7 +561,6 @@ absence as an oversight.
 
 - **TypeDoc rendering** — replaced by `@capacitor/docgen` into the README, per C09.
 - **ktlint** — not in Capacitor's standard toolchain, per C09. Android Lint covers Kotlin *static analysis*; Kotlin *formatting* is reviewed by hand.
-- **CodeQL for Swift and Kotlin** — both need a full native compile inside the CodeQL tracer, duplicating `verify-ios` / `verify-android` and roughly doubling their runtime. The `javascript-typescript` and `actions` analyses do run. Reasoning in the header of `.github/workflows/codeql.yml`.
 - **A daily spec-drift job against real Braze** — the Fastify mock covers the bulk, and drift is caught by reading Braze's release notes (C08). Five documents described this job as existing; none of them was right.
 - **Maestro / Detox e2e** — decided against outright, not merely deferred. See `PLAN.md` §14 item 3.
 

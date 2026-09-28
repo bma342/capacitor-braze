@@ -63,6 +63,15 @@ Unchanged from 0.2.0 — no Braze SDK moved in this release:
   `App.debug.dylib`, `Lcom/bma342/braze/BrazePlugin;` in the APK's dex. Verified at Capacitor
   **6.2.2** and **7.6.9**. Because the script resolves the major at run time, a newly published
   6.x/7.x that breaks the plugin turns CI red without a commit behind it — deliberate.
+- **CodeQL now analyses the native bridges** — `java-kotlin` over `android/src/main` and `swift`
+  over `ios/Sources`, in a new [`codeql-native.yml`](./.github/workflows/codeql-native.yml)
+  (push + PR to `main`, plus the same weekly slot as `codeql.yml`). Both languages need a traced
+  compile, so each job builds Capacitor, the Braze pods and the demo **outside** the tracer first
+  and then recompiles only the plugin inside it: the databases hold `BrazePlugin.kt` and the two
+  Swift files, not Capacitor's sources or the demo app (a CodeQL `paths` filter cannot do this for
+  a traced build). Verified locally with CodeQL 2.27.1 — both extract cleanly and
+  `security-extended` reports nothing. On pull requests each job runs only when the files it reads
+  change, so a docs or TypeScript PR spends no macOS time on it. This closes the 0.2.0 deferral.
 
 ### Changed
 

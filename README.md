@@ -34,7 +34,7 @@ Snapshot at **0.3.0** (2026-09-22). This table drifts — `package.json`, `git l
 | **Developer testbed** (`example/`) | Every plugin method has a button; clicking invokes + logs |
 | **Reference app** (`demo/`) | React 19 + Tailwind 4 + TanStack Router; restaurant ordering + e-commerce flows; iOS + Android Capacitor projects committed |
 | **MDC design contracts** | [C01–C11](./docs/mdcs/) codify the patterns; CI gates enforce them |
-| **CI** | 11 jobs in [`test.yml`](./.github/workflows/test.yml) plus 2 CodeQL analyses (`javascript-typescript`, `actions`) in [`codeql.yml`](./.github/workflows/codeql.yml); all GitHub Actions pinned to commit SHAs; release publishing gated on the full suite. Two of the 11 are matrix jobs over Capacitor 6 and 7, so the range the peer dep advertises is the range CI builds. `build-plugin` enforces a gzipped-ESM bundle budget of 20,480 B (measured 17,472 B at 0.2.0; 0.3.0 changed no TypeScript) |
+| **CI** | 11 jobs in [`test.yml`](./.github/workflows/test.yml) plus 4 CodeQL analyses — `javascript-typescript` and `actions` in [`codeql.yml`](./.github/workflows/codeql.yml), `java-kotlin` and `swift` (traced builds of the native bridges) in [`codeql-native.yml`](./.github/workflows/codeql-native.yml); all GitHub Actions pinned to commit SHAs; release publishing gated on the full suite. Two of the 11 are matrix jobs over Capacitor 6 and 7, so the range the peer dep advertises is the range CI builds. `build-plugin` enforces a gzipped-ESM bundle budget of 20,480 B (measured 17,472 B at 0.2.0; 0.3.0 changed no TypeScript) |
 | **Branch protection** | `main` requires the CI checks (strict), signed commits, no force pushes, no deletions. Admin enforcement, a release-tag ruleset and private vulnerability reporting are **maintainer steps not yet performed** — see [CONTRIBUTING → Maintainer pre-tag checklist](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
 | **Published to npm** | ✅ [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) — `0.1.0` published 2026-05-22 (by hand, no provenance attestation). `0.2.0` was the first release published by the workflow with `--provenance` |
 | **Smoke-tested against real Braze** | ❌ **Not yet.** The Layer 4 playbook and capture templates are staged in [`docs/smoke-tests/`](./docs/smoke-tests/) but have never been run — no claim in this repo is backed by a live Braze backend |
@@ -52,7 +52,6 @@ Stated plainly so a reviewer does not have to find them:
 - **`deepLinkReceived` cannot intercept HTML in-app message iframes on web.** Their renderer never consults the SDK's click-action path. iOS and Android cover that channel; the full per-channel matrix is in [`SECURITY.md` §7](./SECURITY.md#7-deep-link-security). Capacitor's `server.allowNavigation` is the backstop and you should keep it set.
 - **`inAppMessageReceived`'s end-to-end delivery test is web-only.** The mock server now returns real trigger envelopes, so the Web SDK's own trigger engine builds the message and the tests assert what a consumer's listener receives. On iOS and Android the DTO is still covered only at the serializer level, against real SDK message classes.
 - **The iOS test tier is thinner than Android's.** All three bridges now have measured, ratcheted coverage, and the measurement shows the gap: 58.54% of the Swift bridge's lines against 89.82% of the Kotlin bridge's, because 20 of the 35 iOS bridge methods are never entered by an XCTest (their validation strings are pinned on web and Android only). The list is in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md).
-- **CodeQL does not analyse Swift or Kotlin.** `javascript-typescript` and `actions` are analysed on every push and PR to `main` plus weekly; the native languages need a traced compile that would roughly double the `verify-ios` / `verify-android` runtime, so they are a deliberate deferral.
 - **The Capacitor 6/7 compat jobs build a scratch app, not the demo.** `verify-capacitor-compat-{ios,android}` scaffold a throwaway copy of `example/` against the latest 6.x and 7.x, so the *bridge* is compiled and linked on every install path — but `demo/`'s richer flows and the 50 iOS / 106 Android tests still only run against Capacitor 8. They also resolve the latest release of each major at run time, so a newly published 6.x/7.x can turn CI red without a commit; that is intended.
 
 ## Quick start
@@ -1857,7 +1856,7 @@ wrote".
 
 Construct a type with a set of properties K of type T
 
-<code>{ [P in K]: T; }</code>
+<code>{ [P in K]: T; }</code>
 
 
 #### BrazeEventPropertyValue

@@ -75,7 +75,7 @@ If you find yourself writing more than ~20 lines for a single method, you're pro
 | **Build** | Rollup (Capacitor standard) → ESM + CJS only; the IIFE/`unpkg` bundle was removed in 0.2.0 | — |
 | **Tests** | **vitest** (web, 206 across 18 files, with a `@vitest/coverage-v8` ratchet on `src/web.ts`), **Robolectric/JUnit** (Android, 106, with a JaCoCo ratchet), **XCTest** (iOS, 50, with an `xccov` ratchet), **Fastify** mock Braze server (TypeScript, in-process, ephemeral port). No Jest, no Ktor, no Maestro anywhere in this repo | — |
 | **Lint** | **ESLint 10** flat config (`eslint.config.cjs`) on `@ionic/eslint-config` 0.5.0 — the preset's flat rewrite, which peer-requires ESLint 10 — plus Prettier 3.9 (`@ionic/prettier-config`, 120-char width) and SwiftLint. `npm run eslint` runs `--max-warnings=0` | see `package.json` |
-| **CI** | GitHub Actions, all actions SHA-pinned: **11 jobs in `test.yml`** (`lint`, `build-plugin`, `pack-check`, `build-example`, `build-demo`, `test-web`, `audit`, `verify-ios`, `verify-android`, `verify-capacitor-compat-android`, `verify-capacitor-compat-ios` — the last two a matrix over Capacitor 6 and 7) **+ 2 CodeQL analyses** in `codeql.yml` (`javascript-typescript`, `actions`) | ubuntu + macOS |
+| **CI** | GitHub Actions, all actions SHA-pinned: **11 jobs in `test.yml`** (`lint`, `build-plugin`, `pack-check`, `build-example`, `build-demo`, `test-web`, `audit`, `verify-ios`, `verify-android`, `verify-capacitor-compat-android`, `verify-capacitor-compat-ios` — the last two a matrix over Capacitor 6 and 7) **+ 4 CodeQL analyses** — `javascript-typescript` + `actions` in `codeql.yml`, `java-kotlin` + `swift` (traced native builds) in `codeql-native.yml` | ubuntu + macOS |
 
 ---
 
@@ -109,6 +109,7 @@ Snapshot at `0.3.0`, verified 2026-09-22 (see `package.json` for the live versio
 | Signed-commit + required-check branch protection on `main` | ✅ |
 | Gitleaks CI step | ✅ |
 | CodeQL SAST (`codeql.yml`) — `javascript-typescript` + `actions`, push/PR to `main` + weekly | ✅ — ⏳ not yet a *required* check (needs one run on `main` to name it) |
+| CodeQL for the native bridges (`codeql-native.yml`) — `java-kotlin` + `swift`, traced builds scoped to `android/src/main` / `ios/Sources`; push to `main` + weekly always, PRs only when native files change | ✅ 0.3.0 — extraction verified locally with CodeQL 2.27.1; ⏳ first CI run, then required checks |
 | Bundle-size gate (`.github/scripts/assert-size.mjs` in `build-plugin`) | ✅ gzipped ESM budget 20,480 B; measured 17,472 B at `0.2.0` |
 | Smoke wrappers (`npm run smoke:web/ios/android`) | ✅ scripts exist |
 | Audit cleanup — `docs/audits/2026-05` (17 phases) + `docs/audits/2026-09` (this wave) | ✅ |
@@ -121,7 +122,6 @@ Snapshot at `0.3.0`, verified 2026-09-22 (see `package.json` for the live versio
 | Capacitor 8 support (peer `^8`, podspec `< 9.0`, demo + example on 8.5.2) | ✅ 0.3.0 |
 | Swift Package Manager (root `Package.swift`, `CAPBridgedPlugin` registration, `example/ios` SPM build in CI) | ✅ 0.3.0 |
 | Capacitor 6/7 built in CI (`verify-capacitor-compat-{ios,android}`, matrix × CocoaPods/SPM/Android, via `scripts/compat-app.sh`) | ✅ 0.3.0 |
-| CodeQL for Swift/Kotlin | ⏳ tracked follow-up, not started |
 
 **This table drifts.** When in doubt, source-of-truth checks:
 - Versions, scripts, dependencies → `package.json`

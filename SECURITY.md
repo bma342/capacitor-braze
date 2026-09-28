@@ -509,12 +509,13 @@ await Braze.wipeData();
 | **gitleaks** | `audit` job, full history (`fetch-depth: 0`) | **Runs.** Catches a committed Braze key before it reaches `main` |
 | **CodeQL (SAST)** — `javascript-typescript` | `codeql.yml`, every push + PR to `main`, plus Mondays 05:27 UTC | **Runs**, `build-mode: none`. Results land in the Security tab |
 | **CodeQL (SAST)** — `actions` | same workflow | **Runs.** Analyses these workflow files for injection into `run:` blocks and over-broad permissions |
+| **CodeQL (SAST)** — `java-kotlin` | `codeql-native.yml`, push to `main` + weekly always; PRs that touch `android/**`, `demo/android/**` or the demo's lockfile | **Runs**, `build-mode: manual`. A traced Gradle compile of `:capacitor-braze` only — dependencies are prebuilt outside the tracer — so the database is `BrazePlugin.kt` plus the plugin's `AndroidManifest.xml`, not Capacitor's Java or the demo app |
+| **CodeQL (SAST)** — `swift` | same workflow, macOS; PRs that touch `ios/**`, `Package.swift`, the podspec, `demo/ios/**` or the demo's lockfile | **Runs**, `build-mode: manual`. A traced `xcodebuild` in which only the `CapacitorBraze` pod recompiles, so the database is the two files in `ios/Sources/BrazePlugin`, not Capacitor's Swift or the Pods |
 | **GitHub secret scanning + push protection** | Repository setting | **Enabled** |
 | **Dependabot version updates** | `.github/dependabot.yml` | **Enabled**, six ecosystems (`/`, `/example`, `/demo`, `/test/web`, `/test/mock-server`, `github-actions`) |
 | **Tarball manifest gate** | `pack-check` job, `.github/scripts/assert-pack.mjs` | **Runs.** Asserts every consumer-required artifact is published and no repo-internal tree leaks into the package |
 | **Bundle-size budget** | `build-plugin` job, `.github/scripts/assert-size.mjs` | **Runs, and fails the build** above 20,480 B gzipped for the ESM tree. Mostly a supply-chain canary: a dependency inlined into the bundle shows up as a size jump |
 | **Dependabot security updates** | Repository setting | **Not enabled** — a maintainer action, see [CONTRIBUTING](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020) |
-| **CodeQL for Swift / Kotlin** | — | **Not analysed.** Both need a full native compile inside the CodeQL tracer, which would duplicate `verify-ios` / `verify-android` and roughly double their runtime. The reasoning is in the header of `codeql.yml`; it is a tracked follow-up |
 
 Snyk was wired into the `audit` job in 0.2.0 behind `if: env.SNYK_TOKEN != ''` and **has been
 removed**. Provisioning the token was never done, a step that always skips is worse than no step

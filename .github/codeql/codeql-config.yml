@@ -1,0 +1,32 @@
+name: capacitor-braze (java-kotlin)
+
+# Used by the `analyze-kotlin` job in .github/workflows/codeql-native.yml, and
+# by nothing else. Read this before "fixing" it.
+#
+# Kotlin SOURCE is not scoped by this file. For a traced (build-mode: manual)
+# compile, GitHub's docs are explicit that `paths` / `paths-ignore` do not limit
+# what gets extracted — "you must specify appropriate build steps". The workflow
+# does that: it compiles Capacitor and the demo app outside the tracer first,
+# then re-runs only `:capacitor-braze:compileDebugKotlin` inside it, so the
+# database's only Kotlin/Java file is android/src/main/.../BrazePlugin.kt.
+#
+# What `paths` DOES scope is the second half of java-kotlin extraction: after
+# the build, the extractor walks the whole checkout indexing XML and
+# .properties files (the Android-manifest queries run on those), and that walk
+# honours these filters. Measured locally with CodeQL 2.27.1: without this file
+# it indexed 39 XML files — the demo app's manifest and resources, Capacitor's
+# manifests under node_modules, build intermediates — and
+# `java/android/backup-enabled` fired on demo/android/app/src/main/AndroidManifest.xml,
+# an app this repository does not ship. With it, it indexes exactly one:
+# android/src/main/AndroidManifest.xml.
+#
+# Expect a "Path filters have no effect for Java/Kotlin" warning on the tool
+# status page. The CLI emits it for every manual-build java-kotlin database
+# with a `paths` filter; it is accurate for the Kotlin sources (see above) and
+# inaccurate for the XML walk, which is the only thing this file is here for.
+#
+# The Swift job deliberately does not load this file: Swift has no equivalent
+# non-compiled walk, so the filter would be inert there and add the same
+# warning for nothing.
+paths:
+  - android/src/main

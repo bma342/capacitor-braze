@@ -9,22 +9,15 @@ name: CodeQL
 # without a build.
 #
 # ---------------------------------------------------------------------------
-# Why only `javascript-typescript` and `actions`
+# Where Swift and Kotlin are analysed
 # ---------------------------------------------------------------------------
-# CodeQL analyses Swift and Kotlin only by observing a full native compilation
-# inside the CodeQL tracer: Swift needs `xcodebuild` on a macOS runner with the
-# BrazeKit/BrazeUI pods resolved, and Kotlin needs the Gradle build with the
-# Android SDK installed. Both of those builds already exist in `test.yml`
-# (verify-ios, verify-android) and each takes 8-15 minutes; wiring CodeQL
-# through them means duplicating the pod/Gradle setup here and roughly doubling
-# their runtime on every PR and every weekly run.
-#
-# That is a deliberate deferral, not an oversight. The bridges are small, have
-# no network or crypto code of their own (BrazeKit / android-sdk-ui do all of
-# it), and are covered by SwiftLint --strict, Android Lint and 100 native
-# contract tests. Adding the native languages is a tracked follow-up; when it
-# happens it belongs in a separate scheduled workflow reusing the verify jobs'
-# setup, not bolted onto the PR path.
+# In `codeql-native.yml`, not here. CodeQL extracts Swift and Kotlin only by
+# tracing a real compile — `xcodebuild` on macOS with the BrazeKit/BrazeUI pods
+# resolved, Gradle with the Android SDK installed — so those jobs repeat most
+# of verify-ios / verify-android's setup and take minutes, not seconds. Keeping
+# them in their own workflow keeps this one fast and lets each native job be
+# skipped on a PR that cannot affect it. That file's header explains how the
+# traced builds are scoped to the plugin's own sources.
 #
 # `actions` analyses these workflow files themselves — untrusted-input
 # injection into `run:` blocks, over-broad permissions, the
