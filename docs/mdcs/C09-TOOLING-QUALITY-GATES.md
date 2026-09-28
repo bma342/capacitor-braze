@@ -191,7 +191,7 @@ It is in the table below.
 
 The `.github/workflows/test.yml` workflow runs the following jobs on every push to `main` and every PR targeting `main`:
 
-**Nine jobs in `test.yml`, plus four CodeQL analyses across `codeql.yml` and `codeql-native.yml`.**
+**Eleven jobs in `test.yml`, plus four CodeQL analyses across `codeql.yml` and `codeql-native.yml`.**
 `test.yml` also runs on a `v*` tag push and is invoked by `release.yml` via `workflow_call`, which is
 what puts every one of its gates in front of `npm publish`. The CodeQL workflows are separate because
 they need `security-events: write`, which no other job has any use for. `codeql.yml` holds the two

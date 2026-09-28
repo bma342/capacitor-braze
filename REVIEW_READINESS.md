@@ -14,8 +14,8 @@ standard to aim at; this block is what is true.
 | **Version** | `0.2.0` (unreleased on this branch). `0.1.0` is on npm since 2026-05-22 |
 | **Public surface** | 35 methods + 5 listener events (`featureFlagsUpdated`, `contentCardsUpdated`, `inAppMessageReceived`, `sdkAuthError`, `deepLinkReceived`) |
 | **Web tests** | **206** vitest across **18 files**, ~3.4s, against an in-process Fastify mock |
-| **Android tests** | **91** Robolectric/JUnit — run in CI |
-| **iOS tests** | **35** XCTest — run in CI via a generated target (`scripts/ios-add-test-target.rb`) |
+| **Android tests** | **106** Robolectric/JUnit — run in CI (incl. the 15-test wire-level integration tier) |
+| **iOS tests** | **50** XCTest — run in CI via a generated target (`scripts/ios-add-test-target.rb`) |
 | **CI jobs** | **11** in `test.yml` (two of them matrix jobs over Capacitor 6 and 7) + **4** CodeQL analyses (`codeql.yml`: 2, `codeql-native.yml`: 2), all actions SHA-pinned, per-job least-privilege permissions |
 | **Lint** | **ESLint 10** flat config (`eslint.config.cjs`) on `@ionic/eslint-config` 0.5.0, run with `--max-warnings=0`; Prettier 3.9; SwiftLint `--strict`; Android Lint `abortOnError true`. `npm audit` including dev deps: **0 vulnerabilities** |
 | **Native pins** | BrazeKit/BrazeUI **18.2.1** (Xcode 26+), `com.braze:android-sdk-ui` **43.2.0**, `@braze/web-sdk` peer **`^6.13.0`** (security floor) |
@@ -425,7 +425,7 @@ Status legend: ✓ done · ○ deliberate deviation (with reason) · ◌ open ·
 | TS types pass `tsc --strict --noEmit` | ✓ | `build-plugin` CI job |
 | `npm test` passes | ✓ | `test-web` CI job — **206 tests across 18 files in ~3.4s**, all 35 methods covered, followed by a coverage-threshold run. Map + measured numbers in [`docs/TEST-COVERAGE-AUDIT.md`](./docs/TEST-COVERAGE-AUDIT.md) |
 | Android native tests pass in CI | ✓ | `verify-android` compiles the bridge against `com.braze:android-sdk-ui` 43.2.0, runs **106** Robolectric tests (incl. the 15-test wire-level integration tier against MockWebServer), and runs Android Lint with `abortOnError true` |
-| iOS native tests pass in CI | ✓ | `verify-ios` compiles against BrazeKit 18.2.1 and runs **35** XCTests via a generated target. Until `0.2.0` the suite had no target and had never been compiled |
+| iOS native tests pass in CI | ✓ | `verify-ios` compiles against BrazeKit 18.2.1 and runs **50** XCTests via a generated target. Until `0.2.0` the suite had no target and had never been compiled |
 | Web Layer 3 passes in CI | ✓ | `test-web` runs the vitest + Fastify-mock harness |
 | Layer 4 manual smoke against real Braze | ◌ | **Never run.** `0.1.0` and `0.2.0` both ship on mock-verified wire format only, and say so |
 | No `any`, no `!`, no `TODO`, no `@Suppress` (without docs) | ✓ | Re-verified 2026-09-22 by grep over `src/`, `ios/Sources/BrazePlugin/`, `android/src/main/`: no TODO/FIXME, no `@Suppress`, no Swift force-unwraps / `try!` / `as!` / `fatalError`, no `any` |

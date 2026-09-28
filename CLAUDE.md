@@ -91,8 +91,8 @@ Snapshot at `0.3.0`, verified 2026-09-22 (see `package.json` for the live versio
 | Mock Braze server (**Fastify + TypeScript**, in `test/mock-server`) | ✅ |
 | Web behavioral tests (vitest + mock) — 206 across 18 files | ✅ |
 | Web coverage ratchet — `src/web.ts` 97.45% statements/lines, 90.80% branches, 100% functions; thresholds enforced in the `test-web` job | ✅ |
-| Android native tests (Robolectric/JUnit) — 91, run in CI | ✅ |
-| iOS native tests (XCTest) — 35, run in CI via a generated target | ✅ |
+| Android native tests (Robolectric/JUnit) — 106, run in CI | ✅ |
+| iOS native tests (XCTest) — 50, run in CI via a generated target | ✅ |
 | Native coverage ratchets — Android (JaCoCo) `BrazePlugin.kt` 89.82% lines / 76.37% branches, floors 89 / 76, `jacocoCoverageVerification` in `verify-android`; iOS (`xccov`) `ios/Sources/BrazePlugin/` 58.54% lines / 51.61% functions, floors 58 / 51, `scripts/ios-coverage-gate.mjs` in `verify-ios`. Reports uploaded as CI artifacts | ✅ 0.3.0 |
 | CI: `verify-ios` runs `xcodebuild test` + the `xccov` coverage gate; `verify-android` runs build + tests + JaCoCo coverage gate + Lint on JDK 21 | ✅ |
 | Tarball manifest gate (`pack-check` job / `npm run pack:check`) | ✅ |
