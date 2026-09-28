@@ -8,7 +8,7 @@ Pre-1.0: minor versions may include breaking changes (documented loudly here). P
 
 Nothing yet.
 
-## [0.3.0] — Unreleased — Capacitor 8 and Swift Package Manager
+## [0.3.0] — 2026-09-28 — Capacitor 8 and Swift Package Manager
 
 `0.2.0` capped at Capacitor 7, which meant two things for anyone on a current Capacitor project:
 `npm install` conflicted on the peer dependency, and even if you forced past it, `npx cap add ios`
@@ -151,6 +151,8 @@ three; these matter to forks, patches and anyone who vendored the source.
 - **Still no Layer 4 smoke against a live Braze backend**, exactly as at 0.2.0.
 
 ## [0.2.0] — 2026-09-22 — Native SDK bumps, real native test tiers, and an audited release pipeline
+
+> **Not published to npm.** `0.2.0` was merged to `main` together with `0.3.0` (#28) and never tagged; its changes ship in `0.3.0`, the first workflow-published release.
 
 The second full-repo self-audit ([`docs/audits/2026-09/`](./docs/audits/2026-09/)) went over the TypeScript contract, both native bridges, the security model, the test/CI surface, the docs, and the SDK drift since 0.1.0. This release closes what it found. Three themes:
 
