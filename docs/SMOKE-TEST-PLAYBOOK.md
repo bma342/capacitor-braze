@@ -189,7 +189,7 @@ Open a PR titled `chore: smoke-test pass for vX.Y.Z`. The PR description include
 - Summary of any field-shape drift discovered (and what was fixed)
 - The verdict line from each platform
 
-Once merged, work through the [maintainer pre-tag checklist](../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-020), tag `vX.Y.Z`, and `release.yml` runs the full CI suite before publishing.
+Once merged, work through the [maintainer pre-tag checklist](../CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030), tag `vX.Y.Z`, and `release.yml` runs the full CI suite before publishing.
 
 ---
 
