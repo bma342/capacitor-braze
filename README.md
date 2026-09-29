@@ -36,7 +36,7 @@ Snapshot at **0.3.0** (2026-09-28). This table drifts — `package.json`, `git l
 | **MDC design contracts** | [C01–C11](./docs/mdcs/) codify the patterns; CI gates enforce them |
 | **CI** | 11 jobs in [`test.yml`](./.github/workflows/test.yml) plus 4 CodeQL analyses — `javascript-typescript` and `actions` in [`codeql.yml`](./.github/workflows/codeql.yml), `java-kotlin` and `swift` (traced builds of the native bridges) in [`codeql-native.yml`](./.github/workflows/codeql-native.yml); all GitHub Actions pinned to commit SHAs; release publishing gated on the full suite. Two of the 11 are matrix jobs over Capacitor 6 and 7, so the range the peer dep advertises is the range CI builds. `build-plugin` enforces a gzipped-ESM bundle budget of 20,480 B (measured 17,472 B at 0.2.0; 0.3.0 changed no TypeScript) |
 | **Branch protection** | `main` requires the CI checks (strict), signed commits, no force pushes, no deletions. Admin enforcement, a release-tag ruleset and private vulnerability reporting are **maintainer steps not yet performed** — see [CONTRIBUTING → Maintainer pre-tag checklist](./CONTRIBUTING.md#maintainer-pre-tag-checklist-for-030) |
-| **Published to npm** | ✅ [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze). `0.1.0` (2026-05-22) was published by hand with no provenance attestation. `0.2.0` was never tagged — it shipped inside `0.3.0`. `0.3.0` is published from the `v0.3.0` tag by [`release.yml`](./.github/workflows/release.yml): full CI gate first, then `npm publish --provenance`, the first release with a provenance attestation |
+| **Published to npm** | ✅ [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze). `0.1.0` (2026-05-22) was published by hand with no provenance attestation. `0.2.0` was never tagged — it shipped inside `0.3.0`. `0.3.0` was published 2026-09-29 from the `v0.3.0` tag by [`release.yml`](./.github/workflows/release.yml) — full CI gate, then `npm publish --provenance` through npm Trusted Publishing — the first release with a provenance attestation (`npm audit signatures` verifies it) |
 | **Smoke-tested against real Braze** | ❌ **Not yet.** The Layer 4 playbook and capture templates are staged in [`docs/smoke-tests/`](./docs/smoke-tests/) but have never been run — no claim in this repo is backed by a live Braze backend |
 | **Capacitor 8 + SPM** | ✅ New in 0.3.0. Peer dep `^6.0.0 \|\| ^7.0.0 \|\| ^8.0.0`, podspec `>= 6.0, < 9.0`, and a root [`Package.swift`](./Package.swift) so the plugin installs into the SPM project Capacitor 8's CLI now generates by default. `demo/` (Pods + Android) and `example/` (SPM) both build in CI on Capacitor 8.5.2 |
 | **Capacitor 6 / 7 still supported** | ✅ New in 0.3.0, and now *tested* rather than merely allowed. `verify-capacitor-compat-{ios,android}` build a scratch app against the latest 6.x and 7.x on CocoaPods, SPM and Android every PR, applying only the consumer edits [C10's matrix](./docs/mdcs/C10-CONSUMER-INTEGRATION-REQUIREMENTS.md#the-support-matrix-030) documents |
@@ -1855,7 +1855,9 @@ wrote".
 
 Construct a type with a set of properties K of type T
 
-<code>{ [P in K]: T; }</code>
+<code>{
+ [P in K]: T;
+ }</code>
 
 
 #### BrazeEventPropertyValue

@@ -171,7 +171,7 @@ elif [ "$LEG" = "ios-pods" ]; then
   npx cap sync ios
   (cd ios/App && xcodebuild build \
     -workspace App.xcworkspace -scheme App \
-    -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
+    -destination 'generic/platform=iOS Simulator' \
     -configuration Debug -derivedDataPath "$APP/dd" \
     CODE_SIGNING_ALLOWED=NO)
   assert_ios_plugin_linked
@@ -195,7 +195,7 @@ else
 
   (cd ios/App && xcodebuild build \
     -project App.xcodeproj -scheme App \
-    -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
+    -destination 'generic/platform=iOS Simulator' \
     -configuration Debug -derivedDataPath "$APP/dd" \
     CODE_SIGNING_ALLOWED=NO)
   assert_ios_plugin_linked

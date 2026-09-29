@@ -403,6 +403,31 @@ jobs:
       # `-enableCodeCoverage YES` + `-resultBundlePath` feed the coverage gate
       # below. The committed scheme also sets codeCoverageEnabled, so this flag
       # is belt and braces — a regenerated scheme cannot quietly drop it.
+      # `xcodebuild test` needs a real simulator device. Resolve one by id
+      # from whatever the runner image actually has (newest iOS runtime,
+      # preferring an iPhone 17 / 16 family device) instead of hard-coding a
+      # name that a rotated image may not ship.
+      - name: Pick a simulator device
+        run: |
+          set -euo pipefail
+          SIM_UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json,sys,re
+          d=json.load(sys.stdin)["devices"]
+          def runtime_key(r):
+              m=re.search(r"iOS-(\d+)-(\d+)", r); return (int(m.group(1)), int(m.group(2))) if m else (0,0)
+          best=None
+          for rt in sorted(d, key=runtime_key, reverse=True):
+              if "iOS" not in rt: continue
+              phones=[x for x in d[rt] if x.get("isAvailable") and x["name"].startswith("iPhone")]
+              pref=[x for x in phones if x["name"] in ("iPhone 17","iPhone 16","iPhone 17 Pro","iPhone 16 Pro")]
+              cand=pref or phones
+              if cand: best=cand[0]; break
+          if not best: sys.exit("no available iPhone simulator on this image")
+          print(best["udid"])')
+          echo "Using simulator $SIM_UDID"
+          xcrun simctl list devices available | grep "$SIM_UDID"
+          echo "SIM_UDID=$SIM_UDID" >> "$GITHUB_ENV"
+
       - name: Build iOS demo + run plugin XCTests (with coverage)
         working-directory: demo/ios/App
         run: |
@@ -410,7 +435,7 @@ jobs:
           xcodebuild test \
             -workspace App.xcworkspace \
             -scheme App \
-            -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
+            -destination "id=$SIM_UDID" \
             -configuration Debug \
             -enableCodeCoverage YES \
             -resultBundlePath "$RUNNER_TEMP/tests.xcresult" \
@@ -469,10 +494,13 @@ jobs:
         working-directory: example/ios/App
         run: |
           set -euo pipefail
+          # Build-only: the generic destination needs no simulator device to
+          # exist on the runner image, which is what made a compat leg go red
+          # on an image without an "iPhone 17" device.
           xcodebuild build \
             -project App.xcodeproj \
             -scheme App \
-            -destination 'platform=iOS Simulator,name=iPhone 17,OS=latest' \
+            -destination 'generic/platform=iOS Simulator' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO
 

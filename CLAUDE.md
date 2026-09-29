@@ -2,7 +2,7 @@
 
 **Project:** Open-source Capacitor 6/7/8 plugin wrapping the Braze native SDKs (Android Kotlin, iOS Swift, Web JS). iOS installs under **CocoaPods or Swift Package Manager**.
 **Owner:** Bryce Aspinwall (`bma342`), MIT-licensed, personal portfolio + Aromo lighthouse.
-**npm package:** [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) — published; `0.1.0` is on the registry, `0.2.0` and `0.3.0` (Capacitor 8 + SPM) are on `main`; `0.3.0` is the release to tag.
+**npm package:** [`capacitor-braze`](https://www.npmjs.com/package/capacitor-braze) — published; `0.1.0` is on the registry, `0.3.0` (Capacitor 8 + SPM) is the current release, published from the `v0.3.0` tag with provenance.
 **Current state:** 35 methods + 5 listener events; 206 web + 109 Android + 82 iOS tests, all in CI; BrazeKit/BrazeUI 18.2.1 (Xcode 26+), `com.braze:android-sdk-ui` 43.2.0, `@braze/web-sdk` peer `^6.13.0`.
 
 **Source-of-truth docs — read these before any non-trivial work:**
@@ -115,10 +115,11 @@ Snapshot at `0.3.0`, verified 2026-09-22 (see `package.json` for the live versio
 | Audit cleanup — `docs/audits/2026-05` (17 phases) + `docs/audits/2026-09` (this wave) | ✅ |
 | `0.1.0` to npm | ✅ [npmjs.com/package/capacitor-braze](https://www.npmjs.com/package/capacitor-braze) — published **by hand**, no provenance attestation |
 | `0.2.0` to npm | — never tagged; merged to `main` with `0.3.0` (#28) and shipped inside it |
-| `0.3.0` to npm | ⏳ on `main` (#28); tag `v0.3.0` publishes it through `release.yml` — the first workflow-published, provenance-attested release |
+| `0.3.0` to npm | ✅ published 2026-09-29 from the `v0.3.0` tag by `release.yml` via npm Trusted Publishing — the first workflow-published, provenance-attested release |
 | C11 native test harnesses — integration tier (MockWebServer on Android, loopback `NWListener` server on iOS) | ✅ 17 tests on Android, 27 on iOS, none skipped, in CI since 0.3.0 |
 | **Layer 4 real-Braze smoke** | ⏳ **never run.** Templates only in `docs/smoke-tests/`; no release is validated against a live Braze backend |
-| Private vulnerability reporting, `enforce_admins`, `v*` tag ruleset, npm Trusted Publishing | ⏳ maintainer actions — commands in `CONTRIBUTING.md` |
+| npm Trusted Publishing | ✅ configured 2026-09-28; `release.yml` publishes without a stored token |
+| Private vulnerability reporting, `enforce_admins`, `v*` tag ruleset, commit-signing key | ⏳ maintainer actions — commands in `CONTRIBUTING.md` |
 | Capacitor 8 support (peer `^8`, podspec `< 9.0`, demo + example on 8.5.2) | ✅ 0.3.0 |
 | Swift Package Manager (root `Package.swift`, `CAPBridgedPlugin` registration, `example/ios` SPM build in CI) | ✅ 0.3.0 |
 | Capacitor 6/7 built in CI (`verify-capacitor-compat-{ios,android}`, matrix × CocoaPods/SPM/Android, via `scripts/compat-app.sh`) | ✅ 0.3.0 |
